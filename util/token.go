@@ -7,10 +7,9 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// CountMessagesTokens counts tokens in messages using tiktoken for accurate calculation.
-// For images, it uses a rough estimate since image token calculation is model-specific.
+// CountMessagesTokens counts tokens in messages using tiktoken.
+// Images use a rough estimate (1100 tokens) since calculation is model-specific.
 func CountMessagesTokens(messages []provider.Message) int {
-	// Get tokenizer for cl100k_base encoding (used by GPT-4 and GPT-3.5-turbo)
 	tke, err := tiktoken.GetEncoding("cl100k_base")
 	if err != nil {
 		slog.Warn("failed to get tiktoken encoding, falling back to char estimation", "error", err)
@@ -19,22 +18,15 @@ func CountMessagesTokens(messages []provider.Message) int {
 
 	total := 0
 	for _, msg := range messages {
-		// Each message has overhead: <|start|>{role}\n{content}<|end|>\n
-		// For gpt-3.5-turbo-0613 and gpt-4-0613, this is 3 tokens
-		total += 3
-
-		// Count tokens for role
+		total += 3 // message overhead
 		total += len(tke.Encode(msg.Role, nil, nil))
 
-		// Count tokens for content
 		if len(msg.ContentParts) > 0 {
 			for _, p := range msg.ContentParts {
 				switch p.Type {
 				case "text":
 					total += len(tke.Encode(p.Text, nil, nil))
 				case "image_url":
-					// Image token count is model-specific and complex.
-					// Use rough estimate: 1100 tokens per image (typical for GPT-4V)
 					total += 1100
 				}
 			}
@@ -42,7 +34,6 @@ func CountMessagesTokens(messages []provider.Message) int {
 			total += len(tke.Encode(msg.Content, nil, nil))
 		}
 
-		// Count tokens for tool calls
 		if msg.ToolCalls != nil {
 			for _, tc := range msg.ToolCalls {
 				total += len(tke.Encode(tc.Function.Name, nil, nil))
@@ -50,35 +41,30 @@ func CountMessagesTokens(messages []provider.Message) int {
 			}
 		}
 
-		// Count tokens for name (if present)
 		if msg.Name != "" {
 			total += len(tke.Encode(msg.Name, nil, nil))
-			// Extra token for name field
-			total += 1
+			total += 1 // extra token for name field
 		}
 	}
 
-	// Every reply is primed with <|start|>assistant<|message|>
-	total += 3
-
+	total += 3 // reply prefix
 	return total
 }
 
-// EstimateTokens estimates tokens for a single text string using tiktoken.
+// EstimateTokens estimates tokens for a single text string.
 func EstimateTokens(text string) int {
 	tke, err := tiktoken.GetEncoding("cl100k_base")
 	if err != nil {
-		// Fallback to character estimation
 		return len(text) / 4
 	}
 	return len(tke.Encode(text, nil, nil))
 }
 
-// fallbackCountMessagesTokens provides a fallback estimation when tiktoken is unavailable.
+// fallbackCountMessagesTokens provides fallback when tiktoken is unavailable.
 func fallbackCountMessagesTokens(messages []provider.Message) int {
 	total := 0
 	for _, msg := range messages {
-		total += 3 // message overhead
+		total += 3
 		if len(msg.ContentParts) > 0 {
 			for _, p := range msg.ContentParts {
 				switch p.Type {
