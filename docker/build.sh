@@ -1,11 +1,11 @@
 #!/bin/bash
-# UCode 环境镜像构建脚本
+# mini_code 环境镜像构建脚本
 
-IMAGE_NAME="ucode_env"
+IMAGE_NAME="mini_code_env"
 IMAGE_TAG="latest"
 
 echo "=========================================="
-echo "构建 UCode 开发环境镜像"
+echo "构建 mini_code 开发环境镜像"
 echo "=========================================="
 echo "镜像名称: ${IMAGE_NAME}"
 echo "镜像标签: ${IMAGE_TAG}"
@@ -41,14 +41,14 @@ if [ $? -eq 0 ]; then
     echo "    ${IMAGE_NAME}:${IMAGE_TAG}"
     echo ""
     echo "  # 后台运行并进入容器"
-    echo "  docker run -d --name ucode_dev \\"
+    echo "  docker run -d --name mini_code_dev \\"
     echo "    -v ${PROJECT_DIR}:/app \\"
     echo "    -p 7500:7500 \\"
     echo "    ${IMAGE_NAME}:${IMAGE_TAG} \\"
     echo "    tail -f /dev/null"
     echo ""
     echo "  # 进入已运行的容器"
-    echo "  docker exec -it ucode_dev bash"
+    echo "  docker exec -it mini_code_dev bash"
     echo ""
 else
     echo ""

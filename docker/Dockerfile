@@ -1,4 +1,4 @@
-# UCode 开发环境镜像
+# mini_code 开发环境镜像
 # 基于 Ubuntu 22.04，包含完整的 Python 开发环境和常用工具
 
 FROM ubuntu:22.04
@@ -75,14 +75,14 @@ RUN mkdir -p /app
 # 添加启动脚本
 RUN echo '#!/bin/bash\n\
 echo "========================================"\n\
-echo "UCode 开发环境已就绪"\n\
+echo "mini_code 开发环境已就绪"\n\
 echo "========================================"\n\
 echo "Python 版本: $(python3 --version)"\n\
 echo "Pip 版本: $(pip3 --version)"\n\
 echo "Git 版本: $(git --version)"\n\
 echo ""\n\
 echo "可用命令:"\n\
-echo "  - python3 ucode.py          # 启动后台任务"\n\
+echo "  - python3 mini_code.py          # 启动后台任务"\n\
 echo "  - python3 web.py            # 启动Web服务"\n\
 echo "  - bash                      # 进入交互式shell"\n\
 echo ""\n\
@@ -106,6 +106,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python3 -c "import sys; sys.exit(0)" || exit 1
 
 # 添加标签
-LABEL maintainer="UCode Team" \
-      description="UCode 开发环境镜像 - 基于 Ubuntu 22.04" \
+LABEL maintainer="mini_code Team" \
+      description="mini_code 开发环境镜像 - 基于 Ubuntu 22.04" \
       version="1.0"

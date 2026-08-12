@@ -1,4 +1,4 @@
-# UCode Docker 开发环境
+# mini_code Docker 开发环境
 
 ## 📦 镜像说明
 
@@ -51,7 +51,7 @@ chmod +x build.sh
 或者直接使用 Docker 命令：
 
 ```bash
-docker build -t ucode_env:latest -f docker/Dockerfile .
+docker build -t mini_code_env:latest -f docker/Dockerfile .
 ```
 
 ### 2. 运行容器
@@ -62,21 +62,21 @@ docker build -t ucode_env:latest -f docker/Dockerfile .
 docker run -it --rm \
   -v $(pwd):/app \
   -p 7500:7500 \
-  ucode_env:latest
+  mini_code_env:latest
 ```
 
 #### 方式二：后台运行
 
 ```bash
 # 启动容器
-docker run -d --name ucode_dev \
+docker run -d --name mini_code_dev \
   -v $(pwd):/app \
   -p 7500:7500 \
-  ucode_env:latest \
+  mini_code_env:latest \
   tail -f /dev/null
 
 # 进入容器
-docker exec -it ucode_dev bash
+docker exec -it mini_code_dev bash
 ```
 
 #### 方式三：直接运行应用
@@ -86,14 +86,14 @@ docker exec -it ucode_dev bash
 docker run -it --rm \
   -v $(pwd):/app \
   -v ~/.ssh:/root/.ssh \
-  ucode_env:latest \
-  python3 ucode.py
+  mini_code_env:latest \
+  python3 mini_code.py
 
 # 运行 Web 服务
 docker run -it --rm \
   -v $(pwd):/app \
   -p 7500:7500 \
-  ucode_env:latest \
+  mini_code_env:latest \
   python3 web.py
 ```
 
@@ -107,7 +107,7 @@ docker run -it --rm \
   -v $(pwd)/logs:/app/logs \
   -v ~/.ssh:/root/.ssh:ro \
   -p 7500:7500 \
-  ucode_env:latest
+  mini_code_env:latest
 ```
 
 ## 📝 使用示例
@@ -124,17 +124,17 @@ python3 --version
 # 查看已安装的包
 pip3 list
 
-# 运行 UCode 后台任务
-python3 ucode.py
+# 运行 mini_code 后台任务
+python3 mini_code.py
 
 # 运行 Web 服务
 python3 web.py
 
 # 手动执行单个项目
-python3 ucode.py --run uhr
+python3 mini_code.py --run uhr
 
 # 重建项目文档
-python3 ucode.py --rebuild uhr
+python3 mini_code.py --rebuild uhr
 
 # 使用 IPython
 ipython
@@ -159,7 +159,7 @@ pip3 install your-python-package
 
 ```bash
 # 在容器内安装完需要的工具后
-docker commit ucode_dev ucode_env:custom
+docker commit mini_code_dev mini_code_env:custom
 
 # 或使用 Dockerfile 扩展
 ```
@@ -172,9 +172,9 @@ docker commit ucode_dev ucode_env:custom
 version: '3.8'
 
 services:
-  ucode-dev:
-    image: ucode_env:latest
-    container_name: ucode_dev
+  mini_code-dev:
+    image: mini_code_env:latest
+    container_name: mini_code_dev
     volumes:
       - .:/app
       - ~/.ssh:/root/.ssh:ro
@@ -189,25 +189,25 @@ services:
 
 ```bash
 docker-compose up -d
-docker exec -it ucode_dev bash
+docker exec -it mini_code_dev bash
 ```
 
 ### 持久化数据卷
 
 ```bash
 # 创建数据卷
-docker volume create ucode_projects
-docker volume create ucode_logs
-docker volume create ucode_config
+docker volume create mini_code_projects
+docker volume create mini_code_logs
+docker volume create mini_code_config
 
 # 使用数据卷
 docker run -it --rm \
-  -v ucode_projects:/app/projects \
-  -v ucode_logs:/app/logs \
-  -v ucode_config:/app/config \
+  -v mini_code_projects:/app/projects \
+  -v mini_code_logs:/app/logs \
+  -v mini_code_config:/app/config \
   -v $(pwd):/app/code \
   -p 7500:7500 \
-  ucode_env:latest
+  mini_code_env:latest
 ```
 
 ## 📂 目录结构
@@ -219,7 +219,7 @@ docker run -it --rm \
 ├── config/           # 配置文件
 ├── workspace/        # 工作空间
 │   └── tmp/         # 临时文件
-├── ucode.py          # 主程序
+├── mini_code.py          # 主程序
 ├── web.py            # Web服务
 └── requirements.txt  # Python依赖
 ```
@@ -247,27 +247,27 @@ docker run -it --rm \
 # 确保挂载了 SSH 密钥
 docker run -it --rm \
   -v ~/.ssh:/root/.ssh:ro \
-  ucode_env:latest
+  mini_code_env:latest
 ```
 
 ### 2. 权限问题
 
 ```bash
 # 以 root 用户运行（默认）
-docker run -it --rm -u root ucode_env:latest
+docker run -it --rm -u root mini_code_env:latest
 
 # 或指定用户
-docker run -it --rm -u $(id -u):$(id -g) ucode_env:latest
+docker run -it --rm -u $(id -u):$(id -g) mini_code_env:latest
 ```
 
 ### 3. 网络连接问题
 
 ```bash
 # 测试网络
-docker run -it --rm ucode_env:latest ping baidu.com
+docker run -it --rm mini_code_env:latest ping baidu.com
 
 # 使用 host 网络模式
-docker run -it --rm --network host ucode_env:latest
+docker run -it --rm --network host mini_code_env:latest
 ```
 
 ## 📌 注意事项
@@ -285,7 +285,7 @@ docker run -it --rm --network host ucode_env:latest
 ./build.sh
 
 # 或删除旧镜像后重新构建
-docker rmi ucode_env:latest
+docker rmi mini_code_env:latest
 ./build.sh
 ```
 

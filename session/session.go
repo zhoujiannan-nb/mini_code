@@ -109,7 +109,7 @@ func NewSessionManager(client *provider.ModelClient, dbPath string) (*SessionMan
 	}, nil
 }
 
-// NewDefaultSessionManager creates a SessionManager using the default database path (~/.ucode/agent.db)
+// NewDefaultSessionManager creates a SessionManager using the default database path (~/.mini_code/agent.db)
 func NewDefaultSessionManager(client *provider.ModelClient) (*SessionManager, error) {
 	store, err := NewDefaultSessionStore()
 	if err != nil {

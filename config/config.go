@@ -42,20 +42,20 @@ func DefaultModelConfig() ModelConfig {
 	}
 }
 
-// GetConfigDir returns ~/.ucode/ directory, creating it if necessary.
+// GetConfigDir returns ~/.mini_code/ directory, creating it if necessary.
 func GetConfigDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot get home directory: %w", err)
 	}
-	dir := filepath.Join(home, ".ucode")
+	dir := filepath.Join(home, ".mini_code")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("cannot create config directory %s: %w", dir, err)
 	}
 	return dir, nil
 }
 
-// GetConfigPath returns the path to ~/.ucode/config.json.
+// GetConfigPath returns the path to ~/.mini_code/config.json.
 func GetConfigPath() (string, error) {
 	dir, err := GetConfigDir()
 	if err != nil {
@@ -76,7 +76,7 @@ func SaveConfig(cfg *AppConfig, path string) error {
 	return nil
 }
 
-// LoadConfig loads the config from ~/.ucode/config.json.
+// LoadConfig loads the config from ~/.mini_code/config.json.
 // If the file does not exist, it triggers the first-run interactive setup.
 func LoadConfig() (*AppConfig, error) {
 	path, err := GetConfigPath()

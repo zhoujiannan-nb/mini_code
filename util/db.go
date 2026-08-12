@@ -15,7 +15,7 @@ type Database struct {
 	db     *sql.DB
 }
 
-// GetDefaultDBPath returns the default database path under ~/.ucode/
+// GetDefaultDBPath returns the default database path under ~/.mini_code/
 func GetDefaultDBPath() (string, error) {
 	dir, err := config.GetConfigDir()
 	if err != nil {
@@ -36,7 +36,7 @@ func NewDatabase(dbPath string) (*Database, error) {
 	return &Database{dbPath: dbPath, db: db}, nil
 }
 
-// NewDefaultDatabase creates a new database using the default path under ~/.ucode/
+// NewDefaultDatabase creates a new database using the default path under ~/.mini_code/
 func NewDefaultDatabase() (*Database, error) {
 	dbPath, err := GetDefaultDBPath()
 	if err != nil {

@@ -20,7 +20,7 @@ func main() {
 
 	if *goal == "" {
 		fmt.Fprintf(os.Stderr, "Error: -goal flag is required\n")
-		fmt.Fprintf(os.Stderr, "Usage: ucode-goal -goal \"your task description\"\n")
+		fmt.Fprintf(os.Stderr, "Usage: mini_code-goal -goal \"your task description\"\n")
 		os.Exit(1)
 	}
 

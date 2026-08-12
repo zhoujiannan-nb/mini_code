@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set APP_NAME=ucode
+set APP_NAME=mini_code
 
 if "%1"=="linux" goto :build_linux
 if "%1"=="mac" goto :build_mac

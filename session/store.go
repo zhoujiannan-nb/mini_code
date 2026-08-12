@@ -9,7 +9,7 @@ import (
 	"github.com/user/uclaw/util"
 )
 
-// NewDefaultSessionStore creates a new session store using the default database path (~/.ucode/agent.db)
+// NewDefaultSessionStore creates a new session store using the default database path (~/.mini_code/agent.db)
 func NewDefaultSessionStore() (*SessionStore, error) {
 	db, err := util.NewDefaultDatabase()
 	if err != nil {

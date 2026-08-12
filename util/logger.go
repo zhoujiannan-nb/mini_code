@@ -40,7 +40,7 @@ func SetupFileLogger(path string) {
 	slog.SetDefault(Log)
 }
 
-// SetupDefaultFileLogger sets up a logger that writes to ~/.ucode/agent.log
+// SetupDefaultFileLogger sets up a logger that writes to ~/.mini_code/agent.log
 // with automatic rotation when file exceeds 50MB
 func SetupDefaultFileLogger() {
 	dir, err := config.GetConfigDir()

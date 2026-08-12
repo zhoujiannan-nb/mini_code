@@ -21,7 +21,7 @@ def setup_logger(project: str = None, branch: str = None):
     if project and branch:
         log_dir = Path(f"projects/{project}-{branch}/logs")
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "ucode.log"
+        log_file = log_dir / "mini_code.log"
     else:
         log_file = "uclaw.log"
     
