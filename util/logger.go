@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/user/uclaw/config"
+	"github.com/user/mini_code/config"
 )
 
 var Log *slog.Logger

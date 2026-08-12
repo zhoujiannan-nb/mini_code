@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/user/uclaw/provider"
-	"github.com/user/uclaw/util"
+	"github.com/user/mini_code/provider"
+	"github.com/user/mini_code/util"
 )
 
 const (

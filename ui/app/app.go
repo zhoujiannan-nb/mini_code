@@ -10,12 +10,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/user/uclaw/config"
-	"github.com/user/uclaw/provider"
-	"github.com/user/uclaw/session"
-	"github.com/user/uclaw/ui/components"
-	"github.com/user/uclaw/ui/styles"
-	"github.com/user/uclaw/util"
+	"github.com/user/mini_code/config"
+	"github.com/user/mini_code/provider"
+	"github.com/user/mini_code/session"
+	"github.com/user/mini_code/ui/components"
+	"github.com/user/mini_code/ui/styles"
+	"github.com/user/mini_code/util"
 )
 
 // ansiEscapeRe matches ANSI escape sequences for stripping

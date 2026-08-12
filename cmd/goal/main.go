@@ -8,10 +8,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/user/uclaw/config"
-	"github.com/user/uclaw/provider"
-	"github.com/user/uclaw/session"
-	"github.com/user/uclaw/util"
+	"github.com/user/mini_code/config"
+	"github.com/user/mini_code/provider"
+	"github.com/user/mini_code/session"
+	"github.com/user/mini_code/util"
 )
 
 func main() {

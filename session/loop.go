@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/user/uclaw/provider"
-	"github.com/user/uclaw/tools"
-	"github.com/user/uclaw/util"
+	"github.com/user/mini_code/provider"
+	"github.com/user/mini_code/tools"
+	"github.com/user/mini_code/util"
 )
 
 type LoopResult struct {

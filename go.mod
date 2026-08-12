@@ -1,4 +1,4 @@
-module github.com/user/uclaw
+module github.com/user/mini_code
 
 go 1.25.0
 

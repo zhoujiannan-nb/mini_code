@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/user/uclaw/provider"
+	"github.com/user/mini_code/provider"
 )
 
 type ToolRegistry struct {

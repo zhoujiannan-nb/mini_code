@@ -4,7 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/pkoukk/tiktoken-go"
-	"github.com/user/uclaw/provider"
+	"github.com/user/mini_code/provider"
 )
 
 // CountMessagesTokens counts tokens in messages using tiktoken for accurate calculation.

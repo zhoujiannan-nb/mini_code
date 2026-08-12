@@ -9,11 +9,11 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/user/uclaw/config"
-	"github.com/user/uclaw/provider"
-	"github.com/user/uclaw/session"
-	uiclaw "github.com/user/uclaw/ui/app"
-	"github.com/user/uclaw/util"
+	"github.com/user/mini_code/config"
+	"github.com/user/mini_code/provider"
+	"github.com/user/mini_code/session"
+	uiclaw "github.com/user/mini_code/ui/app"
+	"github.com/user/mini_code/util"
 )
 
 func main() {

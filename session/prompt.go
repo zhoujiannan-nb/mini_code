@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/user/uclaw/agent"
-	"github.com/user/uclaw/provider"
-	"github.com/user/uclaw/tools"
+	"github.com/user/mini_code/agent"
+	"github.com/user/mini_code/provider"
+	"github.com/user/mini_code/tools"
 )
 
 const toolConstraints = `<tool_requirements>

@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/user/uclaw/ui/styles"
+	"github.com/user/mini_code/ui/styles"
 )
 
 // LogViewModel is a scrollable log display component

@@ -3,7 +3,7 @@ package tools
 import (
 	"context"
 
-	"github.com/user/uclaw/provider"
+	"github.com/user/mini_code/provider"
 )
 
 type ToolResult struct {

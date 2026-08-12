@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/user/uclaw/ui/styles"
+	"github.com/user/mini_code/ui/styles"
 )
 
 // InputSubmitMsg is sent when the user submits input

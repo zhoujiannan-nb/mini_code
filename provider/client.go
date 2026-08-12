@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/user/uclaw/config"
+	"github.com/user/mini_code/config"
 )
 
 type ModelClient struct {

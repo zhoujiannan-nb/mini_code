@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/user/uclaw/provider"
-	"github.com/user/uclaw/util"
+	"github.com/user/mini_code/provider"
+	"github.com/user/mini_code/util"
 )
 
 // NewDefaultSessionStore creates a new session store using the default database path (~/.mini_code/agent.db)

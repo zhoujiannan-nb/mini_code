@@ -15,7 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/user/uclaw/provider"
+	"github.com/user/mini_code/provider"
 	gdraw "golang.org/x/image/draw"
 )
 

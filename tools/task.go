@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/user/uclaw/agent"
+	"github.com/user/mini_code/agent"
 )
 
 type SessionPrompter interface {
