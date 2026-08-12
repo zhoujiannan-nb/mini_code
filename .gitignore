@@ -1,0 +1,6 @@
+*.db
+*.exe
+ucode
+ucode-server
+ucode-goal
+build/
