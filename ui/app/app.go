@@ -644,7 +644,7 @@ func (m *Model) cycleFocus() {
 // View renders the UI
 func (m Model) View() string {
 	if !m.ready {
-		return styles.HeaderStyle.Render("Initializing UClaw Agent...")
+		return styles.HeaderStyle.Render("Initializing Mini Code Agent...")
 	}
 
 	// Layout
@@ -721,7 +721,7 @@ func (m Model) View() string {
 
 // renderHeader renders the header bar
 func (m Model) renderHeader() string {
-	title := styles.HeaderStyle.Render("UClaw Agent")
+	title := styles.HeaderStyle.Render("Mini Code")
 	separator := styles.DividerStyle.Render(strings.Repeat("─", m.width-10))
 	return lipgloss.JoinHorizontal(lipgloss.Center, title, separator)
 }

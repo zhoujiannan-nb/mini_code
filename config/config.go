@@ -87,7 +87,7 @@ func LoadConfig() (*AppConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("Welcome to UClaw! This is your first run.")
+			fmt.Println("Welcome to mini_code! This is your first run.")
 			fmt.Println("Let's set up your configuration.")
 			fmt.Println("Press Enter to accept the default value shown in [brackets].")
 			fmt.Println(strings.Repeat("-", 50))

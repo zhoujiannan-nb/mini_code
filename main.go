@@ -70,7 +70,7 @@ func main() {
 	// SIGINT channel reused for both prompt and task phases.
 	sigInt := make(chan os.Signal, 1)
 
-	fmt.Println("UClaw Agent ready. Type your task (type 'exit' to quit):")
+	fmt.Println("Mini Code ready. Type your task (type 'exit' to quit):")
 	fmt.Println("  Ctrl+C during task: interrupt and return to prompt")
 	fmt.Println("  Ctrl+C at prompt:   exit")
 

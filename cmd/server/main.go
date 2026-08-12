@@ -90,7 +90,7 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", *port)
 	slog.Info("starting server", "port", *port)
-	fmt.Printf("UClaw Server listening on %s\n", addr)
+	fmt.Printf("Mini Code Server listening on %s\n", addr)
 
 	server := &http.Server{Addr: addr, Handler: mux}
 

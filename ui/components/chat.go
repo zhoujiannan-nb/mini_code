@@ -152,7 +152,7 @@ func (m ChatModel) renderScrollIndicator() string {
 // renderMessages renders all messages to a string
 func (m *ChatModel) renderMessages() string {
 	if len(m.messages) == 0 {
-		return styles.ContentStyle.Render("\n  Welcome to UClaw Agent Terminal\n  Press Ctrl+N to start a new session")
+		return styles.ContentStyle.Render("\n  Welcome to Mini Code Agent Terminal\n  Press Ctrl+N to start a new session")
 	}
 
 	var sb strings.Builder
