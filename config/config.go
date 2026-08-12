@@ -31,8 +31,8 @@ type ModelConfig struct {
 func DefaultModelConfig() ModelConfig {
 	return ModelConfig{
 		Provider:      "vllm",
-		BaseURL:       "http://ubasic.yuanshi-sec.com:5708/proxy/model/qwen_code/",
-		APIKey:        "uaibasic-secret-key-out",
+		BaseURL:       "http://demo/proxy/model/qwen_code/",
+		APIKey:        "demo",
 		MaxTokens:     31072,
 		ContextWindow: 131072,
 		Temperature:   0.6,
