@@ -78,7 +78,7 @@ func (s *Session) Prompt(ctx context.Context, goal string, maxTurns int) (string
 		s.updateStatus("failed")
 	}
 
-	slog.Info("session done", "id", s.ID(), "turns", result.Turns, "success", result.Success)
+	slog.Info("session done", "id", s.ID(), "turns", result.Turns, "success", result.Success, "error", result.Error)
 	return result.Content, nil
 }
 

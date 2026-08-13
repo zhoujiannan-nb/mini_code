@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/user/mini_code/agent"
 	"github.com/user/mini_code/config"
 	"github.com/user/mini_code/provider"
 	"github.com/user/mini_code/session"
@@ -67,6 +68,7 @@ type Model struct {
 	// Token tracking
 	currentTokens int
 	maxTokens     int
+	maxTurns      int
 
 	// Compaction state
 	isCompacting bool
@@ -176,6 +178,12 @@ func NewModel(client *provider.ModelClient, sessionMgr *session.SessionManager) 
 		}
 	}
 
+	// Default maxTurns from agent config
+	maxTurns := 999
+	if cfg, err := agent.GetAgentConfig("build"); err == nil && cfg.MaxTurns > 0 {
+		maxTurns = cfg.MaxTurns
+	}
+
 	// Initialize sidebar (no callbacks - use message-based approach)
 	sidebar := components.NewSidebarModel(sessions)
 
@@ -189,6 +197,7 @@ func NewModel(client *provider.ModelClient, sessionMgr *session.SessionManager) 
 		focus:           focusInput,
 		toolCallIndices: make(map[string]int),
 		maxTokens:       maxTokens,
+		maxTurns:        maxTurns,
 	}
 
 	return model
@@ -511,14 +520,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_, getErr := m.sessionMgr.Get(sessionID)
 				if getErr == nil {
 					// Session exists in DB, continue it
-					result, err = m.sessionMgr.ContinueTask(ctx, sessionID, text, 10)
+					result, err = m.sessionMgr.ContinueTask(ctx, sessionID, text, m.maxTurns)
 				} else {
 					// Session not in DB (local only), create new
-					result, err = m.sessionMgr.RunTask(ctx, text, text, agentRole, workDir, 10)
+					result, err = m.sessionMgr.RunTask(ctx, text, text, agentRole, workDir, m.maxTurns)
 				}
 			} else {
 				// Create new session
-				result, err = m.sessionMgr.RunTask(ctx, text, text, agentRole, workDir, 10)
+				result, err = m.sessionMgr.RunTask(ctx, text, text, agentRole, workDir, m.maxTurns)
 			}
 			if err != nil {
 				return ResponseMsg{Content: "", Err: err}
