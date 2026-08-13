@@ -94,14 +94,22 @@ type (
 		Done    bool
 	}
 
-	// ToolCallStartedEvent is sent when a tool call starts
-	ToolCallStartedEvent struct {
+	// ToolCallDecidedEvent is sent when the agent decides to call a tool (before execution)
+	ToolCallDecidedEvent struct {
+		ID       string
 		ToolName string
 		Args     string
 	}
 
+	// ToolCallStartedEvent is sent when a tool call starts executing
+	ToolCallStartedEvent struct {
+		ID       string
+		ToolName string
+	}
+
 	// ToolCallCompletedEvent is sent when a tool call completes
 	ToolCallCompletedEvent struct {
+		ID       string
 		ToolName string
 		Result   string
 	}
@@ -406,7 +414,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 									Role:       "tool_call",
 									ToolName:   tc.Function.Name,
 									ToolArgs:   tc.Function.Arguments,
-									ToolDone:   true,
+									ToolStatus: components.ToolStatusSuccess,
 									ToolResult: "(from history)",
 								})
 							}
@@ -426,7 +434,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							Role:     "tool",
 							Content:  fmt.Sprintf("[%s] %s", toolName, content),
 							ToolName: toolName,
-							ToolDone: true,
 						})
 					default:
 						m.chat.AddMessage(components.Message{
@@ -536,27 +543,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Handle tool call decided event (agent chose to call a tool, not yet executed)
+	if toolDecidedMsg, ok := msg.(ToolCallDecidedEvent); ok {
+		idx := m.chat.AddToolCallDecided(toolDecidedMsg.ToolName, toolDecidedMsg.Args)
+		m.toolCallIndices[toolDecidedMsg.ID] = idx
+		return m, waitForToolCallEvent()
+	}
+
 	// Handle tool call started event
 	if toolStartMsg, ok := msg.(ToolCallStartedEvent); ok {
-		// Add tool call message in started state
-		idx := m.chat.AddToolCallStarted(toolStartMsg.ToolName, toolStartMsg.Args)
-		// Store the index for this tool call
-		toolID := fmt.Sprintf("%s_%d", toolStartMsg.ToolName, time.Now().UnixNano())
-		m.toolCallIndices[toolID] = idx
+		idx, found := m.toolCallIndices[toolStartMsg.ID]
+		if !found {
+			// Fallback: decided event was missed, create the entry now
+			idx = m.chat.AddToolCallDecided(toolStartMsg.ToolName, "")
+			m.toolCallIndices[toolStartMsg.ID] = idx
+		}
+		m.chat.UpdateToolCallRunning(idx)
 		return m, waitForToolCallEvent()
 	}
 
 	// Handle tool call completed event
 	if toolEndMsg, ok := msg.(ToolCallCompletedEvent); ok {
-		// Find the most recent tool call with this name that hasn't been completed
-		for id, idx := range m.toolCallIndices {
-			if strings.HasPrefix(id, toolEndMsg.ToolName+"_") {
-				// Check if this tool call is still pending
-				m.chat.UpdateToolCallCompleted(idx, toolEndMsg.Result)
-				delete(m.toolCallIndices, id)
-				break
-			}
+		idx, found := m.toolCallIndices[toolEndMsg.ID]
+		if !found {
+			// Fallback: earlier events were missed, create the entry now
+			idx = m.chat.AddToolCallDecided(toolEndMsg.ToolName, "")
+			m.toolCallIndices[toolEndMsg.ID] = idx
+			m.chat.UpdateToolCallRunning(idx)
 		}
+		m.chat.UpdateToolCallCompleted(idx, toolEndMsg.Result)
+		delete(m.toolCallIndices, toolEndMsg.ID)
 		return m, waitForToolCallEvent()
 	}
 
@@ -576,6 +592,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update token count for user message
 		m.currentTokens += util.EstimateTokens(userInputMsg.Content) + 4
 		m.isProcessing = true
+		// Reset tool call tracking for the new run
+		m.toolCallIndices = make(map[string]int)
 		return m, m.processAgentResponse(userInputMsg.Content)
 	}
 

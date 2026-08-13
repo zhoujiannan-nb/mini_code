@@ -12,14 +12,15 @@ import (
 )
 
 type Session struct {
-	record           *SessionRecord
-	store            *SessionStore
-	client           *provider.ModelClient
-	agentCfg         *agent.AgentConfig
-	manager          *SessionManager
-	onToolCallStart  func(string, map[string]interface{})
-	onToolCallEnd    func(string, map[string]interface{}, string)
-	onAssistantReply func(string)
+	record            *SessionRecord
+	store             *SessionStore
+	client            *provider.ModelClient
+	agentCfg          *agent.AgentConfig
+	manager           *SessionManager
+	onToolCallDecided func(string, string, string)
+	onToolCallStart   func(string, string)
+	onToolCallEnd     func(string, string, string)
+	onAssistantReply  func(string)
 }
 
 func (s *Session) ID() string             { return s.record.SessionID }
@@ -52,7 +53,7 @@ func (s *Session) Prompt(ctx context.Context, goal string, maxTurns int) (string
 	systemPrompt := pb.BuildSystemPrompt(s.record.WorkDir, "")
 	defs := pb.GetFilteredDefinitions(cfg)
 
-	loop := NewAgentLoop(s.client, maxTurns, pb.Tools, defs, s.onToolCallStart, s.onToolCallEnd, s.onAssistantReply)
+	loop := NewAgentLoop(s.client, maxTurns, pb.Tools, defs, s.onToolCallDecided, s.onToolCallStart, s.onToolCallEnd, s.onAssistantReply)
 
 	slog.Info("session prompt", "id", s.ID(), "goal", goal[:min(80, len(goal))])
 	result, err := loop.Run(ctx, systemPrompt, goal, s.record.Messages)
@@ -88,13 +89,14 @@ func (s *Session) updateStatus(status string) {
 }
 
 type SessionManager struct {
-	client           *provider.ModelClient
-	store            *SessionStore
-	sessions         map[string]*Session
-	mu               sync.RWMutex
-	onToolCallStart  func(string, map[string]interface{})
-	onToolCallEnd    func(string, map[string]interface{}, string)
-	onAssistantReply func(string)
+	client            *provider.ModelClient
+	store             *SessionStore
+	sessions          map[string]*Session
+	mu                sync.RWMutex
+	onToolCallDecided func(string, string, string)
+	onToolCallStart   func(string, string)
+	onToolCallEnd     func(string, string, string)
+	onAssistantReply  func(string)
 }
 
 func NewSessionManager(client *provider.ModelClient, dbPath string) (*SessionManager, error) {
@@ -123,7 +125,8 @@ func NewDefaultSessionManager(client *provider.ModelClient) (*SessionManager, er
 }
 
 // SetToolCallCallbacks sets the callbacks for tool call events
-func (m *SessionManager) SetToolCallCallbacks(onStart func(string, map[string]interface{}), onEnd func(string, map[string]interface{}, string), onReply func(string)) {
+func (m *SessionManager) SetToolCallCallbacks(onDecided func(string, string, string), onStart func(string, string), onEnd func(string, string, string), onReply func(string)) {
+	m.onToolCallDecided = onDecided
 	m.onToolCallStart = onStart
 	m.onToolCallEnd = onEnd
 	m.onAssistantReply = onReply
@@ -141,14 +144,15 @@ func (m *SessionManager) CreateSession(title, agentRole, workDir string, parentI
 
 	cfg, _ := agent.GetAgentConfig(agentRole)
 	session := &Session{
-		record:           record,
-		store:            m.store,
-		client:           m.client,
-		agentCfg:         cfg,
-		manager:          m,
-		onToolCallStart:  m.onToolCallStart,
-		onToolCallEnd:    m.onToolCallEnd,
-		onAssistantReply: m.onAssistantReply,
+		record:            record,
+		store:             m.store,
+		client:            m.client,
+		agentCfg:          cfg,
+		manager:           m,
+		onToolCallDecided: m.onToolCallDecided,
+		onToolCallStart:   m.onToolCallStart,
+		onToolCallEnd:     m.onToolCallEnd,
+		onAssistantReply:  m.onAssistantReply,
 	}
 
 	m.mu.Lock()
@@ -174,14 +178,15 @@ func (m *SessionManager) Get(sessionID string) (*Session, error) {
 
 	cfg, _ := agent.GetAgentConfig(record.AgentRole)
 	session := &Session{
-		record:           record,
-		store:            m.store,
-		client:           m.client,
-		agentCfg:         cfg,
-		manager:          m,
-		onToolCallStart:  m.onToolCallStart,
-		onToolCallEnd:    m.onToolCallEnd,
-		onAssistantReply: m.onAssistantReply,
+		record:            record,
+		store:             m.store,
+		client:            m.client,
+		agentCfg:          cfg,
+		manager:           m,
+		onToolCallDecided: m.onToolCallDecided,
+		onToolCallStart:   m.onToolCallStart,
+		onToolCallEnd:     m.onToolCallEnd,
+		onAssistantReply:  m.onAssistantReply,
 	}
 
 	m.mu.Lock()
@@ -206,14 +211,15 @@ func (m *SessionManager) List(parentID, status string, limit, offset int) ([]*Se
 	for _, r := range records {
 		cfg, _ := agent.GetAgentConfig(r.AgentRole)
 		sessions = append(sessions, &Session{
-			record:           r,
-			store:            m.store,
-			client:           m.client,
-			agentCfg:         cfg,
-			manager:          m,
-			onToolCallStart:  m.onToolCallStart,
-			onToolCallEnd:    m.onToolCallEnd,
-			onAssistantReply: m.onAssistantReply,
+			record:            r,
+			store:             m.store,
+			client:            m.client,
+			agentCfg:          cfg,
+			manager:           m,
+			onToolCallDecided: m.onToolCallDecided,
+			onToolCallStart:   m.onToolCallStart,
+			onToolCallEnd:     m.onToolCallEnd,
+			onAssistantReply:  m.onAssistantReply,
 		})
 	}
 	return sessions, nil

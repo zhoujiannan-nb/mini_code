@@ -133,6 +133,11 @@ var (
 				Foreground(TextSecondary).
 				PaddingLeft(2)
 
+	// Tool call argument style (muted, reads like a smaller font)
+	ToolCallArgsStyle = lipgloss.NewStyle().
+				Foreground(TextMuted).
+				PaddingLeft(2)
+
 	// Scroll bar indicator style
 	ScrollBarStyle = lipgloss.NewStyle().
 			Foreground(AccentBlue).

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -41,17 +40,25 @@ func main() {
 
 	// Set tool call callbacks
 	mgr.SetToolCallCallbacks(
-		// onStart callback
-		func(name string, params map[string]interface{}) {
-			args, _ := json.Marshal(params)
-			app.SendToolCallEvent(app.ToolCallStartedEvent{
+		// onDecided callback: agent decided to call a tool (not yet executed)
+		func(id, name, args string) {
+			app.SendToolCallEvent(app.ToolCallDecidedEvent{
+				ID:       id,
 				ToolName: name,
-				Args:     string(args),
+				Args:     args,
 			})
 		},
-		// onEnd callback
-		func(name string, params map[string]interface{}, result string) {
+		// onStart callback: tool execution started
+		func(id, name string) {
+			app.SendToolCallEvent(app.ToolCallStartedEvent{
+				ID:       id,
+				ToolName: name,
+			})
+		},
+		// onEnd callback: tool execution finished
+		func(id, name string, result string) {
 			app.SendToolCallEvent(app.ToolCallCompletedEvent{
+				ID:       id,
 				ToolName: name,
 				Result:   result,
 			})

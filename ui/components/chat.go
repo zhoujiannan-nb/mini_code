@@ -11,6 +11,13 @@ import (
 	"github.com/user/mini_code/ui/styles"
 )
 
+// Tool call status values
+const (
+	ToolStatusDecided = "decided" // 已发起，等待执行
+	ToolStatusRunning = "running" // 执行中
+	ToolStatusSuccess = "success" // 成功
+)
+
 // Message represents a chat message
 type Message struct {
 	Role      string // "user", "assistant", "tool", "tool_call"
@@ -20,7 +27,7 @@ type Message struct {
 	ToolName   string
 	ToolArgs   string
 	ToolResult string
-	ToolDone   bool
+	ToolStatus string // ToolStatusDecided / ToolStatusRunning / ToolStatusSuccess
 	Expanded   bool
 }
 
@@ -202,44 +209,45 @@ func (m *ChatModel) renderMessages() string {
 
 // renderToolCall renders a tool call message
 func (m *ChatModel) renderToolCall(sb *strings.Builder, msg Message, index int) {
-	// Icon: spinning when in progress, checkmark when done
 	icon := "⏳"
-	if msg.ToolDone {
+	statusTag := "已发起"
+	statusStyle := styles.ToolCallPendingStyle
+	switch msg.ToolStatus {
+	case ToolStatusRunning:
+		statusTag = "执行中..."
+	case ToolStatusSuccess:
 		icon = "✔"
+		statusTag = "成功"
+		statusStyle = styles.ToolCallDoneStyle
 	}
 
-	// Status text
-	statusText := fmt.Sprintf("%s 调用 %s 工具", icon, msg.ToolName)
-	if msg.ToolDone {
-		statusText += " [✓ 完成]"
-	} else {
-		statusText += " [执行中...]"
-	}
+	statusText := fmt.Sprintf("%s 发起 %s 工具调用 [%s]", icon, msg.ToolName, statusTag)
 
-	// Render status with appropriate style
-	if msg.ToolDone {
-		sb.WriteString(styles.ToolCallDoneStyle.Render(statusText))
-	} else {
-		sb.WriteString(styles.ToolCallPendingStyle.Render(statusText))
-	}
-
-	// Expand/collapse indicator
-	if msg.ToolDone && msg.ToolResult != "" {
+	// Expand/collapse indicator for completed calls with results
+	if msg.ToolStatus == ToolStatusSuccess && msg.ToolResult != "" {
 		if msg.Expanded {
-			sb.WriteString(" ▼")
+			statusText += " ▼"
 		} else {
-			sb.WriteString(" ▶")
+			statusText += " ▶"
 		}
 	}
+	sb.WriteString(statusStyle.Render(statusText))
 	sb.WriteString("\n")
 
-	// Show expanded content
-	if msg.Expanded && msg.ToolDone && msg.ToolResult != "" {
+	// Call arguments in muted style below the call line
+	if msg.ToolArgs != "" {
+		args := strings.ReplaceAll(msg.ToolArgs, "\n", " ")
+		sb.WriteString(styles.ToolCallArgsStyle.Render(truncateLine(args, m.width-8)))
+		sb.WriteString("\n")
+	}
+
+	// Expanded result (collapsed by default, first 50 chars)
+	if msg.Expanded && msg.ToolStatus == ToolStatusSuccess && msg.ToolResult != "" {
 		content := msg.ToolResult
 		if len(content) > 50 {
 			content = content[:50] + "..."
 		}
-		sb.WriteString(styles.ToolCallContentStyle.Render("  " + content))
+		sb.WriteString(styles.ToolCallContentStyle.Render(content))
 		sb.WriteString("\n")
 	}
 }
@@ -385,36 +393,46 @@ func (m *ChatModel) UpdateStreamingContent(content string) {
 	m.viewport.GotoBottom()
 }
 
-// AddToolCallStarted adds a tool call message in started state
-func (m *ChatModel) AddToolCallStarted(toolName string, args string) int {
+// AddToolCallDecided adds a tool call message in decided (pending) state
+func (m *ChatModel) AddToolCallDecided(toolName string, args string) int {
 	idx := len(m.messages)
 	m.messages = append(m.messages, Message{
-		Role:      "tool_call",
-		ToolName:  toolName,
-		ToolArgs:  args,
-		ToolDone:  false,
-		Expanded:  false,
-		Timestamp: time.Now(),
+		Role:       "tool_call",
+		ToolName:   toolName,
+		ToolArgs:   args,
+		ToolStatus: ToolStatusDecided,
+		Timestamp:  time.Now(),
 	})
 	m.viewport.SetContent(m.renderMessages())
 	m.viewport.GotoBottom()
 	return idx
 }
 
+// UpdateToolCallRunning updates a tool call message to running state
+func (m *ChatModel) UpdateToolCallRunning(index int) {
+	if index >= 0 && index < len(m.messages) {
+		m.messages[index].ToolStatus = ToolStatusRunning
+		m.viewport.SetContent(m.renderMessages())
+	}
+}
+
 // UpdateToolCallCompleted updates a tool call message to completed state
 func (m *ChatModel) UpdateToolCallCompleted(index int, result string) {
 	if index >= 0 && index < len(m.messages) {
-		m.messages[index].ToolDone = true
+		m.messages[index].ToolStatus = ToolStatusSuccess
 		m.messages[index].ToolResult = result
 		m.viewport.SetContent(m.renderMessages())
 	}
 }
 
-// ToggleToolCallExpand toggles the expanded state of a tool call message
+// ToggleToolCallExpand toggles the expanded state of a completed tool call message
 func (m *ChatModel) ToggleToolCallExpand(index int) {
-	if index >= 0 && index < len(m.messages) && m.messages[index].Role == "tool_call" {
-		m.messages[index].Expanded = !m.messages[index].Expanded
-		m.viewport.SetContent(m.renderMessages())
+	if index >= 0 && index < len(m.messages) {
+		msg := &m.messages[index]
+		if msg.Role == "tool_call" && msg.ToolStatus == ToolStatusSuccess && msg.ToolResult != "" {
+			msg.Expanded = !msg.Expanded
+			m.viewport.SetContent(m.renderMessages())
+		}
 	}
 }
 
@@ -423,15 +441,18 @@ func (m *ChatModel) FindToolCallAtLine(line int) int {
 	currentLine := 0
 	for i, msg := range m.messages {
 		if msg.Role == "tool_call" {
-			// Tool call takes 1-2 lines depending on expanded state
-			if currentLine == line || (msg.Expanded && currentLine+1 == line) {
+			// Status line + args line + optional expanded result line
+			lines := 1
+			if msg.ToolArgs != "" {
+				lines++
+			}
+			if msg.Expanded && msg.ToolStatus == ToolStatusSuccess && msg.ToolResult != "" {
+				lines++
+			}
+			if line >= currentLine && line < currentLine+lines {
 				return i
 			}
-			if msg.Expanded {
-				currentLine += 2
-			} else {
-				currentLine++
-			}
+			currentLine += lines
 		} else {
 			// Other messages take at least 2 lines
 			currentLine += 2

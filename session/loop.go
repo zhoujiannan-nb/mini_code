@@ -24,17 +24,18 @@ type LoopResult struct {
 }
 
 type AgentLoop struct {
-	client           *provider.ModelClient
-	maxTurns         int
-	tools            *tools.ToolRegistry
-	toolDefinitions  []provider.ToolSchema
-	compactor        *ContextCompactor
-	onToolCallStart  func(name string, params map[string]interface{})
-	onToolCallEnd    func(name string, params map[string]interface{}, result string)
-	onAssistantReply func(content string)
+	client            *provider.ModelClient
+	maxTurns          int
+	tools             *tools.ToolRegistry
+	toolDefinitions   []provider.ToolSchema
+	compactor         *ContextCompactor
+	onToolCallDecided func(id, name, args string)
+	onToolCallStart   func(id, name string)
+	onToolCallEnd     func(id, name string, result string)
+	onAssistantReply  func(content string)
 }
 
-func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tools.ToolRegistry, defs []provider.ToolSchema, onToolCallStart func(string, map[string]interface{}), onToolCallEnd func(string, map[string]interface{}, string), onAssistantReply func(string)) *AgentLoop {
+func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tools.ToolRegistry, defs []provider.ToolSchema, onToolCallDecided func(string, string, string), onToolCallStart func(string, string), onToolCallEnd func(string, string, string), onAssistantReply func(string)) *AgentLoop {
 	if maxTurns <= 0 {
 		maxTurns = 999
 	}
@@ -42,14 +43,15 @@ func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tool
 		toolRegistry = tools.NewToolRegistry()
 	}
 	return &AgentLoop{
-		client:           client,
-		maxTurns:         maxTurns,
-		tools:            toolRegistry,
-		toolDefinitions:  defs,
-		compactor:        NewContextCompactor(client),
-		onToolCallStart:  onToolCallStart,
-		onToolCallEnd:    onToolCallEnd,
-		onAssistantReply: onAssistantReply,
+		client:            client,
+		maxTurns:          maxTurns,
+		tools:             toolRegistry,
+		toolDefinitions:   defs,
+		compactor:         NewContextCompactor(client),
+		onToolCallDecided: onToolCallDecided,
+		onToolCallStart:   onToolCallStart,
+		onToolCallEnd:     onToolCallEnd,
+		onAssistantReply:  onAssistantReply,
 	}
 }
 
@@ -121,9 +123,21 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				slog.Info("agent loop interrupted before tool execution", "turn", turn)
 				return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
 			}
+			// Ensure every tool call has a unique ID for UI tracking
+			for i := range parsed.toolCalls {
+				if parsed.toolCalls[i].ID == "" {
+					parsed.toolCalls[i].ID = "call_" + util.RandomHex(8)
+				}
+			}
 			// Notify UI of assistant text reply (if any)
 			if parsed.content != "" && l.onAssistantReply != nil {
 				l.onAssistantReply(parsed.content)
+			}
+			// Notify UI of the tool call decision (before execution starts)
+			if l.onToolCallDecided != nil {
+				for _, tc := range parsed.toolCalls {
+					l.onToolCallDecided(tc.ID, tc.Function.Name, tc.Function.Arguments)
+				}
 			}
 			messages = append(messages, provider.Message{
 				Role:      "assistant",
@@ -253,14 +267,10 @@ func (l *AgentLoop) parseToolCallJSON(content string) *provider.ToolCall {
 }
 
 func (l *AgentLoop) handleToolCalls(ctx context.Context, messages []provider.Message, toolCalls []provider.ToolCall) []provider.Message {
-	// Notify UI that tool calls are starting
+	// Notify UI that tool execution is starting
 	if l.onToolCallStart != nil {
 		for _, tc := range toolCalls {
-			var params map[string]interface{}
-			if tc.Function.Arguments != "" {
-				json.Unmarshal([]byte(tc.Function.Arguments), &params)
-			}
-			l.onToolCallStart(tc.Function.Name, params)
+			l.onToolCallStart(tc.ID, tc.Function.Name)
 		}
 	}
 
@@ -299,22 +309,14 @@ func (l *AgentLoop) executeToolsConcurrent(ctx context.Context, toolCalls []prov
 				results[idx] = tools.NewTextResult("Interrupted")
 				// Notify UI that tool call ended (interrupted)
 				if l.onToolCallEnd != nil {
-					var params map[string]interface{}
-					if tc.Function.Arguments != "" {
-						json.Unmarshal([]byte(tc.Function.Arguments), &params)
-					}
-					l.onToolCallEnd(tc.Function.Name, params, "Interrupted")
+					l.onToolCallEnd(tc.ID, tc.Function.Name, "Interrupted")
 				}
 				return
 			}
 			results[idx] = l.executeSingleTool(ctx, tc)
 			// Notify UI that tool call ended
 			if l.onToolCallEnd != nil {
-				var params map[string]interface{}
-				if tc.Function.Arguments != "" {
-					json.Unmarshal([]byte(tc.Function.Arguments), &params)
-				}
-				l.onToolCallEnd(tc.Function.Name, params, results[idx].Text)
+				l.onToolCallEnd(tc.ID, tc.Function.Name, results[idx].Text)
 			}
 		}(i, tc)
 	}
