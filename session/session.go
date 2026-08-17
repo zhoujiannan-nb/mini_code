@@ -20,7 +20,7 @@ type Session struct {
 	onToolCallDecided func(string, string, string)
 	onToolCallStart   func(string, string)
 	onToolCallEnd     func(string, string, string)
-	onAssistantReply  func(string)
+	onAssistantReply  func(string, string)
 }
 
 func (s *Session) ID() string             { return s.record.SessionID }
@@ -96,7 +96,7 @@ type SessionManager struct {
 	onToolCallDecided func(string, string, string)
 	onToolCallStart   func(string, string)
 	onToolCallEnd     func(string, string, string)
-	onAssistantReply  func(string)
+	onAssistantReply  func(string, string)
 }
 
 func NewSessionManager(client *provider.ModelClient, dbPath string) (*SessionManager, error) {
@@ -125,7 +125,7 @@ func NewDefaultSessionManager(client *provider.ModelClient) (*SessionManager, er
 }
 
 // SetToolCallCallbacks sets the callbacks for tool call events
-func (m *SessionManager) SetToolCallCallbacks(onDecided func(string, string, string), onStart func(string, string), onEnd func(string, string, string), onReply func(string)) {
+func (m *SessionManager) SetToolCallCallbacks(onDecided func(string, string, string), onStart func(string, string), onEnd func(string, string, string), onReply func(string, string)) {
 	m.onToolCallDecided = onDecided
 	m.onToolCallStart = onStart
 	m.onToolCallEnd = onEnd

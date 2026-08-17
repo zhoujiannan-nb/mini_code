@@ -33,8 +33,9 @@ type chatRequest struct {
 type chatCompletion struct {
 	Choices []struct {
 		Message struct {
-			Content   string     `json:"content"`
-			ToolCalls []ToolCall `json:"tool_calls"`
+			Content          string     `json:"content"`
+			ReasoningContent string     `json:"reasoning_content"`
+			ToolCalls        []ToolCall `json:"tool_calls"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -147,10 +148,11 @@ func (mc *ModelClient) Chat(ctx context.Context, messages []Message, tools []Too
 
 		ch := completion.Choices[0]
 		return &ChatResponse{
-			Content:      ch.Message.Content,
-			ToolCalls:    ch.Message.ToolCalls,
-			FinishReason: ch.FinishReason,
-			Usage:        completion.Usage,
+			Content:          ch.Message.Content,
+			ReasoningContent: ch.Message.ReasoningContent,
+			ToolCalls:        ch.Message.ToolCalls,
+			FinishReason:     ch.FinishReason,
+			Usage:            completion.Usage,
 		}, nil
 	}
 	return &ChatResponse{Error: "max retries exceeded"}, nil

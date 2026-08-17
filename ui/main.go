@@ -63,10 +63,11 @@ func main() {
 				Result:   result,
 			})
 		},
-		// onReply callback
-		func(content string) {
+		// onReply callback (streaming: content/reasoning are accumulated values)
+		func(content, reasoningContent string) {
 			app.SendToolCallEvent(app.AssistantReplyEvent{
-				Content: content,
+				Content:          content,
+				ReasoningContent: reasoningContent,
 			})
 		},
 	)

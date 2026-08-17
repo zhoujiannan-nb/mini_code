@@ -20,9 +20,11 @@ const (
 
 // Message represents a chat message
 type Message struct {
-	Role      string // "user", "assistant", "tool", "tool_call"
-	Content   string
-	Timestamp time.Time
+	Role    string // "user", "assistant", "tool", "tool_call"
+	Content string
+	// ReasoningContent is the model's thinking process (rendered muted)
+	ReasoningContent string
+	Timestamp        time.Time
 	// Tool call specific fields
 	ToolName   string
 	ToolArgs   string
@@ -262,6 +264,23 @@ func (m *ChatModel) renderLeftAligned(sb *strings.Builder, msg Message) {
 	sb.WriteString(styles.ContentStyle.Render(timestamp))
 	sb.WriteString("\n")
 
+	// Reasoning block: muted thinking process above the reply
+	if msg.ReasoningContent != "" {
+		sb.WriteString(styles.ThinkingLabelStyle.Render("💭 思考过程"))
+		sb.WriteString("\n")
+		for _, line := range strings.Split(msg.ReasoningContent, "\n") {
+			if strings.TrimSpace(line) == "" {
+				sb.WriteString("\n")
+				continue
+			}
+			sb.WriteString("  ")
+			sb.WriteString(styles.ThinkingContentStyle.Render(truncateLine(line, m.width-8)))
+			sb.WriteString("\n")
+		}
+		sb.WriteString(styles.ThinkingDividerStyle.Render("──"))
+		sb.WriteString("\n")
+	}
+
 	// Content with left padding
 	lines := strings.Split(msg.Content, "\n")
 	for _, line := range lines {
@@ -368,24 +387,32 @@ func isCJK(r rune) bool {
 		(r >= 0x2F800 && r <= 0x2FA1F)
 }
 
-// UpdateStreamingContent updates the last assistant message for streaming
-func (m *ChatModel) UpdateStreamingContent(content string) {
+// UpdateStreamingContent updates the last assistant message for streaming.
+// content is the accumulated text; reasoning (if non-empty) is the accumulated
+// thinking process. An empty reasoning keeps the previous value so final
+// non-streaming updates don't wipe it out.
+func (m *ChatModel) UpdateStreamingContent(content string, reasoning string) {
 	if len(m.messages) == 0 {
 		m.messages = append(m.messages, Message{
-			Role:      "assistant",
-			Content:   content,
-			Timestamp: time.Now(),
+			Role:             "assistant",
+			Content:          content,
+			ReasoningContent: reasoning,
+			Timestamp:        time.Now(),
 		})
 	} else {
 		// Update last message if it's from assistant
 		lastIdx := len(m.messages) - 1
 		if m.messages[lastIdx].Role == "assistant" {
 			m.messages[lastIdx].Content = content
+			if reasoning != "" {
+				m.messages[lastIdx].ReasoningContent = reasoning
+			}
 		} else {
 			m.messages = append(m.messages, Message{
-				Role:      "assistant",
-				Content:   content,
-				Timestamp: time.Now(),
+				Role:             "assistant",
+				Content:          content,
+				ReasoningContent: reasoning,
+				Timestamp:        time.Now(),
 			})
 		}
 	}

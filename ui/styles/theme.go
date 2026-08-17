@@ -51,6 +51,21 @@ var (
 				Foreground(TextPrimary).
 				PaddingRight(2)
 
+	// Thinking (reasoning) block styles — muted italic to distinguish from the reply
+	ThinkingLabelStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(AccentPurple).
+				PaddingLeft(1)
+
+	ThinkingContentStyle = lipgloss.NewStyle().
+				Foreground(TextMuted).
+				Italic(true).
+				PaddingRight(2)
+
+	ThinkingDividerStyle = lipgloss.NewStyle().
+				Foreground(BgOverlay).
+				PaddingLeft(1)
+
 	// Tool/Error message styles
 	ToolMsgStyle = lipgloss.NewStyle().
 			Foreground(AccentYellow).

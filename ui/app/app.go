@@ -114,9 +114,10 @@ type (
 		Result   string
 	}
 
-	// AssistantReplyEvent is sent when assistant has a text reply
+	// AssistantReplyEvent is sent when assistant has a text reply (streaming, accumulated)
 	AssistantReplyEvent struct {
-		Content string
+		Content          string
+		ReasoningContent string
 	}
 )
 
@@ -404,8 +405,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							// Show the assistant text first (if any)
 							if content != "" {
 								m.chat.AddMessage(components.Message{
-									Role:    "assistant",
-									Content: content,
+									Role:             "assistant",
+									Content:          content,
+									ReasoningContent: histMsg.ReasoningContent,
 								})
 							}
 							// Reconstruct each tool call as a completed tool_call message
@@ -420,8 +422,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 						} else {
 							m.chat.AddMessage(components.Message{
-								Role:    "assistant",
-								Content: content,
+								Role:             "assistant",
+								Content:          content,
+								ReasoningContent: histMsg.ReasoningContent,
 							})
 						}
 					case "tool":
@@ -579,7 +582,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle assistant reply event
 	if replyMsg, ok := msg.(AssistantReplyEvent); ok {
 		// Add assistant text reply to chat
-		m.chat.UpdateStreamingContent(replyMsg.Content)
+		m.chat.UpdateStreamingContent(replyMsg.Content, replyMsg.ReasoningContent)
 		return m, waitForToolCallEvent()
 	}
 
@@ -603,7 +606,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if respMsg.Err != nil {
 			m.chat.AddErrorMessage(respMsg.Err)
 		} else {
-			m.chat.UpdateStreamingContent(respMsg.Content)
+			m.chat.UpdateStreamingContent(respMsg.Content, "")
 		}
 		// Update token count from session
 		if m.sessionMgr != nil && m.currentSession != nil {
@@ -638,8 +641,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					})
 				case "assistant":
 					m.chat.AddMessage(components.Message{
-						Role:    "assistant",
-						Content: content,
+						Role:             "assistant",
+						Content:          content,
+						ReasoningContent: histMsg.ReasoningContent,
 					})
 				}
 			}

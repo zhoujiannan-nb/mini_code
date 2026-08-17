@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/user/mini_code/provider"
 	"github.com/user/mini_code/tools"
@@ -32,10 +33,10 @@ type AgentLoop struct {
 	onToolCallDecided func(id, name, args string)
 	onToolCallStart   func(id, name string)
 	onToolCallEnd     func(id, name string, result string)
-	onAssistantReply  func(content string)
+	onAssistantReply  func(content, reasoningContent string)
 }
 
-func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tools.ToolRegistry, defs []provider.ToolSchema, onToolCallDecided func(string, string, string), onToolCallStart func(string, string), onToolCallEnd func(string, string, string), onAssistantReply func(string)) *AgentLoop {
+func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tools.ToolRegistry, defs []provider.ToolSchema, onToolCallDecided func(string, string, string), onToolCallStart func(string, string), onToolCallEnd func(string, string, string), onAssistantReply func(string, string)) *AgentLoop {
 	if maxTurns <= 0 {
 		maxTurns = 999
 	}
@@ -95,8 +96,20 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
 		}
 
-		// call LLM
-		resp, err := l.client.Chat(ctx, messages, l.toToolSchemas(l.toolDefinitions))
+		// call LLM (streaming: chunks are forwarded to the UI via throttled callback)
+		var flusher *streamFlusher
+		if l.onAssistantReply != nil {
+			flusher = newStreamFlusher(l.onAssistantReply)
+			flusher.start()
+		}
+		resp, err := l.client.ChatStream(ctx, messages, l.toToolSchemas(l.toolDefinitions), func(chunk provider.StreamChunk) {
+			if flusher != nil {
+				flusher.push(chunk.Content, chunk.ReasoningContent)
+			}
+		})
+		if flusher != nil {
+			flusher.stop() // emit any tail and release the ticker before leaving this turn
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				slog.Info("agent loop interrupted during LLM call", "turn", turn)
@@ -113,7 +126,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		slog.Info("agent response", "content", parsed.content)
 
 		if parsed.toolCallError {
-			messages = append(messages, provider.Message{Role: "assistant", Content: parsed.toolCallErrorContent})
+			messages = append(messages, provider.Message{Role: "assistant", Content: parsed.toolCallErrorContent, ReasoningContent: resp.ReasoningContent})
 			messages = append(messages, provider.Message{Role: "user", Content: "The above tool call format is incorrect. Use structured tool_calls with valid JSON."})
 			continue
 		}
@@ -131,7 +144,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			}
 			// Notify UI of assistant text reply (if any)
 			if parsed.content != "" && l.onAssistantReply != nil {
-				l.onAssistantReply(parsed.content)
+				l.onAssistantReply(parsed.content, resp.ReasoningContent)
 			}
 			// Notify UI of the tool call decision (before execution starts)
 			if l.onToolCallDecided != nil {
@@ -140,9 +153,10 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				}
 			}
 			messages = append(messages, provider.Message{
-				Role:      "assistant",
-				Content:   parsed.content,
-				ToolCalls: parsed.toolCalls,
+				Role:             "assistant",
+				Content:          parsed.content,
+				ReasoningContent: resp.ReasoningContent,
+				ToolCalls:        parsed.toolCalls,
 			})
 			messages = l.handleToolCalls(ctx, messages, parsed.toolCalls)
 			if ctx.Err() != nil {
@@ -153,7 +167,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		}
 
 		// pure text response -> done
-		messages = append(messages, provider.Message{Role: "assistant", Content: parsed.content})
+		messages = append(messages, provider.Message{Role: "assistant", Content: parsed.content, ReasoningContent: resp.ReasoningContent})
 		return &LoopResult{Success: true, Content: parsed.content, Messages: messages, Turns: turn}, nil
 	}
 
@@ -351,4 +365,66 @@ func (l *AgentLoop) toToolSchemas(defs []provider.ToolSchema) []provider.ToolSch
 		})
 	}
 	return result
+}
+
+// streamFlusher coalesces streaming deltas so the UI receives at most one
+// update per tick interval, preventing message storms on fast streams.
+type streamFlusher struct {
+	mu        sync.Mutex
+	content   string
+	reasoning string
+	dirty     bool
+	onReply   func(content, reasoningContent string)
+	ticker    *time.Ticker
+	done      chan struct{}
+}
+
+func newStreamFlusher(onReply func(content, reasoningContent string)) *streamFlusher {
+	return &streamFlusher{onReply: onReply}
+}
+
+func (f *streamFlusher) start() {
+	f.ticker = time.NewTicker(50 * time.Millisecond)
+	f.done = make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-f.ticker.C:
+				f.flush()
+			case <-f.done:
+				return
+			}
+		}
+	}()
+}
+
+func (f *streamFlusher) stop() {
+	if f.ticker != nil {
+		f.ticker.Stop()
+	}
+	if f.done != nil {
+		close(f.done)
+	}
+	f.flush() // emit any pending tail
+}
+
+// push records the latest accumulated values; the ticker emits them later.
+func (f *streamFlusher) push(content, reasoning string) {
+	f.mu.Lock()
+	f.content = content
+	f.reasoning = reasoning
+	f.dirty = true
+	f.mu.Unlock()
+}
+
+func (f *streamFlusher) flush() {
+	f.mu.Lock()
+	if !f.dirty {
+		f.mu.Unlock()
+		return
+	}
+	c, r := f.content, f.reasoning
+	f.dirty = false
+	f.mu.Unlock()
+	f.onReply(c, r)
 }

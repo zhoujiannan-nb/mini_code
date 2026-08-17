@@ -24,21 +24,23 @@ func NewImagePart(dataURL string) ContentPart {
 }
 
 type Message struct {
-	Role         string        `json:"role"`
-	Content      string        `json:"-"`
-	ContentParts []ContentPart `json:"-"`
-	ToolCalls    []ToolCall    `json:"tool_calls,omitempty"`
-	ToolCallID   string        `json:"tool_call_id,omitempty"`
-	Name         string        `json:"name,omitempty"`
+	Role             string        `json:"role"`
+	Content          string        `json:"-"`
+	ContentParts     []ContentPart `json:"-"`
+	ReasoningContent string        `json:"-"`
+	ToolCalls        []ToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID       string        `json:"tool_call_id,omitempty"`
+	Name             string        `json:"name,omitempty"`
 }
 
 func (m Message) MarshalJSON() ([]byte, error) {
 	type Msg struct {
-		Role       string      `json:"role"`
-		Content    interface{} `json:"content"`
-		ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
-		ToolCallID string      `json:"tool_call_id,omitempty"`
-		Name       string      `json:"name,omitempty"`
+		Role             string      `json:"role"`
+		Content          interface{} `json:"content"`
+		ReasoningContent string      `json:"reasoning_content,omitempty"`
+		ToolCalls        []ToolCall  `json:"tool_calls,omitempty"`
+		ToolCallID       string      `json:"tool_call_id,omitempty"`
+		Name             string      `json:"name,omitempty"`
 	}
 	var content interface{}
 	if len(m.ContentParts) > 0 {
@@ -47,27 +49,30 @@ func (m Message) MarshalJSON() ([]byte, error) {
 		content = m.Content
 	}
 	return json.Marshal(Msg{
-		Role:       m.Role,
-		Content:    content,
-		ToolCalls:  m.ToolCalls,
-		ToolCallID: m.ToolCallID,
-		Name:       m.Name,
+		Role:             m.Role,
+		Content:          content,
+		ReasoningContent: m.ReasoningContent,
+		ToolCalls:        m.ToolCalls,
+		ToolCallID:       m.ToolCallID,
+		Name:             m.Name,
 	})
 }
 
 func (m *Message) UnmarshalJSON(data []byte) error {
 	type Msg struct {
-		Role       string          `json:"role"`
-		Content    json.RawMessage `json:"content"`
-		ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
-		ToolCallID string          `json:"tool_call_id,omitempty"`
-		Name       string          `json:"name,omitempty"`
+		Role             string          `json:"role"`
+		Content          json.RawMessage `json:"content"`
+		ReasoningContent string          `json:"reasoning_content"`
+		ToolCalls        []ToolCall      `json:"tool_calls,omitempty"`
+		ToolCallID       string          `json:"tool_call_id,omitempty"`
+		Name             string          `json:"name,omitempty"`
 	}
 	var raw Msg
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 	m.Role = raw.Role
+	m.ReasoningContent = raw.ReasoningContent
 	m.ToolCalls = raw.ToolCalls
 	m.ToolCallID = raw.ToolCallID
 	m.Name = raw.Name
@@ -141,17 +146,27 @@ type FuncCall struct {
 }
 
 type ChatResponse struct {
-	Content      string     `json:"content"`
-	ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
-	FinishReason string     `json:"finish_reason"`
-	Usage        *Usage     `json:"usage,omitempty"`
-	Error        string     `json:"-"`
+	Content          string     `json:"content"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	FinishReason     string     `json:"finish_reason"`
+	Usage            *Usage     `json:"usage,omitempty"`
+	Error            string     `json:"-"`
+}
+
+// StreamChunk is delivered to the onChunk callback during streaming.
+// Content and ReasoningContent are accumulated values (never deltas),
+// so the consumer can render them directly.
+type StreamChunk struct {
+	Content          string
+	ReasoningContent string
 }
 
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
 }
 
 type ToolSchema struct {

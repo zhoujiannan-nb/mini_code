@@ -34,6 +34,10 @@ func CountMessagesTokens(messages []provider.Message) int {
 			total += len(tke.Encode(msg.Content, nil, nil))
 		}
 
+		if msg.ReasoningContent != "" {
+			total += len(tke.Encode(msg.ReasoningContent, nil, nil))
+		}
+
 		if msg.ToolCalls != nil {
 			for _, tc := range msg.ToolCalls {
 				total += len(tke.Encode(tc.Function.Name, nil, nil))
@@ -76,6 +80,9 @@ func fallbackCountMessagesTokens(messages []provider.Message) int {
 			}
 		} else {
 			total += len(msg.Content) / 4
+		}
+		if msg.ReasoningContent != "" {
+			total += len(msg.ReasoningContent) / 4
 		}
 		if msg.ToolCalls != nil {
 			for _, tc := range msg.ToolCalls {
