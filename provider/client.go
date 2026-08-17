@@ -58,7 +58,7 @@ func NewModelClient(cfg config.ModelConfig) (*ModelClient, error) {
 	return &ModelClient{
 		provider:     factory(cfg),
 		providerType: cfg.Provider,
-		httpClient:   &http.Client{Timeout: 180 * time.Second},
+		httpClient:   &http.Client{Timeout: 3600 * time.Second}, // 1 hour timeout for long agent tasks
 	}, nil
 }
 
