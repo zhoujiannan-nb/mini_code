@@ -198,6 +198,20 @@ func (l *AgentLoop) parseResponse(resp *provider.ChatResponse) parsedResponse {
 		}
 	}
 
+	// Guard: never persist or execute a tool call whose arguments are not
+	// valid JSON (e.g. a response cut off mid-arguments). If such a call
+	// were saved, the API would reject the whole history on every later
+	// request with "function.arguments must be valid JSON". Treat it like
+	// any other malformed tool call: report it and let the model retry.
+	for i := range toolCalls {
+		args := strings.TrimSpace(toolCalls[i].Function.Arguments)
+		if args == "" {
+			toolCalls[i].Function.Arguments = "{}"
+		} else if !json.Valid([]byte(args)) {
+			return parsedResponse{toolCallError: true, toolCallErrorContent: "Tool call arguments are not valid JSON. Retry with well-formed JSON arguments."}
+		}
+	}
+
 	if resp.FinishReason == "stop" && len(toolCalls) == 0 {
 		return parsedResponse{content: content, toolCalls: toolCalls, shouldTerminate: true}
 	}
@@ -341,7 +355,9 @@ func (l *AgentLoop) executeToolsConcurrent(ctx context.Context, toolCalls []prov
 func (l *AgentLoop) executeSingleTool(ctx context.Context, tc provider.ToolCall) *tools.ToolResult {
 	var params map[string]interface{}
 	if tc.Function.Arguments != "" {
-		json.Unmarshal([]byte(tc.Function.Arguments), &params)
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
+			slog.Warn("invalid tool call arguments", "name", tc.Function.Name, "error", err, "params", tc.Function.Arguments)
+		}
 	}
 	slog.Info("executing tool", "name", tc.Function.Name, "params", tc.Function.Arguments)
 	result, err := l.tools.Execute(ctx, tc.Function.Name, params)

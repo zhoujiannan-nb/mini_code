@@ -159,6 +159,37 @@ func TestChatStreamEmptyStream(t *testing.T) {
 	}
 }
 
+// TestChatStreamTruncatedToolCall verifies that a stream which ends with a
+// clean EOF but WITHOUT a finish_reason is rejected, even when partial tool
+// call data was received. Accepting such a partial result used to persist
+// truncated arguments and poison the session history (the next request then
+// failed with "function.arguments must be valid JSON").
+func TestChatStreamTruncatedToolCall(t *testing.T) {
+	// The arguments value is deliberately truncated JSON, as produced when a
+	// stream is cut off mid tool call.
+	truncated := `{"path": "main.go"`
+	first := map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "call_1", "type": "function", "function": map[string]any{"name": "write_file", "arguments": ""}}}}}}}
+	second := map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{map[string]any{"index": 0, "function": map[string]any{"arguments": truncated}}}}}}}
+	srv, mc := newTestStreamServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		b1, _ := json.Marshal(first)
+		b2, _ := json.Marshal(second)
+		fmt.Fprint(w, sseEvent(string(b1)))
+		fmt.Fprint(w, sseEvent(string(b2)))
+		// Connection closes cleanly here: no finish_reason, no [DONE].
+	})
+	defer srv.Close()
+
+	_, err := mc.ChatStream(context.Background(), []Message{{Role: "user", Content: "write main.go"}}, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for stream cut off mid tool call")
+	}
+	if !strings.Contains(err.Error(), "finish_reason") {
+		t.Fatalf("err = %v, want mention of missing finish_reason", err)
+	}
+}
+
 func decodeJSON(r *http.Request, v interface{}) error {
 	defer r.Body.Close()
 	return json.NewDecoder(r.Body).Decode(v)

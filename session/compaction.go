@@ -109,8 +109,22 @@ func (c *ContextCompactor) Compact(ctx context.Context, messages []provider.Mess
 		}
 	}
 
-	toCompact := nonSystem[:len(nonSystem)-recentKeep]
-	recent := nonSystem[len(nonSystem)-recentKeep:]
+	start := len(nonSystem) - recentKeep
+	// The recent window must never start with a tool message: a tool result
+	// is only valid API input while the assistant message that declared its
+	// tool_calls is kept alongside it. Walk the boundary back to a safe
+	// spot; if the tail is one unbroken tool exchange, skip this compaction.
+	for start > 0 && nonSystem[start].Role == "tool" {
+		start--
+	}
+	if start <= 0 {
+		slog.Warn("compaction skipped: no safe boundary for recent window")
+		return messages, nil
+	}
+	slog.Info("context compacting", "total", len(nonSystem), "dropped", start, "kept", len(nonSystem)-start)
+
+	toCompact := nonSystem[:start]
+	recent := nonSystem[start:]
 
 	historyText := c.formatMessages(toCompact)
 	summary, err := c.callLLMCompact(ctx, goal, historyText)

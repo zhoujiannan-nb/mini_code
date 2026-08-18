@@ -199,10 +199,16 @@ func (mc *ModelClient) readStream(ctx context.Context, body io.Reader, onChunk f
 	if err := scanner.Err(); err != nil && !finished {
 		return nil, fmt.Errorf("read stream: %w", err)
 	}
-	// Tolerate EOF without [DONE] (vLLM closes the connection); only fail
-	// when nothing at all was received.
-	if !finished && acc.content == "" && acc.reasoning == "" && len(acc.toolCalls) == 0 {
-		return nil, fmt.Errorf("stream ended unexpectedly")
+	// A well-formed SSE chat stream always ends with a chunk carrying a
+	// finish_reason (or [DONE]). EOF without one means the connection
+	// dropped mid-response. Never accept a partial result: a truncated
+	// tool-call, once persisted, poisons the history and the next request
+	// fails with "function.arguments must be valid JSON".
+	if !finished {
+		if acc.content == "" && acc.reasoning == "" && len(acc.toolCalls) == 0 {
+			return nil, fmt.Errorf("stream ended unexpectedly")
+		}
+		return nil, fmt.Errorf("stream ended without finish_reason (connection dropped mid-response); partial result discarded")
 	}
 	return &ChatResponse{
 		Content:          acc.content,
