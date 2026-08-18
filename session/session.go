@@ -75,12 +75,15 @@ func (s *Session) Prompt(ctx context.Context, goal string, maxTurns int) (string
 
 	if result.Success {
 		s.updateStatus("completed")
-	} else {
-		s.updateStatus("failed")
+		slog.Info("session done", "id", s.ID(), "turns", result.Turns, "success", true)
+		return result.Content, nil
 	}
 
-	slog.Info("session done", "id", s.ID(), "turns", result.Turns, "success", result.Success, "error", result.Error)
-	return result.Content, nil
+	// Propagate the failure reason to the caller so the UI can show it
+	// instead of silently stopping.
+	s.updateStatus("failed")
+	slog.Error("session failed", "id", s.ID(), "turns", result.Turns, "error", result.Error)
+	return result.Content, fmt.Errorf("agent task failed after %d turns: %s", result.Turns, result.Error)
 }
 
 func (s *Session) updateStatus(status string) {

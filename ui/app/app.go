@@ -603,9 +603,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle response
 	if respMsg, ok := msg.(ResponseMsg); ok {
 		m.isProcessing = false
+		// The task has finished (or been cancelled) — release its context.
+		// Calling cancel after Ctrl+C already cancelled it is a safe no-op.
+		if m.cancelFunc != nil {
+			m.cancelFunc()
+			m.cancelFunc = nil
+		}
 		if respMsg.Err != nil {
 			m.chat.AddErrorMessage(respMsg.Err)
-		} else {
+		} else if respMsg.Content != "" {
 			m.chat.UpdateStreamingContent(respMsg.Content, "")
 		}
 		// Update token count from session
@@ -838,11 +844,10 @@ func (m Model) processAgentResponse(text string) tea.Cmd {
 	return func() tea.Msg {
 		// Use session manager to run task
 		if m.sessionMgr != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			// Store cancel func via a message so the model can call it
-			defer func() {
-				// Note: cancel will be called by Ctrl+C handler or timeout
-			}()
+			// No deadline: a task may run indefinitely (long tasks can span
+			// hours). The context is cancelled explicitly — by Ctrl+C in the
+			// UI or once the task finishes (see the ResponseMsg handler).
+			ctx, cancel := context.WithCancel(context.Background())
 
 			// Determine session ID: empty for new session, non-empty to continue existing
 			sessionID := ""

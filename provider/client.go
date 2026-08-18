@@ -179,9 +179,26 @@ func (mc *ModelClient) modelName() string {
 	return ""
 }
 
+// isTokenError reports whether an API error message indicates the request
+// is too large for the model's context window (so the run should fail fast
+// instead of retrying the same oversized request).
+//
+// Keywords are deliberately specific. A broad match such as "exceeds" would
+// misclassify unrelated, retryable failures — e.g. "payload exceeds the
+// maximum size", "max concurrent requests exceeded" — and suppress retries.
 func (mc *ModelClient) isTokenError(text string) bool {
 	lower := strings.ToLower(text)
-	keywords := []string{"context length", "token limit", "max_tokens", "input tokens", "output tokens", "exceeds", "too long"}
+	keywords := []string{
+		"context length", // vLLM/OpenAI: "This model's maximum context length is ..."
+		"context window", // Ollama-style context errors
+		"max context",    // "max context size/tokens ..."
+		"token limit",
+		"max tokens",
+		"max_tokens",
+		"input tokens",
+		"output tokens",
+		"too long", // "prompt is too long: N tokens > M maximum"
+	}
 	for _, kw := range keywords {
 		if strings.Contains(lower, kw) {
 			return true
