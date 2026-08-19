@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/user/mini_code/util"
 )
 
 var dangerousPatterns = []*regexp.Regexp{
@@ -90,13 +92,34 @@ func (t *ExecTool) Execute(ctx context.Context, params map[string]interface{}) (
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	// WaitDelay bounds how long Wait will keep copying I/O after the process
+	// exits: if an orphaned grandchild keeps the pipes open, we stop waiting
+	// after this instead of hanging until it dies.
+	cmd.WaitDelay = 10 * time.Second
+
+	if err := cmd.Start(); err != nil {
+		return NewTextResult("Error: failed to start command: " + err.Error()), nil
+	}
+	// attachProcessTree (Windows): kill the whole process tree on cancel or
+	// completion, so orphaned children can neither survive nor hold the
+	// output pipes open. The returned close func is idempotent.
+	detachTree := attachProcessTree(cmd)
+	if ctx.Err() == nil {
+		go func() { <-ctx.Done(); detachTree() }()
+	}
+	defer detachTree()
+
+	err := cmd.Wait()
 	var parts []string
+	// DecodeToUTF8: on Windows cmd.exe emits its diagnostics (and many
+	// console programs their output) in the ANSI code page (GBK on Chinese
+	// systems); normalizing to UTF-8 keeps the text readable for both the
+	// LLM and the persisted session history.
 	if stdout.Len() > 0 {
-		parts = append(parts, stdout.String())
+		parts = append(parts, util.DecodeToUTF8(stdout.Bytes()))
 	}
 	if stderr.Len() > 0 {
-		s := strings.TrimSpace(stderr.String())
+		s := strings.TrimSpace(util.DecodeToUTF8(stderr.Bytes()))
 		if s != "" {
 			parts = append(parts, "STDERR:\n"+s)
 		}

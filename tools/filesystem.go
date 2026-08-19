@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/user/mini_code/util"
 )
 
 type _FsTool struct {
@@ -87,7 +89,10 @@ func (t *ReadFileTool) Execute(ctx context.Context, params map[string]interface{
 		return NewTextResult(fmt.Sprintf("(Empty file: %s)", path)), nil
 	}
 
-	content := string(raw)
+	// DecodeToUTF8: text files on Windows are often GBK (ANSI) encoded;
+	// without this the raw bytes become U+FFFD noise once the tool result
+	// is JSON-marshaled for the LLM or persisted.
+	content := util.DecodeToUTF8(raw)
 	lines := strings.Split(content, "\n")
 	total := len(lines)
 

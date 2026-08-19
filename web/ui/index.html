@@ -607,8 +607,11 @@ function liveCommit() {
 /* ---------------- 发送 / 停止 ---------------- */
 function setRunning(on) {
   state.running = on;
+  // btn-stop is hidden by CSS (display:none), so showing it requires an
+  // explicit display value — clearing the inline style would fall back to
+  // the CSS rule and keep it hidden.
   $("#btn-send").style.display = on ? "none" : "";
-  $("#btn-stop").style.display = on ? "" : "none";
+  $("#btn-stop").style.display = on ? "inline-block" : "none";
   compactBtnState();
   renderSessions();
 }
