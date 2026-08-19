@@ -4,10 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 
+	"github.com/user/mini_code/agent"
 	"github.com/user/mini_code/provider"
 	"github.com/user/mini_code/util"
 )
@@ -129,7 +128,10 @@ func (c *ContextCompactor) Compact(ctx context.Context, messages []provider.Mess
 	historyText := c.formatMessages(toCompact)
 	summary, err := c.callLLMCompact(ctx, goal, historyText)
 	if err != nil {
-		return messages, nil
+		// Surface the error to callers. CheckAndCompress (auto path)
+		// deliberately ignores it and keeps the original context; the manual
+		// path reports it to the user instead of writing an empty summary.
+		return messages, fmt.Errorf("生成压缩摘要失败: %w", err)
 	}
 
 	var newMessages []provider.Message
@@ -168,26 +170,31 @@ func (c *ContextCompactor) callLLMCompact(ctx context.Context, goal, historyText
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
 	}
-	resp, err := c.client.Chat(ctx, messages, nil, provider.WithTemperature(0.3), provider.WithMaxTokens(4096))
+	resp, err := c.client.Chat(ctx, messages, nil, provider.WithTemperature(0.3), provider.WithMaxTokens(8192))
 	if err != nil {
 		return "", err
 	}
 	if resp.Error != "" {
 		return "", fmt.Errorf("%s", resp.Error)
 	}
-	return strings.TrimSpace(resp.Content), nil
+	summary := strings.TrimSpace(resp.Content)
+	if summary == "" {
+		// Reasoning models can spend their output budget (or place the
+		// summary) in reasoning_content; fall back to it rather than
+		// writing an empty <previous-summary> block.
+		summary = strings.TrimSpace(resp.ReasoningContent)
+	}
+	if summary == "" {
+		return "", fmt.Errorf("模型返回空摘要")
+	}
+	return summary, nil
 }
 
 func loadCompactionPrompt() string {
-	path := filepath.Join("agent", "prompts", "compaction.txt")
-	data, err := readFile(path)
-	if err != nil {
-		return compactSystemPrompt
+	// CWD override (agent/prompts/compaction.txt) or the copy embedded in
+	// the binary; last resort is the minimal built-in prompt.
+	if p := agent.LoadPrompt("compaction.txt"); p != "" {
+		return p
 	}
-	return strings.TrimSpace(data)
-}
-
-func readFile(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	return string(data), err
+	return compactSystemPrompt
 }

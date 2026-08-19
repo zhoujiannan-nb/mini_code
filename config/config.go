@@ -3,6 +3,7 @@ package config
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,9 +11,51 @@ import (
 	"strings"
 )
 
+// ErrNoChange is returned by a config save when nothing changed.
+var ErrNoChange = errors.New("no config changes")
+
 type AppConfig struct {
-	Model   ModelConfig `json:"model"`
-	WebPort int         `json:"web_port"`
+	Model    ModelConfig    `json:"model"`
+	WebPort  int            `json:"web_port"`
+	DingTalk DingTalkConfig `json:"dingtalk"`
+}
+
+// Validate checks the config is usable. Called before a web-driven save.
+func (c *AppConfig) Validate() error {
+	if c.Model.Provider == "" {
+		return fmt.Errorf("model.provider is required")
+	}
+	if c.Model.BaseURL == "" {
+		return fmt.Errorf("model.base_url is required")
+	}
+	if c.Model.ModelName == "" {
+		return fmt.Errorf("model.model_name is required")
+	}
+	if c.Model.MaxTokens < 0 || c.Model.ContextWindow < 0 {
+		return fmt.Errorf("model token limits must be >= 0")
+	}
+	if c.WebPort < 1 || c.WebPort > 65535 {
+		return fmt.Errorf("web_port must be between 1 and 65535")
+	}
+	if c.DingTalk.Enabled {
+		if c.DingTalk.AppKey == "" || c.DingTalk.AppSecret == "" {
+			return fmt.Errorf("dingtalk is enabled but app_key/app_secret is empty")
+		}
+	}
+	return nil
+}
+
+// DingTalkConfig configures the DingTalk channel (Stream mode).
+type DingTalkConfig struct {
+	Enabled    bool     `json:"enabled"`
+	AppKey     string   `json:"app_key"`     // DingTalk app ClientID
+	AppSecret  string   `json:"app_secret"`  // DingTalk app ClientSecret
+	RobotCode  string   `json:"robot_code"`  // optional robot code
+	AllowStaff []string `json:"allow_staff"` // optional sender whitelist (staffId); empty = allow all
+
+	// ProgressInterval: seconds between progress pings for a running task.
+	// 0 (unset) = default 10; negative = progress pings disabled.
+	ProgressInterval int `json:"progress_interval"`
 }
 
 type ModelConfig struct {
@@ -25,6 +68,16 @@ type ModelConfig struct {
 	Temperature   float64 `json:"temperature"`
 	TopP          float64 `json:"top_p"`
 	ReserveTokens int     `json:"reserve_tokens"`
+
+	// CompactionEnabled toggles automatic long-context compression.
+	// Nil (key absent in config.json) = enabled (legacy behavior).
+	CompactionEnabled *bool `json:"compaction_enabled,omitempty"`
+}
+
+// Compaction reports whether automatic context compression is on.
+// An absent config key keeps the historical default: enabled.
+func (m ModelConfig) Compaction() bool {
+	return m.CompactionEnabled == nil || *m.CompactionEnabled
 }
 
 // DefaultModelConfig returns sensible defaults for model configuration.
@@ -148,6 +201,9 @@ func applyDefaults(cfg *AppConfig) {
 	if cfg.WebPort == 0 {
 		cfg.WebPort = 7500
 	}
+	if cfg.DingTalk.ProgressInterval == 0 {
+		cfg.DingTalk.ProgressInterval = 10
+	}
 }
 
 // ask reads a line from stdin with a prompt, returning defaultValue if empty.
@@ -235,6 +291,18 @@ func FirstRunSetup() (*AppConfig, error) {
 		return nil, err
 	}
 	cfg.WebPort = webPort
+
+	// --- DingTalk (optional) ---
+	fmt.Println("\n--- DingTalk Channel (optional) ---")
+	enable := ask(reader, "  Enable DingTalk channel (y/n)", "n")
+	if strings.EqualFold(enable, "y") || strings.EqualFold(enable, "yes") {
+		cfg.DingTalk.Enabled = true
+		cfg.DingTalk.AppKey = ask(reader, "  AppKey (ClientID)", "")
+		cfg.DingTalk.AppSecret = ask(reader, "  AppSecret (ClientSecret)", "")
+		if cfg.DingTalk.AppKey == "" || cfg.DingTalk.AppSecret == "" {
+			return nil, fmt.Errorf("DingTalk channel enabled but AppKey/AppSecret is empty")
+		}
+	}
 
 	return cfg, nil
 }

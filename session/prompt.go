@@ -2,8 +2,6 @@ package session
 
 import (
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/user/mini_code/agent"
@@ -102,11 +100,3 @@ func (pb *PromptBuilder) GetFilteredDefinitions(cfg *agent.AgentConfig) []provid
 	return filtered
 }
 
-func loadPromptFile(name string) string {
-	path := filepath.Join("agent", "prompts", name)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}

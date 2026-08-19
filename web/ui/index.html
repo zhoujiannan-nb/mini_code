@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mini Code</title>
+<style>
+:root {
+  --bg: #f1f5f9;
+  --card: #ffffff;
+  --border: #e2e8f0;
+  --border2: #cbd5e1;
+  --text: #1e293b;
+  --text2: #64748b;
+  --text3: #94a3b8;
+  --green: #16a34a;
+  --green-d: #15803d;
+  --green-l: #dcfce7;
+  --green-xl: #f0fdf4;
+  --green-b: #bbf7d0;
+  --blue-l: #eff6ff;
+  --blue-t: #1d4ed8;
+  --amber: #f59e0b;
+  --red: #ef4444;
+  --red-l: #fef2f2;
+  --red-b: #fecaca;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+/* 滚动条:与浅色主题一致 */
+* { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+html, body { height: 100%; }
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: var(--bg); color: var(--text);
+  display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+}
+
+/* ---------- 顶部栏 ---------- */
+header {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 14px;
+  background: #fff; border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 4px rgba(0,0,0,.05);
+  padding: 12px 20px; z-index: 10;
+}
+.logo { font-size: 18px; font-weight: 700; color: var(--text); }
+.logo span { color: var(--green); }
+.pill {
+  font-size: 12px; color: var(--text2); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px;
+  max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pill b { color: var(--text); font-weight: 600; }
+.pill .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+.dot.on { background: #22c55e; }
+.dot.off { background: var(--border2); }
+.spacer { flex: 1; }
+.icon-btn {
+  background: #fff; color: var(--text2); border: 1px solid var(--border2);
+  border-radius: 8px; padding: 7px 14px; font-size: 13px; cursor: pointer;
+}
+.icon-btn:hover { border-color: var(--green); color: var(--green); }
+
+/* ---------- 布局 ---------- */
+main { flex: 1; display: flex; min-height: 0; }
+aside {
+  width: 290px; flex: 0 0 290px; background: #fff;
+  border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0;
+}
+.new-btn {
+  margin: 12px; padding: 10px; background: var(--green); color: #fff;
+  border: none; border-radius: 8px; font-size: 14px; cursor: pointer; font-weight: 600;
+}
+.new-btn:hover { background: var(--green-d); }
+.sess-list { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+.sess-item {
+  padding: 10px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 4px;
+  border: 1px solid transparent; position: relative;
+}
+.sess-item:hover { background: var(--bg); }
+.sess-item.active { background: var(--green-xl); border-color: var(--green-b); }
+.sess-title {
+  font-size: 13px; font-weight: 600; color: #0f172a; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; padding-right: 20px;
+}
+.sess-meta { font-size: 11px; color: var(--text3); margin-top: 4px; display: flex; gap: 8px; align-items: center; }
+.sess-meta .s { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
+.s.running { background: var(--amber); }
+.s.completed { background: #22c55e; }
+.s.failed { background: var(--red); }
+.s.interrupted { background: var(--amber); }
+.s.created, .s.idle { background: var(--border2); }
+.del-btn {
+  position: absolute; right: 8px; top: 8px; width: 20px; height: 20px;
+  border: none; border-radius: 5px; background: transparent; color: var(--text3);
+  font-size: 13px; cursor: pointer; display: none; line-height: 20px;
+}
+.sess-item:hover .del-btn { display: block; }
+.del-btn:hover { background: var(--red); color: #fff; }
+.empty-hint { color: var(--text3); font-size: 12px; text-align: center; padding: 24px 12px; }
+
+/* ---------- 聊天区 ---------- */
+.chat { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chat-head {
+  height: 44px; flex: 0 0 44px; display: flex; align-items: center; padding: 0 20px; gap: 10px;
+  background: #fff; border-bottom: 1px solid var(--border);
+  font-size: 13px; color: var(--text3);
+}
+.chat-head .title { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.messages { flex: 1; overflow-y: auto; padding: 20px 24px; scroll-behavior: smooth; }
+
+/* 消息:统一的纵向卡片排布 */
+.msg { margin-bottom: 12px; }
+.m-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px;
+}
+.m-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.m-tag { font-size: 11px; font-weight: 600; border-radius: 5px; padding: 2px 8px; }
+.m-tag.user { background: var(--green-l); color: var(--green-d); }
+.m-tag.ai { background: var(--blue-l); color: var(--blue-t); }
+.m-text { font-size: 14px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+.msg.user .m-card { background: var(--green-xl); border-color: var(--green-b); }
+
+/* 思考过程:浅色字,与正文同列排布 */
+details.m-think { margin-bottom: 8px; }
+details.m-think summary {
+  cursor: pointer; font-size: 12px; color: var(--text3); user-select: none; list-style: none;
+}
+details.m-think summary::-webkit-details-marker { display: none; }
+details.m-think summary::before { content: "▸ "; }
+details.m-think[open] summary::before { content: "▾ "; }
+details.m-think[open] summary { margin-bottom: 6px; }
+.think-body {
+  color: var(--text3); font-size: 12.5px; line-height: 1.7;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 280px; overflow-y: auto;
+  border-top: 1px dashed var(--border); padding-top: 8px;
+}
+.m-think-live {
+  display: none; color: var(--text3); font-size: 12.5px; line-height: 1.7;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 200px; overflow-y: auto;
+  border-top: 1px dashed var(--border); padding-top: 8px; margin-top: 2px;
+}
+
+/* 工具调用 */
+.msg.tool .m-card { background: #f8fafc; padding: 8px 12px; font-family: Consolas, monospace; font-size: 12px; }
+.t-name { font-weight: 700; color: #334155; }
+.t-args { color: var(--text3); word-break: break-all; }
+.t-res { color: var(--text3); margin-top: 4px; word-break: break-all; white-space: pre-wrap; }
+
+/* 错误 / 状态 */
+.msg.error .m-card { background: var(--red-l); border-color: var(--red-b); }
+.msg.error .m-text { color: #b91c1c; font-size: 13px; }
+.msg.status .m-card { background: transparent; border: none; padding: 0; }
+.msg.status .m-text { color: var(--text3); font-size: 12px; }
+
+/* 实时指示 */
+.live-ind { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--green); font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+.pulse { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 1.2s ease-in-out infinite; }
+.pulse.gray { background: var(--border2); }
+@keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+
+/* 等待模型首 token(大上下文冷启动)的转圈提示 */
+.msg.pending .m-card {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--green-xl); border-color: var(--green-b);
+  color: var(--text2); font-size: 13px;
+}
+.spinner {
+  width: 16px; height: 16px; flex: 0 0 16px; border-radius: 50%;
+  border: 2px solid var(--green-b); border-top-color: var(--green);
+  animation: spin .9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.pending-sec { color: var(--text3); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.placeholder {
+  height: 100%; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; color: var(--text3); gap: 10px;
+}
+.placeholder .big { font-size: 40px; }
+.placeholder p { font-size: 14px; }
+
+/* ---------- 输入区 ---------- */
+.composer {
+  flex: 0 0 auto; padding: 14px 24px 10px; background: #fff;
+  border-top: 1px solid var(--border);
+}
+.composer-row { display: flex; gap: 10px; align-items: flex-end; }
+.composer-foot {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 8px; padding: 0 2px; font-size: 11px; color: var(--text3);
+}
+.token-usage { font-variant-numeric: tabular-nums; }
+.token-usage.warn { color: var(--amber); font-weight: 600; }
+.foot-hint { opacity: .8; }
+.compact-btn {
+  background: #fff; color: var(--text2); border: 1px solid var(--border2);
+  border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer;
+}
+.compact-btn:hover:not(:disabled) { border-color: var(--green); color: var(--green); }
+.compact-btn:disabled { opacity: .4; cursor: not-allowed; }
+.composer textarea {
+  flex: 1; resize: none; background: #fff; color: var(--text);
+  border: 1px solid var(--border2); border-radius: 10px; padding: 11px 13px;
+  font-size: 14px; font-family: inherit; line-height: 1.5; max-height: 160px; outline: none;
+}
+.composer textarea:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(22,163,74,.12); }
+.send-btn, .stop-btn {
+  height: 42px; padding: 0 20px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.send-btn { background: var(--green); color: #fff; border: 1px solid var(--green); }
+.send-btn:hover:not(:disabled) { background: var(--green-d); }
+.send-btn:disabled { opacity: .45; cursor: not-allowed; }
+.stop-btn { background: #fff; border: 1px solid var(--red); color: var(--red); display: none; }
+.stop-btn:hover { background: var(--red-l); }
+
+/* ---------- 配置弹窗 ---------- */
+.modal-mask {
+  position: fixed; inset: 0; background: rgba(15,23,42,.55);
+  display: none; align-items: center; justify-content: center; z-index: 100;
+}
+.modal-mask.open { display: flex; }
+.modal {
+  width: 640px; max-width: 94vw; max-height: 88vh; overflow-y: auto;
+  background: #fff; border-radius: 14px; padding: 22px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  animation: pop .16s ease-out;
+}
+@keyframes pop { from { transform: scale(.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.modal h2 { font-size: 17px; margin-bottom: 6px; }
+.modal h3 {
+  font-size: 13px; font-weight: 600; color: #334155; margin: 18px 0 10px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border);
+}
+.frow { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+.frow label { width: 140px; flex: 0 0 140px; font-size: 13px; color: var(--text2); }
+.frow input[type=text], .frow input[type=password], .frow input[type=number] {
+  flex: 1; background: #fff; border: 1px solid var(--border2); color: var(--text);
+  border-radius: 8px; padding: 7px 10px; font-size: 13px; outline: none; min-width: 0;
+}
+.frow input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(22,163,74,.12); }
+.frow .hint { font-size: 11px; color: var(--text3); }
+.check-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.btn {
+  padding: 8px 18px; border-radius: 8px; border: 1px solid var(--border2);
+  background: #fff; color: var(--text2); font-size: 13px; cursor: pointer;
+}
+.btn:hover { border-color: var(--green); color: var(--green); }
+.btn.primary { background: var(--green); border-color: var(--green); color: #fff; font-weight: 600; }
+.btn.primary:hover { background: var(--green-d); }
+
+/* ---------- 提示 ---------- */
+#toast {
+  position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+  background: #fff; border: 1px solid var(--border); color: var(--text);
+  padding: 10px 18px; border-radius: 10px; font-size: 13px; z-index: 99;
+  box-shadow: 0 6px 16px rgba(0,0,0,.1);
+  opacity: 0; pointer-events: none; transition: opacity .25s; max-width: 80vw;
+}
+#toast.show { opacity: 1; }
+#toast.ok { border-color: var(--green-b); color: var(--green-d); background: var(--green-xl); }
+#toast.err { border-color: var(--red-b); color: #b91c1c; background: var(--red-l); }
+
+@media (max-width: 760px) {
+  aside { width: 210px; flex-basis: 210px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Mini <span>Code</span></div>
+  <div class="pill" id="status-pill">状态加载中…</div>
+  <div class="spacer"></div>
+  <button class="icon-btn" id="btn-settings">⚙ 配置</button>
+</header>
+
+<main>
+  <aside>
+    <button class="new-btn" id="btn-new">＋ 新会话</button>
+    <div class="sess-list" id="sess-list"></div>
+  </aside>
+  <section class="chat">
+    <div class="chat-head"><span class="title" id="chat-title">新会话</span><span id="chat-sub"></span></div>
+    <div class="messages" id="messages">
+      <div class="placeholder" id="placeholder">
+        <div class="big">💬</div>
+        <p>发送消息开始对话,新会话将自动创建</p>
+      </div>
+    </div>
+    <div class="composer">
+      <div class="composer-row">
+        <textarea id="input" rows="1" placeholder="输入任务,Enter 发送,Shift+Enter 换行"></textarea>
+        <button class="send-btn" id="btn-send">发送</button>
+        <button class="stop-btn" id="btn-stop">停止</button>
+      </div>
+      <div class="composer-foot">
+        <span class="token-usage" id="token-usage">Token —</span>
+        <div style="display:flex; align-items:center; gap:10px">
+          <button class="compact-btn" id="btn-compact" title="手动压缩当前会话上下文(立即调用模型总结旧对话)">⚡ 压缩</button>
+          <span class="foot-hint">Enter 发送 · Shift+Enter 换行</span>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="modal-mask" id="settings-mask">
+  <div class="modal">
+    <h2>配置</h2>
+    <h3>模型</h3>
+    <div class="frow"><label>Provider</label><input type="text" id="c-provider" placeholder="vllm / ollama / openai"></div>
+    <div class="frow"><label>Base URL</label><input type="text" id="c-baseurl"></div>
+    <div class="frow"><label>API Key</label><input type="text" id="c-apikey"></div>
+    <div class="frow"><label>Model Name</label><input type="text" id="c-modelname"></div>
+    <div class="frow"><label>Max Tokens</label><input type="number" id="c-maxtokens"></div>
+    <div class="frow"><label>Context Window</label><input type="number" id="c-ctxwindow"></div>
+    <div class="frow"><label>Temperature</label><input type="number" id="c-temp" step="0.1" min="0" max="2"></div>
+    <div class="frow"><label>Top P</label><input type="number" id="c-topp" step="0.05" min="0" max="1"></div>
+    <div class="frow"><label>Reserve Tokens</label><input type="number" id="c-reserve"></div>
+    <div class="frow"><label>上下文自动压缩</label>
+      <div class="check-row" style="margin:0"><input type="checkbox" id="c-compaction"><label for="c-compaction" style="width:auto">接近上下文上限时自动压缩旧对话</label></div>
+      <span class="hint">关闭后不再压缩,长任务更易撞上限</span>
+    </div>
+
+    <h3>钉钉渠道</h3>
+    <div class="check-row"><input type="checkbox" id="d-enabled"><label for="d-enabled" style="width:auto">启用钉钉渠道(保存后立即生效)</label></div>
+    <div class="frow"><label>AppKey (ClientID)</label><input type="text" id="d-appkey"></div>
+    <div class="frow"><label>AppSecret</label><input type="text" id="d-appsecret"></div>
+    <div class="frow"><label>Robot Code</label><input type="text" id="d-robotcode" placeholder="可选,默认同 AppKey"></div>
+    <div class="frow"><label>白名单 (staffId)</label><input type="text" id="d-allow" placeholder="可选,逗号分隔;留空 = 所有人"></div>
+    <div class="frow"><label>进度推送间隔(秒)</label><input type="number" id="d-interval" placeholder="默认 10,负数 = 关闭"></div>
+
+    <h3>Web</h3>
+    <div class="frow"><label>Web 端口</label><input type="number" id="w-port"><span class="hint">修改需重启生效</span></div>
+
+    <div class="modal-actions">
+      <button class="btn" id="btn-cancel">取消</button>
+      <button class="btn primary" id="btn-save">保存配置</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+
+const state = {
+  sessions: [],
+  current: null,      // 当前会话 id,null = 新会话
+  running: false,
+  pendingTask: null,  // 等待 session_created 的 task_id
+  live: null,         // 当前流式输出块(DOM)
+  pending: null,      // 等待模型首 token 的转圈块(DOM)
+  ctxWindow: 0,       // 模型上下文窗口(token)
+};
+
+/* ---------------- 基础 ---------------- */
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let msg = r.status + " " + r.statusText;
+    try { const j = await r.json(); if (j.error) msg = j.error; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+function toast(msg, kind) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = "show " + (kind || "");
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.className = ""; }, 4200);
+}
+function contentText(m) {
+  if (typeof m.content === "string") return m.content;
+  if (Array.isArray(m.content)) {
+    return m.content.map(p => p.type === "text" ? (p.text || "") : "📷 [图片]").join("\n");
+  }
+  return "";
+}
+function relTime(s) {
+  if (!s) return "";
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return "刚刚";
+  if (diff < 3600) return Math.floor(diff / 60) + " 分钟前";
+  if (diff < 86400) return Math.floor(diff / 3600) + " 小时前";
+  return (d.getMonth() + 1) + "-" + d.getDate() + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+/* ---------------- 会话列表 ---------------- */
+async function loadSessions(select) {
+  try {
+    state.sessions = await api("/api/sessions");
+  } catch (e) { return; }
+  renderSessions();
+  if (select && select !== state.current) selectSession(select);
+}
+function renderSessions() {
+  const list = $("#sess-list");
+  list.innerHTML = "";
+  if (state.sessions.length === 0) {
+    list.innerHTML = '<div class="empty-hint">暂无会话<br>发送第一条消息开始</div>';
+    return;
+  }
+  for (const s of state.sessions) {
+    const el = document.createElement("div");
+    el.className = "sess-item" + (s.session_id === state.current ? " active" : "");
+    const dotClass = ["running", "completed", "failed", "interrupted"].includes(s.status) ? s.status : "idle";
+    const statusText = { running: "执行中", completed: "已完成", failed: "失败", interrupted: "已中断", created: "" }[s.status] || "";
+    el.innerHTML =
+      '<div class="sess-title">' + esc(s.title || "未命名会话") + '</div>' +
+      '<div class="sess-meta"><span class="s ' + dotClass + '"></span>' +
+      (statusText ? "<span>" + statusText + "</span>" : "") +
+      "<span>" + relTime(s.updated_at) + "</span><span>" + s.message_count + " 条</span></div>" +
+      '<button class="del-btn" title="删除会话">✕</button>';
+    el.addEventListener("click", (e) => {
+      if (e.target.classList.contains("del-btn")) return;
+      selectSession(s.session_id);
+    });
+    el.querySelector(".del-btn").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm("确定删除该会话?(消息将一并删除)")) return;
+      try {
+        await api("/api/sessions/" + s.session_id, { method: "DELETE" });
+        if (state.current === s.session_id) resetToNew();
+        await loadSessions();
+        toast("会话已删除", "ok");
+      } catch (err) { toast("删除失败:" + err.message, "err"); }
+    });
+    list.appendChild(el);
+  }
+}
+
+/* ---------------- 消息区 ---------------- */
+function messagesEl() { return $("#messages"); }
+function scrollBottom() {
+  const m = messagesEl();
+  m.scrollTop = m.scrollHeight;
+}
+function hidePlaceholder() {
+  const p = $("#placeholder");
+  if (p) p.style.display = "none";
+}
+function showPlaceholder() {
+  const m = messagesEl();
+  if (m.children.length === 0) {
+    m.innerHTML = '<div class="placeholder" id="placeholder"><div class="big">💬</div><p>发送消息开始对话,新会话将自动创建</p></div>';
+  }
+}
+function addCard(cls, inner) {
+  hidePlaceholder();
+  const m = messagesEl();
+  const div = document.createElement("div");
+  div.className = "msg " + cls;
+  div.innerHTML = "<div class=\"m-card\">" + inner + "</div>";
+  m.appendChild(div);
+  scrollBottom();
+  return div;
+}
+function addUser(text) {
+  addCard("user",
+    '<div class="m-head"><span class="m-tag user">你</span></div>' +
+    '<div class="m-text">' + esc(text) + "</div>");
+}
+function addAssistant(text, reasoning) {
+  let inner = '<div class="m-head"><span class="m-tag ai">Mini Code</span></div>';
+  if (reasoning) {
+    inner += '<details class="m-think"><summary>💭 思考过程(' + reasoning.length + ' 字)</summary><div class="think-body">' + esc(reasoning) + "</div></details>";
+  }
+  if (text) inner += '<div class="m-text">' + esc(text) + "</div>";
+  addCard("ai", inner);
+}
+function addError(text) {
+  addCard("error", '<div class="m-text">⚠ 任务失败:' + esc(text) + "</div>");
+}
+function addStatus(text) {
+  addCard("status", '<div class="m-text">' + esc(text) + "</div>");
+}
+function addToolLine(name, args, result) {
+  const a = args ? ' <span class="t-args">' + esc(String(args).slice(0, 160)) + "</span>" : "";
+  const r = result != null
+    ? '<div class="t-res">✓ ' + esc(String(result).slice(0, 300)) + "</div>"
+    : '<span class="live-ind"><span class="pulse gray"></span>运行中…</span>';
+  addCard("tool", '<span class="t-name">⚙ ' + esc(name) + "</span>" + a + r);
+}
+function markToolPendingDone(result) {
+  const cards = messagesEl().querySelectorAll(".msg.tool .m-card");
+  if (cards.length === 0) return;
+  const last = cards[cards.length - 1];
+  const ind = last.querySelector(".live-ind");
+  if (ind) ind.remove();
+  last.insertAdjacentHTML("beforeend", '<div class="t-res">✓ ' + esc(String(result).slice(0, 300)) + "</div>");
+  scrollBottom();
+}
+function renderHistory(messages) {
+  const m = messagesEl();
+  m.innerHTML = "";
+  for (const msg of messages || []) {
+    if (msg.role === "system") continue;
+    if (msg.role === "user") {
+      addUser(contentText(msg));
+    } else if (msg.role === "assistant") {
+      addAssistant(contentText(msg), msg.reasoning_content);
+      for (const tc of msg.tool_calls || []) {
+        addToolLine(tc.function && tc.function.name, tc.function && tc.function.arguments, "(历史)");
+      }
+    } else if (msg.role === "tool") {
+      addToolLine(msg.name || "tool", "", contentText(msg));
+    }
+  }
+  if ((messages || []).length === 0) showPlaceholder();
+}
+
+/* ---------------- 等待首 token(转圈) ---------------- */
+function pendingStart() {
+  pendingRemove();
+  hidePlaceholder();
+  const t0 = Date.now();
+  const div = document.createElement("div");
+  div.className = "msg pending";
+  div.innerHTML =
+    '<div class="m-card">' +
+    '<span class="spinner"></span>' +
+    '<span>等待模型响应…(大上下文首次推理可能较慢)</span>' +
+    '<span class="pending-sec"></span>' +
+    "</div>";
+  messagesEl().appendChild(div);
+  div._timer = setInterval(() => {
+    const el = div.querySelector(".pending-sec");
+    if (el) el.textContent = Math.floor((Date.now() - t0) / 1000) + "s";
+  }, 1000);
+  state.pending = div;
+  scrollBottom();
+}
+function pendingRemove() {
+  if (state.pending) {
+    clearInterval(state.pending._timer);
+    state.pending.remove();
+    state.pending = null;
+  }
+}
+
+/* ---------------- 流式输出块 ---------------- */
+function liveStart() {
+  if (state.live) return;
+  pendingRemove(); // 收到首个 token,撤掉转圈
+  hidePlaceholder();
+  const m = messagesEl();
+  const div = document.createElement("div");
+  div.className = "msg ai";
+  div.innerHTML =
+    '<div class="m-card">' +
+    '<div class="m-head"><span class="m-tag ai">Mini Code</span><span class="live-ind"><span class="pulse"></span>思考中…</span></div>' +
+    '<div class="m-think-live"></div>' +
+    '<div class="m-text" style="display:none"></div>' +
+    "</div>";
+  m.appendChild(div);
+  state.live = div;
+  scrollBottom();
+}
+function liveUpdate(kind, text) {
+  if (!state.live) return;
+  if (kind === "reasoning") {
+    const t = state.live.querySelector(".m-think-live");
+    t.textContent = text;
+    t.style.display = "block";
+    t.scrollTop = t.scrollHeight;
+  } else {
+    const b = state.live.querySelector(".m-card > .m-text");
+    b.textContent = text;
+    b.style.display = "block";
+    // 正文开始后,指示器从"思考中"切到"生成中"
+    const ind = state.live.querySelector(".live-ind");
+    if (ind && !b._labelled) { ind.lastChild.textContent = "生成中…"; b._labelled = true; }
+  }
+  scrollBottom();
+}
+function liveRemove() {
+  if (state.live) { state.live.remove(); state.live = null; }
+}
+// 把流式块固化为一条普通消息(用于工具调用前已产生的中间回复)
+function liveCommit() {
+  if (!state.live) return;
+  const think = state.live.querySelector(".m-think-live");
+  const body = state.live.querySelector(".m-card > .m-text");
+  const r = think.textContent || "";
+  const c = body.textContent || "";
+  state.live.remove();
+  state.live = null;
+  if (!r && !c) return;
+  addAssistant(c, r);
+}
+
+/* ---------------- 发送 / 停止 ---------------- */
+function setRunning(on) {
+  state.running = on;
+  $("#btn-send").style.display = on ? "none" : "";
+  $("#btn-stop").style.display = on ? "" : "none";
+  compactBtnState();
+  renderSessions();
+}
+function compactBtnState() {
+  const b = $("#btn-compact");
+  b.disabled = !state.current || state.running || !!b._busy;
+}
+async function send() {
+  const input = $("#input");
+  const text = input.value.trim();
+  if (!text || state.running) return;
+  input.value = "";
+  autoGrow();
+  liveCommit();
+  addUser(text);
+  pendingStart(); // 等待模型首 token 的转圈提示(vllm 吞长上下文时可见)
+  setRunning(true);
+  try {
+    const body = { content: text };
+    if (state.current) body.session_id = state.current;
+    const r = await api("/api/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!state.current) state.pendingTask = r.task_id;
+  } catch (e) {
+    addError("发送失败:" + e.message);
+    setRunning(false);
+  }
+}
+async function stop() {
+  if (!state.current) { toast("会话尚未创建,无法停止", "err"); return; }
+  try {
+    await api("/api/sessions/" + state.current + "/cancel", { method: "POST" });
+    toast("已发送停止请求", "ok");
+  } catch (e) { toast("停止失败:" + e.message, "err"); }
+}
+
+/* ---------------- SSE 事件 ---------------- */
+function onEvent(m) {
+  if (m.kind === "status" && m.status === "session_created") {
+    if (!state.sessions.some(s => s.session_id === m.session_id)) {
+      state.sessions.unshift({ session_id: m.session_id, title: "新会话", status: "created", message_count: 0 });
+    }
+    if (m.task_id && m.task_id === state.pendingTask) {
+      state.pendingTask = null;
+      state.current = m.session_id;  // 本地视图已包含用户消息,不重新拉历史
+      setChatTitle("会话 " + m.session_id.slice(0, 8), "");
+      renderSessions();
+      paintTokens(0);
+      compactBtnState();
+    }
+    return;
+  }
+  if (m.session_id && state.current && m.session_id !== state.current) return;
+  switch (m.kind) {
+    case "reasoning_delta":
+      if (state.current && m.session_id === state.current) {
+        liveStart();
+        liveUpdate("reasoning", m.reasoning || m.content);
+      }
+      break;
+    case "content_delta":
+      if (state.current && m.session_id === state.current) {
+        liveStart();
+        liveUpdate("content", m.content);
+      }
+      break;
+    case "tool_start":
+      pendingRemove();
+      liveCommit();
+      addToolLine(m.tool_name, m.tool_args);
+      break;
+    case "tool_end":
+      markToolPendingDone(m.tool_result);
+      break;
+    case "assistant":
+      pendingRemove();
+      liveRemove();
+      if (m.content || m.reasoning) addAssistant(m.content, m.reasoning);
+      setRunning(false);
+      updateTokenUsage();
+      loadSessions();
+      break;
+    case "error":
+      pendingRemove();
+      liveRemove();
+      addError(m.content);
+      setRunning(false);
+      updateTokenUsage();
+      loadSessions();
+      break;
+    case "status":
+      if (m.status === "interrupted") {
+        pendingRemove();
+        liveRemove();
+        addStatus("⏹ 任务已中断(已保留进度,可继续发送消息)");
+        setRunning(false);
+      } else if (m.status === "task_done") {
+        pendingRemove();
+        liveRemove();
+        setRunning(false);
+      }
+      updateTokenUsage();
+      loadSessions();
+      break;
+  }
+}
+function connectEvents() {
+  const es = new EventSource("/api/events");
+  es.onmessage = (e) => {
+    try { onEvent(JSON.parse(e.data)); } catch (err) {}
+  };
+  es.onerror = () => { /* EventSource 自动重连 */ };
+}
+
+/* ---------------- 状态条 ---------------- */
+async function loadStatus() {
+  try {
+    const s = await api("/api/status");
+    const dt = s.dingtalk_running
+      ? '<span class="dot on"></span>钉钉:已连接'
+      : (s.dingtalk_enabled ? '<span class="dot off"></span>钉钉:配置异常' : '<span class="dot off"></span>钉钉:未启用');
+    const comp = s.compaction_enabled ? "" : " · 压缩已关闭";
+    $("#status-pill").innerHTML = "<b>" + esc(s.model_name || "未配置模型") + "</b> · " + dt + " · 端口 " + s.web_port + comp;
+    state.ctxWindow = s.context_window || 0;
+    if (state.current) {
+      updateTokenUsage();
+    } else {
+      paintTokens(0);
+    }
+  } catch (e) {
+    $("#status-pill").textContent = "状态获取失败";
+  }
+}
+
+/* ---------------- 配置 ---------------- */
+async function openSettings() {
+  let cfg;
+  try { cfg = await api("/api/config"); } catch (e) { toast("读取配置失败:" + e.message, "err"); return; }
+  const M = cfg.model || {}, D = cfg.dingtalk || {};
+  $("#c-provider").value = M.provider || "";
+  $("#c-baseurl").value = M.base_url || "";
+  $("#c-apikey").value = M.api_key || "";
+  $("#c-modelname").value = M.model_name || "";
+  $("#c-maxtokens").value = M.max_tokens || "";
+  $("#c-ctxwindow").value = M.context_window || "";
+  $("#c-compaction").checked = M.compaction_enabled !== false; // 缺省 = 开启
+  $("#c-temp").value = M.temperature || "";
+  $("#c-topp").value = M.top_p || "";
+  $("#c-reserve").value = M.reserve_tokens || "";
+  $("#d-enabled").checked = !!D.enabled;
+  $("#d-appkey").value = D.app_key || "";
+  $("#d-appsecret").value = D.app_secret || "";
+  $("#d-robotcode").value = D.robot_code || "";
+  $("#d-allow").value = (D.allow_staff || []).join(", ");
+  $("#d-interval").value = D.progress_interval || "";
+  $("#w-port").value = cfg.web_port || "";
+  $("#settings-mask").classList.add("open");
+}
+async function saveSettings() {
+  const num = (v) => (v === "" ? 0 : Number(v));
+  const cfg = {
+    web_port: num($("#w-port").value),
+    model: {
+      provider: $("#c-provider").value.trim(),
+      base_url: $("#c-baseurl").value.trim(),
+      api_key: $("#c-apikey").value.trim(),
+      model_name: $("#c-modelname").value.trim(),
+      max_tokens: num($("#c-maxtokens").value),
+      context_window: num($("#c-ctxwindow").value),
+      compaction_enabled: $("#c-compaction").checked,
+      temperature: num($("#c-temp").value),
+      top_p: num($("#c-topp").value),
+      reserve_tokens: num($("#c-reserve").value),
+    },
+    dingtalk: {
+      enabled: $("#d-enabled").checked,
+      app_key: $("#d-appkey").value.trim(),
+      app_secret: $("#d-appsecret").value.trim(),
+      robot_code: $("#d-robotcode").value.trim(),
+      allow_staff: $("#d-allow").value.split(",").map(s => s.trim()).filter(Boolean),
+      progress_interval: num($("#d-interval").value),
+    },
+  };
+  try {
+    const r = await api("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cfg),
+    });
+    let msg = r.message || "已保存";
+    if (r.notes && r.notes.length) msg += "(" + r.notes.join(";") + ")";
+    toast(msg, "ok");
+    $("#settings-mask").classList.remove("open");
+    loadStatus();
+  } catch (e) {
+    toast("保存失败:" + e.message, "err");
+  }
+}
+
+/* ---------------- 输入框 ---------------- */
+function autoGrow() {
+  const i = $("#input");
+  i.style.height = "auto";
+  i.style.height = Math.min(i.scrollHeight, 160) + "px";
+}
+function setChatTitle(title, sub) {
+  $("#chat-title").textContent = title;
+  $("#chat-sub").textContent = sub || "";
+}
+
+/* ---------------- Token 用量(composer 下方) ---------------- */
+function fmtK(n) {
+  if (!n) return "—";
+  if (n >= 1000) {
+    const k = n / 1000;
+    return (k >= 100 ? Math.round(k) : Math.round(k * 10) / 10) + "K";
+  }
+  return String(n);
+}
+function paintTokens(used) {
+  const el = $("#token-usage");
+  const cap = state.ctxWindow;
+  if (!state.current) {
+    el.textContent = "Token 0 / " + fmtK(cap);
+    el.classList.remove("warn");
+    return;
+  }
+  el.textContent = "Token " + (used || 0).toLocaleString() + " / " + fmtK(cap) +
+    (cap ? " · " + Math.min(999, Math.round((used || 0) * 100 / cap)) + "%" : "");
+  el.classList.toggle("warn", cap > 0 && (used || 0) / cap >= 0.8);
+}
+async function updateTokenUsage() {
+  if (!state.current) { paintTokens(0); return; }
+  try {
+    const data = await api("/api/sessions/" + state.current);
+    if (state.current !== data.session.session_id) return; // 已切走
+    paintTokens(data.tokens);
+  } catch (e) { /* 忽略:会话可能刚被删除 */ }
+}
+function resetToNew() {
+  state.current = null;
+  state.pendingTask = null;
+  liveRemove();
+  pendingRemove();
+  messagesEl().innerHTML = "";
+  showPlaceholder();
+  setChatTitle("新会话", "发送后自动创建会话");
+  paintTokens(0);
+  renderSessions();
+  compactBtnState();
+}
+async function selectSession(id) {
+  state.current = id;
+  liveRemove();
+  pendingRemove();
+  try {
+    const data = await api("/api/sessions/" + id);
+    const s = data.session;
+    setChatTitle(s.title || "会话 " + id.slice(0, 8), (s.work_dir || "").slice(0, 60));
+    renderHistory(data.messages);
+    paintTokens(data.tokens);
+    renderSessions();
+    compactBtnState();
+  } catch (e) {
+    toast("打开会话失败:" + e.message, "err");
+  }
+}
+
+/* ---------------- 初始化 ---------------- */
+(async function init() {
+  $("#btn-new").addEventListener("click", () => { resetToNew(); $("#input").focus(); });
+  $("#btn-send").addEventListener("click", send);
+  $("#btn-stop").addEventListener("click", stop);
+  $("#input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  $("#input").addEventListener("input", autoGrow);
+  $("#btn-compact").addEventListener("click", async () => {
+    if (!state.current || state.running) return;
+    const b = $("#btn-compact");
+    b._busy = true;
+    b.disabled = true;
+    b.textContent = "压缩中…";
+    try {
+      const r = await api("/api/sessions/" + state.current + "/compact", { method: "POST" });
+      if (r.compressed) {
+        toast("上下文已压缩:" + r.before.toLocaleString() + " → " + r.after.toLocaleString() +
+          " tokens(释放 " + (r.before - r.after).toLocaleString() + ")", "ok");
+      } else {
+        toast("无需压缩:对话太短或没有可压缩的部分", "");
+      }
+      updateTokenUsage();
+    } catch (e) {
+      toast("压缩失败:" + e.message, "err");
+    } finally {
+      b._busy = false;
+      b.textContent = "⚡ 压缩";
+      compactBtnState();
+    }
+  });
+  $("#btn-settings").addEventListener("click", openSettings);
+  $("#btn-cancel").addEventListener("click", () => $("#settings-mask").classList.remove("open"));
+  $("#btn-save").addEventListener("click", saveSettings);
+  $("#settings-mask").addEventListener("click", (e) => {
+    if (e.target.id === "settings-mask") e.target.classList.remove("open");
+  });
+
+  await loadSessions();
+  loadStatus();
+  connectEvents();
+  setInterval(loadStatus, 30000);
+  setInterval(() => {
+    if (!state.running) { loadSessions(); updateTokenUsage(); }
+  }, 30000);
+  $("#input").focus();
+})();
+</script>
+</body>
+</html>

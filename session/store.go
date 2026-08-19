@@ -21,16 +21,17 @@ func NewDefaultSessionStore() (*SessionStore, error) {
 }
 
 type SessionRecord struct {
-	SessionID string                 `json:"session_id"`
-	ParentID  string                 `json:"parent_id"`
-	Title     string                 `json:"title"`
-	AgentRole string                 `json:"agent_role"`
-	WorkDir   string                 `json:"work_dir"`
-	Status    string                 `json:"status"`
-	Messages  []provider.Message     `json:"messages"`
-	Metadata  map[string]interface{} `json:"metadata"`
-	CreatedAt string                 `json:"created_at"`
-	UpdatedAt string                 `json:"updated_at"`
+	SessionID  string                 `json:"session_id"`
+	ParentID   string                 `json:"parent_id"`
+	Title      string                 `json:"title"`
+	AgentRole  string                 `json:"agent_role"`
+	WorkDir    string                 `json:"work_dir"`
+	Status     string                 `json:"status"`
+	ChannelKey string                 `json:"channel_key,omitempty"`
+	Messages   []provider.Message     `json:"messages"`
+	Metadata   map[string]interface{} `json:"metadata"`
+	CreatedAt  string                 `json:"created_at"`
+	UpdatedAt  string                 `json:"updated_at"`
 }
 
 func NewSessionRecord(title, agentRole, workDir, parentID string) *SessionRecord {
@@ -71,6 +72,7 @@ func (s *SessionStore) initDB() {
 		agent_role TEXT DEFAULT 'build',
 		work_dir TEXT DEFAULT '',
 		status TEXT DEFAULT 'created',
+		channel_key TEXT DEFAULT '',
 		messages TEXT DEFAULT '[]',
 		metadata TEXT DEFAULT '{}',
 		created_at TEXT,
@@ -78,6 +80,24 @@ func (s *SessionStore) initDB() {
 	)`)
 	s.db.InitIndex(`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_id)`)
 	s.db.InitIndex(`CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)`)
+	s.db.InitIndex(`CREATE INDEX IF NOT EXISTS idx_sessions_channel_key ON sessions(channel_key)`)
+	s.migrateChannelKey()
+}
+
+// migrateChannelKey adds the channel_key column to databases created before
+// the column existed. SQLite has no "ADD COLUMN IF NOT EXISTS", so we check
+// the table schema first.
+func (s *SessionStore) migrateChannelKey() {
+	rows, err := s.db.FetchAll("PRAGMA table_info(sessions)")
+	if err != nil {
+		return
+	}
+	for _, row := range rows {
+		if fmt.Sprint(row["name"]) == "channel_key" {
+			return
+		}
+	}
+	s.db.Execute("ALTER TABLE sessions ADD COLUMN channel_key TEXT DEFAULT ''")
 }
 
 func (s *SessionStore) Create(record *SessionRecord) error {
@@ -87,10 +107,10 @@ func (s *SessionStore) Create(record *SessionRecord) error {
 	msgsJSON, _ := json.Marshal(record.Messages)
 	metaJSON, _ := json.Marshal(record.Metadata)
 	_, err := s.db.Execute(
-		`INSERT INTO sessions (session_id, parent_id, title, agent_role, work_dir, status, messages, metadata, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (session_id, parent_id, title, agent_role, work_dir, status, channel_key, messages, metadata, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.SessionID, record.ParentID, record.Title, record.AgentRole, record.WorkDir,
-		record.Status, string(msgsJSON), string(metaJSON), record.CreatedAt, record.UpdatedAt,
+		record.Status, record.ChannelKey, string(msgsJSON), string(metaJSON), record.CreatedAt, record.UpdatedAt,
 	)
 	return err
 }
@@ -108,10 +128,33 @@ func (s *SessionStore) Update(record *SessionRecord) error {
 	msgsJSON, _ := json.Marshal(record.Messages)
 	metaJSON, _ := json.Marshal(record.Metadata)
 	_, err := s.db.Execute(
-		`UPDATE sessions SET parent_id=?, title=?, agent_role=?, work_dir=?, status=?, messages=?, metadata=?, updated_at=?
+		`UPDATE sessions SET parent_id=?, title=?, agent_role=?, work_dir=?, status=?, channel_key=?, messages=?, metadata=?, updated_at=?
 		 WHERE session_id=?`,
-		record.ParentID, record.Title, record.AgentRole, record.WorkDir, record.Status,
+		record.ParentID, record.Title, record.AgentRole, record.WorkDir, record.Status, record.ChannelKey,
 		string(msgsJSON), string(metaJSON), record.UpdatedAt, record.SessionID,
+	)
+	return err
+}
+
+// GetByChannelKey returns the most recently updated session bound to the
+// given channel key, or nil if none is bound.
+func (s *SessionStore) GetByChannelKey(key string) (*SessionRecord, error) {
+	if key == "" {
+		return nil, nil
+	}
+	row, err := s.db.FetchOne("SELECT * FROM sessions WHERE channel_key = ? ORDER BY updated_at DESC LIMIT 1", key)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	return s.rowToRecord(row)
+}
+
+// SetChannelKey binds a channel key to a session.
+func (s *SessionStore) SetChannelKey(sessionID, key string) error {
+	now := time.Now().Format(time.RFC3339)
+	_, err := s.db.Execute(
+		"UPDATE sessions SET channel_key=?, updated_at=? WHERE session_id=?",
+		key, now, sessionID,
 	)
 	return err
 }
@@ -153,14 +196,15 @@ func (s *SessionStore) ListSessions(parentID, status string, limit, offset int) 
 
 func (s *SessionStore) rowToRecord(row map[string]interface{}) (*SessionRecord, error) {
 	r := &SessionRecord{
-		SessionID: fmt.Sprint(row["session_id"]),
-		ParentID:  fmt.Sprint(row["parent_id"]),
-		Title:     fmt.Sprint(row["title"]),
-		AgentRole: fmt.Sprint(row["agent_role"]),
-		WorkDir:   fmt.Sprint(row["work_dir"]),
-		Status:    fmt.Sprint(row["status"]),
-		CreatedAt: fmt.Sprint(row["created_at"]),
-		UpdatedAt: fmt.Sprint(row["updated_at"]),
+		SessionID:  fmt.Sprint(row["session_id"]),
+		ParentID:   fmt.Sprint(row["parent_id"]),
+		Title:      fmt.Sprint(row["title"]),
+		AgentRole:  fmt.Sprint(row["agent_role"]),
+		WorkDir:    fmt.Sprint(row["work_dir"]),
+		Status:     fmt.Sprint(row["status"]),
+		ChannelKey: fmt.Sprint(row["channel_key"]),
+		CreatedAt:  fmt.Sprint(row["created_at"]),
+		UpdatedAt:  fmt.Sprint(row["updated_at"]),
 	}
 	if msgsStr, ok := row["messages"].(string); ok && msgsStr != "" {
 		json.Unmarshal([]byte(msgsStr), &r.Messages)

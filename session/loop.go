@@ -25,18 +25,19 @@ type LoopResult struct {
 }
 
 type AgentLoop struct {
-	client            *provider.ModelClient
-	maxTurns          int
-	tools             *tools.ToolRegistry
-	toolDefinitions   []provider.ToolSchema
-	compactor         *ContextCompactor
-	onToolCallDecided func(id, name, args string)
-	onToolCallStart   func(id, name string)
-	onToolCallEnd     func(id, name string, result string)
-	onAssistantReply  func(content, reasoningContent string)
+	client           *provider.ModelClient
+	maxTurns         int
+	tools            *tools.ToolRegistry
+	toolDefinitions  []provider.ToolSchema
+	compactor        *ContextCompactor
+	compactionOn     bool // false = skip CheckAndCompress entirely
+	onToolCallStart  func(name string, params map[string]interface{})
+	onToolCallEnd    func(name string, params map[string]interface{}, result string)
+	onAssistantReply func(content string, reasoning string)
+	onTurn           func(turn int, messages []provider.Message)
 }
 
-func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tools.ToolRegistry, defs []provider.ToolSchema, onToolCallDecided func(string, string, string), onToolCallStart func(string, string), onToolCallEnd func(string, string, string), onAssistantReply func(string, string)) *AgentLoop {
+func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tools.ToolRegistry, defs []provider.ToolSchema, onToolCallStart func(string, map[string]interface{}), onToolCallEnd func(string, map[string]interface{}, string), onAssistantReply func(string, string), onTurn func(int, []provider.Message)) *AgentLoop {
 	if maxTurns <= 0 {
 		maxTurns = 999
 	}
@@ -44,15 +45,25 @@ func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tool
 		toolRegistry = tools.NewToolRegistry()
 	}
 	return &AgentLoop{
-		client:            client,
-		maxTurns:          maxTurns,
-		tools:             toolRegistry,
-		toolDefinitions:   defs,
-		compactor:         NewContextCompactor(client),
-		onToolCallDecided: onToolCallDecided,
-		onToolCallStart:   onToolCallStart,
-		onToolCallEnd:     onToolCallEnd,
-		onAssistantReply:  onAssistantReply,
+		client:           client,
+		maxTurns:         maxTurns,
+		tools:            toolRegistry,
+		toolDefinitions:  defs,
+		compactor:        NewContextCompactor(client),
+		compactionOn:     true, // default keeps legacy behavior; callers may opt out
+		onToolCallStart:  onToolCallStart,
+		onToolCallEnd:    onToolCallEnd,
+		onAssistantReply: onAssistantReply,
+		onTurn:           onTurn,
+	}
+}
+
+// persistTurn invokes the per-turn persistence hook. The hook saves the
+// accumulated conversation to the database after every completed turn so an
+// interrupted task can be resumed from the last good state.
+func (l *AgentLoop) persistTurn(turn int, messages []provider.Message) {
+	if l.onTurn != nil {
+		l.onTurn(turn, messages)
 	}
 }
 
@@ -85,16 +96,19 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			return &LoopResult{Interrupted: true, Messages: messages, Turns: turn - 1}, nil
 		}
 
-		// compact context
-		var err error
-		messages, err = l.compactor.CheckAndCompress(ctx, messages, l.client.GetMaxInput())
-		if err != nil {
-			slog.Warn("compaction failed", "err", err)
+		// compact context (skipped entirely when the compaction toggle is off)
+		if l.compactionOn {
+			var err error
+			messages, err = l.compactor.CheckAndCompress(ctx, messages, l.client.GetMaxInput())
+			if err != nil {
+				slog.Warn("compaction failed", "err", err)
+			}
+			if ctx.Err() != nil {
+				slog.Info("agent loop interrupted after compaction", "turn", turn)
+				return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
+			}
 		}
-		if ctx.Err() != nil {
-			slog.Info("agent loop interrupted after compaction", "turn", turn)
-			return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
-		}
+		l.persistTurn(turn, messages)
 
 		// call LLM (streaming: chunks are forwarded to the UI via throttled callback)
 		var flusher *streamFlusher
@@ -128,6 +142,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		if parsed.toolCallError {
 			messages = append(messages, provider.Message{Role: "assistant", Content: parsed.toolCallErrorContent, ReasoningContent: resp.ReasoningContent})
 			messages = append(messages, provider.Message{Role: "user", Content: "The above tool call format is incorrect. Use structured tool_calls with valid JSON."})
+			l.persistTurn(turn, messages)
 			continue
 		}
 
@@ -142,15 +157,9 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 					parsed.toolCalls[i].ID = "call_" + util.RandomHex(8)
 				}
 			}
-			// Notify UI of assistant text reply (if any)
+			// Notify consumers of assistant text reply (if any)
 			if parsed.content != "" && l.onAssistantReply != nil {
 				l.onAssistantReply(parsed.content, resp.ReasoningContent)
-			}
-			// Notify UI of the tool call decision (before execution starts)
-			if l.onToolCallDecided != nil {
-				for _, tc := range parsed.toolCalls {
-					l.onToolCallDecided(tc.ID, tc.Function.Name, tc.Function.Arguments)
-				}
 			}
 			messages = append(messages, provider.Message{
 				Role:             "assistant",
@@ -163,14 +172,18 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				slog.Info("agent loop interrupted during tool execution", "turn", turn)
 				return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
 			}
+			// Turn complete: persist the conversation for interrupt recovery.
+			l.persistTurn(turn, messages)
 			continue
 		}
 
 		// pure text response -> done
 		messages = append(messages, provider.Message{Role: "assistant", Content: parsed.content, ReasoningContent: resp.ReasoningContent})
+		l.persistTurn(turn, messages)
 		return &LoopResult{Success: true, Content: parsed.content, Messages: messages, Turns: turn}, nil
 	}
 
+	l.persistTurn(l.maxTurns, messages)
 	return &LoopResult{Success: false, Messages: messages, Turns: l.maxTurns, Error: fmt.Sprintf("max turns reached (%d)", l.maxTurns)}, nil
 }
 
@@ -295,10 +308,14 @@ func (l *AgentLoop) parseToolCallJSON(content string) *provider.ToolCall {
 }
 
 func (l *AgentLoop) handleToolCalls(ctx context.Context, messages []provider.Message, toolCalls []provider.ToolCall) []provider.Message {
-	// Notify UI that tool execution is starting
+	// Notify consumers that tool execution is starting
 	if l.onToolCallStart != nil {
 		for _, tc := range toolCalls {
-			l.onToolCallStart(tc.ID, tc.Function.Name)
+			var params map[string]interface{}
+			if tc.Function.Arguments != "" {
+				json.Unmarshal([]byte(tc.Function.Arguments), &params)
+			}
+			l.onToolCallStart(tc.Function.Name, params)
 		}
 	}
 
@@ -335,16 +352,24 @@ func (l *AgentLoop) executeToolsConcurrent(ctx context.Context, toolCalls []prov
 			// Skip if context already cancelled.
 			if ctx.Err() != nil {
 				results[idx] = tools.NewTextResult("Interrupted")
-				// Notify UI that tool call ended (interrupted)
+				// Notify consumers that tool call ended (interrupted)
 				if l.onToolCallEnd != nil {
-					l.onToolCallEnd(tc.ID, tc.Function.Name, "Interrupted")
+					var params map[string]interface{}
+					if tc.Function.Arguments != "" {
+						json.Unmarshal([]byte(tc.Function.Arguments), &params)
+					}
+					l.onToolCallEnd(tc.Function.Name, params, "Interrupted")
 				}
 				return
 			}
 			results[idx] = l.executeSingleTool(ctx, tc)
-			// Notify UI that tool call ended
+			// Notify consumers that tool call ended
 			if l.onToolCallEnd != nil {
-				l.onToolCallEnd(tc.ID, tc.Function.Name, results[idx].Text)
+				var params map[string]interface{}
+				if tc.Function.Arguments != "" {
+					json.Unmarshal([]byte(tc.Function.Arguments), &params)
+				}
+				l.onToolCallEnd(tc.Function.Name, params, results[idx].Text)
 			}
 		}(i, tc)
 	}
@@ -383,19 +408,20 @@ func (l *AgentLoop) toToolSchemas(defs []provider.ToolSchema) []provider.ToolSch
 	return result
 }
 
-// streamFlusher coalesces streaming deltas so the UI receives at most one
-// update per tick interval, preventing message storms on fast streams.
+// streamFlusher coalesces streaming deltas so the consumer receives at most
+// one update per tick interval, preventing message storms on fast streams.
+// Content and ReasoningContent are accumulated values (never deltas).
 type streamFlusher struct {
 	mu        sync.Mutex
 	content   string
 	reasoning string
 	dirty     bool
-	onReply   func(content, reasoningContent string)
+	onReply   func(content string, reasoning string)
 	ticker    *time.Ticker
 	done      chan struct{}
 }
 
-func newStreamFlusher(onReply func(content, reasoningContent string)) *streamFlusher {
+func newStreamFlusher(onReply func(content string, reasoning string)) *streamFlusher {
 	return &streamFlusher{onReply: onReply}
 }
 
@@ -443,4 +469,15 @@ func (f *streamFlusher) flush() {
 	f.dirty = false
 	f.mu.Unlock()
 	f.onReply(c, r)
+}
+
+// LastAssistantReasoning returns the reasoning_content of the last assistant
+// message in the conversation ("" when none carries any).
+func LastAssistantReasoning(messages []provider.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "assistant" {
+			return messages[i].ReasoningContent
+		}
+	}
+	return ""
 }

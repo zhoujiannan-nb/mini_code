@@ -9,7 +9,7 @@ import (
 )
 
 type SessionPrompter interface {
-	Prompt(ctx context.Context, goal string, maxTurns int) (string, error)
+	Prompt(ctx context.Context, goal string, maxTurns int) (string, string, error)
 }
 
 type SessionCreator interface {
@@ -100,7 +100,7 @@ func (t *TaskTool) Execute(ctx context.Context, params map[string]interface{}) (
 		return NewTextResult(fmt.Sprintf("Error: failed to create sub-session: %s", err)), nil
 	}
 
-	result, err := session.Prompt(ctx, goal, 999)
+	result, _, err := session.Prompt(ctx, goal, 999)
 	if err != nil {
 		return NewTextResult(fmt.Sprintf("[Sub-agent '%s' failed] Error: %s", subAgent, err)), nil
 	}

@@ -79,7 +79,7 @@ func mergePermissions(overrides ...map[string]interface{}) PermissionConfig {
 }
 
 func BuildAgentConfig() *AgentConfig {
-	prompt := loadPrompt("build.txt")
+	prompt := LoadPrompt("build.txt")
 	return &AgentConfig{
 		Name:        "build",
 		Role:        RoleBuild,
@@ -96,7 +96,7 @@ func BuildAgentConfig() *AgentConfig {
 }
 
 func ExploreAgentConfig() *AgentConfig {
-	prompt := loadPrompt("explore.txt")
+	prompt := LoadPrompt("explore.txt")
 	return &AgentConfig{
 		Name:        "explore",
 		Role:        RoleExplore,
@@ -114,7 +114,7 @@ func ExploreAgentConfig() *AgentConfig {
 }
 
 func GenerateAgentConfig() *AgentConfig {
-	prompt := loadPrompt("generate.txt")
+	prompt := LoadPrompt("generate.txt")
 	return &AgentConfig{
 		Name:        "generate",
 		Role:        RoleGenerate,
@@ -219,11 +219,4 @@ func ListAllAgents() map[string]string {
 	return result
 }
 
-func loadPrompt(filename string) string {
-	path := filepath.Join("agent", "prompts", filename)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
+
