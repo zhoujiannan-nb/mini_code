@@ -34,7 +34,23 @@ func (s *Session) Record() *SessionRecord { return s.record }
 
 // Prompt runs one agent task and returns the final reply text together with
 // the reasoning_content the model produced for it (may be empty).
-func (s *Session) Prompt(ctx context.Context, goal string, maxTurns int) (string, string, error) {
+//
+// Panic containment: any panic inside the task (LLM path, compaction, tool
+// execution, persistence) is converted into a clean task failure instead of
+// crashing the whole process — the server keeps serving other sessions.
+func (s *Session) Prompt(ctx context.Context, goal string, maxTurns int) (content string, reasoning string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("agent task panicked, contained", "session", s.ID(), "panic", r)
+			func() {
+				defer func() { recover() }() // never let the bookkeeping itself re-panic
+				s.updateStatus("failed")
+			}()
+			content = ""
+			reasoning = ""
+			err = fmt.Errorf("agent task crashed (panic: %v)", r)
+		}
+	}()
 	s.updateStatus("running")
 
 	cfg := s.agentCfg
@@ -85,7 +101,7 @@ func (s *Session) Prompt(ctx context.Context, goal string, maxTurns int) (string
 		s.store.Update(s.record)
 	}
 
-	reasoning := LastAssistantReasoning(result.Messages)
+	reasoning = LastAssistantReasoning(result.Messages)
 
 	if result.Interrupted {
 		// Mark the session so a later run can resume from the persisted

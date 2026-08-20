@@ -416,6 +416,16 @@ func (h *Hub) getRunCtx() context.Context {
 // agent loop, and emits the produced messages.
 func (h *Hub) process(m Message) {
 	taskID := m.ID
+	// Last-resort panic containment: a panic anywhere in task handling that
+	// escaped the inner guards (session.Prompt / tool execution) must not
+	// kill the hub goroutine and with it the whole server. The affected task
+	// gets a clean error; everything else keeps working.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("task processing panicked, contained", "task", taskID, "session", m.SessionID, "panic", r)
+			h.emit(NewErrorMessage(taskID, m.SessionID, m.SessionKey, m.Channel, fmt.Sprintf("task crashed (panic: %v)", r)))
+		}
+	}()
 	sess, err := h.resolveSession(m)
 	if err != nil {
 		slog.Error("resolve session failed", "task", taskID, "channel", m.Channel, "err", err)

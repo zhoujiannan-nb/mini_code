@@ -97,6 +97,14 @@ func (d *dtController) apply(cfg config.DingTalkConfig) string {
 	d.running = true
 	slog.Info("dingtalk channel starting", "app_key", cfg.AppKey[:min(4, len(cfg.AppKey))]+"***")
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("dingtalk channel panicked, contained", "panic", r)
+				d.mu.Lock()
+				d.running = false
+				d.mu.Unlock()
+			}
+		}()
 		if err := client.Start(ctx); err != nil && ctx.Err() == nil {
 			slog.Error("dingtalk channel stopped", "err", err)
 			d.mu.Lock()

@@ -58,11 +58,12 @@ type AgentConfig struct {
 }
 
 var basePermissions = map[string]interface{}{
-	"read_file": "allow",
-	"list_dir":  "allow",
-	"exec":      "allow",
-	"skills":    "allow",
-	"readimg":   "allow",
+	"read_file":    "allow",
+	"list_dir":     "allow",
+	"search_files": "allow",
+	"exec":         "allow",
+	"skills":       "allow",
+	"readimg":      "allow",
 }
 
 func mergePermissions(overrides ...map[string]interface{}) PermissionConfig {
@@ -88,9 +89,12 @@ func BuildAgentConfig() *AgentConfig {
 		Mode:        "primary",
 		MaxTurns:    999,
 		Permissions: mergePermissions(map[string]interface{}{
-			"write_file": "allow",
-			"edit_file":  "allow",
-			"task":       "allow",
+			"write_file":  "allow",
+			"edit_file":   "allow",
+			"delete_file": "allow",
+			"move_file":   "allow",
+			"copy_file":   "allow",
+			"task":        "allow",
 		}),
 	}
 }

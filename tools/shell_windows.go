@@ -5,10 +5,36 @@ package tools
 import (
 	"os/exec"
 	"sync"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+// applyRawCmdLine makes the started cmd.exe receive exactly the command
+// string the model wrote, bypassing Go's per-argument escaping.
+//
+// Why: exec.Command("cmd", "/C", command) lets Go escape each argument
+// (inner double quotes become \", and the whole command gets wrapped in
+// extra quotes when it contains spaces). cmd.exe then applies its own
+// quote-stripping rules to that mangled line, so commands containing
+// double quotes break in the field:
+//   - `python -c "print('a b')"` reaches python as `print('a` -> SyntaxError
+//   - `dir "C:\Program Files"` fails with "syntax is incorrect"
+//   - `echo "hi"` prints `\"hi\"`
+// Setting SysProcAttr.CmdLine passes the command line verbatim to
+// CreateProcess (the first token is ignored because the program name is
+// given separately), so cmd.exe parses exactly what the model wrote.
+func applyRawCmdLine(cmd *exec.Cmd, command string) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	prog := cmd.Path
+	if prog == "" {
+		prog = "cmd"
+	}
+	cmd.SysProcAttr.CmdLine = prog + " /C " + command
+}
 
 // attachProcessTree places the started process (and every descendant it
 // spawns) into a Windows job object configured with KILL_ON_JOB_CLOSE.

@@ -1,8 +1,11 @@
 package session
 
 import (
+	"fmt"
 	"log/slog"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/user/mini_code/agent"
 	"github.com/user/mini_code/provider"
@@ -56,10 +59,55 @@ func (pb *PromptBuilder) registerDefaultTools() {
 	pb.Tools.Register(tools.NewReadFileTool(ws))
 	pb.Tools.Register(tools.NewWriteFileTool(ws))
 	pb.Tools.Register(tools.NewEditFileTool(ws))
+	pb.Tools.Register(tools.NewDeleteFileTool(ws))
+	pb.Tools.Register(tools.NewMoveFileTool(ws))
+	pb.Tools.Register(tools.NewCopyFileTool(ws))
 	pb.Tools.Register(tools.NewListDirTool(ws))
+	pb.Tools.Register(tools.NewGlobTool(ws))
 	pb.Tools.Register(tools.NewExecTool(120, ws))
+	pb.Tools.Register(tools.NewSearchTool(ws))
 	pb.Tools.Register(tools.NewSkillsTool(ws))
 	pb.Tools.Register(tools.NewReadImgTool(ws))
+}
+
+// environmentSection tells the model which OS it runs on and which shell
+// dialect the exec tool speaks. LLMs default to Unix syntax (ls, cat, grep,
+// ";"); on Windows cmd.exe that fails on the first try, so an explicit,
+// short cheat-sheet cuts failed exec turns without bloating the prompt.
+func environmentSection() string {
+	switch runtime.GOOS {
+	case "windows":
+		return `# Environment
+
+Operating system: Windows. The exec tool runs commands through cmd.exe, NOT a Unix shell. Use Windows syntax:
+- dir (not ls), type (not cat), findstr (not grep), copy (not cp), move (not mv), del/erase (not rm), mkdir (no -p flag), ren (not mv)
+- Chain commands with && (the ; separator does not work in cmd)
+- Quote paths that contain spaces; both / and \ work as path separators in most tools
+- Python is usually invoked as "python", not "python3"
+- If a Unix-style command fails, translate it to its cmd equivalent immediately instead of retrying the same command.`
+	case "darwin":
+		return "# Environment\n\nOperating system: macOS. The exec tool runs commands through sh (POSIX shell)."
+	default:
+		return "# Environment\n\nOperating system: " + runtime.GOOS + ". The exec tool runs commands through sh (POSIX shell)."
+	}
+}
+
+// currentTimeSection tells the model the actual current date and time. The
+// LLM has no clock of its own and silently guesses dates from its training
+// data ("today" is always a stale 2024/2025 date); date-related tasks
+// (naming files by date, "how many days until X", weekday questions) then
+// fail. Injecting the real timestamp costs a few tokens and makes every
+// date-dependent task correct by construction.
+func currentTimeSection() string {
+	now := time.Now()
+	_, offset := now.Zone()
+	sign := "+"
+	if offset < 0 {
+		sign = "-"
+		offset = -offset
+	}
+	return fmt.Sprintf("# Current Time\n\nThe current date and time is: %s (%s), UTC%s%02d:%02d.\nUse this as the reference for anything date- or time-related (\"today\", \"this week\", file names containing dates, relative-date math). Never guess the current date from memory; if you need more precision or another timezone, verify with exec (e.g. `date`).",
+		now.Format("2006-01-02 15:04:05"), now.Format("Monday"), sign, offset/3600, (offset%3600)/60)
 }
 
 func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string {
@@ -73,6 +121,8 @@ func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string 
 	if workDir != "" {
 		parts = append(parts, "\n# Working Directory\n\nThe current working directory is: "+workDir+"\nAll file operations must be confined to this directory.\n")
 	}
+	parts = append(parts, "\n"+currentTimeSection()+"\n")
+	parts = append(parts, "\n"+environmentSection()+"\n")
 	if extraContext != "" {
 		parts = append(parts, "\n# Additional Context\n\n"+extraContext+"\n")
 	}

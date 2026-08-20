@@ -24,12 +24,20 @@ func GetDefaultDBPath() (string, error) {
 	return filepath.Join(dir, "agent.db"), nil
 }
 
+// NewDatabase opens the SQLite file with pragmas that make it safe for
+// multiple mini_code processes sharing one database (e.g. a web server and
+// a CLI, or several instances). modernc.org/sqlite only honors `_pragma`
+// query parameters — keys like `_journal_mode`/`_busy_timeout` are silently
+// ignored, which previously left the DB in rollback-journal mode with no
+// busy timeout, so concurrent writers failed immediately with SQLITE_BUSY.
+// busy_timeout is applied before journal_mode so the (persistent, file-wide)
+// WAL switch can wait out concurrent writers.
 func NewDatabase(dbPath string) (*Database, error) {
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create db dir: %w", err)
 	}
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout=30000&_pragma=journal_mode=WAL")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
