@@ -55,12 +55,14 @@ type SaveResult struct {
 type server struct {
 	be     Backend
 	static func() (string, error)
+	dirs   *DirIndex // in-memory folder index for the "@" picker
 }
 
 // NewServer builds the full HTTP handler (API + embedded web UI) wired to
 // the runtime backend.
 func NewServer(be Backend) http.Handler {
-	s := &server{be: be, static: embeddedPage}
+	s := &server{be: be, static: embeddedPage, dirs: NewDirIndex()}
+	go s.dirs.Run(context.Background())
 	mux := http.NewServeMux()
 
 	// --- web UI ---
@@ -79,6 +81,7 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)
+	mux.HandleFunc("GET /api/fs/search", s.handleFsSearch)
 
 	// --- compatibility: the original simple goal API ---
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -362,6 +365,24 @@ func (s *server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// --- folder search (the "@" picker in the composer) ---
+
+func (s *server) handleFsSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 50 {
+			limit = n
+		}
+	}
+	hits, indexing := s.dirs.Search(q, limit)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"dirs":     hits,
+		"indexing": indexing,
+		"count":    len(hits),
+	})
 }
 
 // --- compatibility: the original synchronous goal API ---

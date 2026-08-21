@@ -189,8 +189,29 @@ details.m-think[open] summary { margin-bottom: 6px; }
 /* ---------- 输入区 ---------- */
 .composer {
   flex: 0 0 auto; padding: 14px 24px 10px; background: #fff;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border); position: relative;
 }
+
+/* @ 文件夹选择器(弹出在输入框上方) */
+.fs-picker {
+  position: absolute; bottom: calc(100% - 4px); left: 24px; right: 24px;
+  background: #fff; border: 1px solid var(--border2); border-radius: 12px;
+  box-shadow: 0 -8px 28px rgba(15,23,42,.14); z-index: 40; overflow: hidden;
+}
+.fs-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; border-bottom: 1px solid var(--border);
+  font-size: 12px; color: var(--text2); background: #f8fafc;
+}
+.fs-head .fs-q { color: var(--green-d); font-weight: 600; font-family: Consolas, monospace; }
+.fs-head .fs-hint { margin-left: auto; color: var(--text3); font-size: 11px; }
+.fs-list { max-height: 280px; overflow-y: auto; padding: 4px; }
+.fs-item { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.fs-item:hover { background: var(--bg); }
+.fs-item.sel { background: var(--green-xl); outline: 1px solid var(--green-b); }
+.fs-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.fs-path { font-size: 11.5px; color: var(--text3); font-family: Consolas, monospace; margin-top: 2px; word-break: break-all; }
+.fs-empty { padding: 14px 12px; font-size: 12.5px; color: var(--text3); text-align: center; }
 .composer-row { display: flex; gap: 10px; align-items: flex-end; }
 .composer-foot {
   display: flex; justify-content: space-between; align-items: center;
@@ -296,8 +317,16 @@ details.m-think[open] summary { margin-bottom: 6px; }
       </div>
     </div>
     <div class="composer">
+      <div class="fs-picker" id="fs-picker" hidden>
+        <div class="fs-head">
+          <span>📁 插入文件夹路径</span>
+          <span class="fs-q" id="fs-q">@</span>
+          <span class="fs-hint">↑↓ 选择 · Enter 确认 · Esc 取消</span>
+        </div>
+        <div class="fs-list" id="fs-list"></div>
+      </div>
       <div class="composer-row">
-        <textarea id="input" rows="1" placeholder="输入任务,Enter 发送,Shift+Enter 换行"></textarea>
+        <textarea id="input" rows="1" placeholder="输入任务,Enter 发送,Shift+Enter 换行,@ 插入文件夹路径"></textarea>
         <button class="send-btn" id="btn-send">发送</button>
         <button class="stop-btn" id="btn-stop">停止</button>
       </div>
@@ -305,7 +334,7 @@ details.m-think[open] summary { margin-bottom: 6px; }
         <span class="token-usage" id="token-usage">Token —</span>
         <div style="display:flex; align-items:center; gap:10px">
           <button class="compact-btn" id="btn-compact" title="手动压缩当前会话上下文(立即调用模型总结旧对话)">⚡ 压缩</button>
-          <span class="foot-hint">Enter 发送 · Shift+Enter 换行</span>
+          <span class="foot-hint">Enter 发送 · Shift+Enter 换行 · @ 选文件夹</span>
         </div>
       </div>
     </div>
@@ -947,15 +976,150 @@ async function selectSession(id) {
   }
 }
 
+/* ---------------- @ 文件夹选择器 ---------------- */
+const FS_RECENT_KEY = "mini_code.recent_paths";
+const fsState = { open: false, hits: [], sel: 0, timer: null, seq: 0, indexing: false };
+
+function fsRecent() {
+  try { return JSON.parse(localStorage.getItem(FS_RECENT_KEY) || "[]"); } catch (e) { return []; }
+}
+function fsRemember(path) {
+  try {
+    const r = fsRecent().filter(p => p !== path);
+    r.unshift(path);
+    localStorage.setItem(FS_RECENT_KEY, JSON.stringify(r.slice(0, 8)));
+  } catch (e) {}
+}
+// 光标前紧邻的 "@token"(token 以空白或文本开头分隔),无则 null。
+function fsTokenAt(text, caret) {
+  const before = text.slice(0, caret);
+  const m = before.match(/@([^\s@]*)$/);
+  if (!m) return null;
+  const start = caret - m[0].length;
+  if (start > 0 && !/\s/.test(text[start - 1])) return null; // 邮箱等场景不触发
+  return { query: m[1], start };
+}
+function fsOpen(query) {
+  fsState.open = true;
+  fsState.sel = 0;
+  $("#fs-picker").hidden = false;
+  $("#fs-q").textContent = "@" + query;
+  clearTimeout(fsState.timer);
+  fsState.timer = setTimeout(() => fsDoFetch(query), 150);
+}
+function fsClose() {
+  fsState.open = false;
+  clearTimeout(fsState.timer);
+  fsState.seq++; // 丢弃在途请求
+  $("#fs-picker").hidden = true;
+}
+function fsCheckInput() {
+  const input = $("#input");
+  const tok = fsTokenAt(input.value, input.selectionStart);
+  if (tok) fsOpen(tok.query);
+  else if (fsState.open) fsClose();
+}
+async function fsDoFetch(query) {
+  const seq = ++fsState.seq;
+  let data;
+  try {
+    data = await api("/api/fs/search?q=" + encodeURIComponent(query) + "&limit=20");
+  } catch (e) {
+    if (seq === fsState.seq && fsState.open) fsRender(null, "搜索失败:" + e.message);
+    return;
+  }
+  if (seq !== fsState.seq || !fsState.open) return;
+  fsState.indexing = !!data.indexing;
+  let hits = data.dirs || [];
+  if (query === "") {
+    // 最近使用过的路径置顶
+    const rec = fsRecent().filter(p => !hits.some(h => h.path === p));
+    hits = rec.map(p => ({
+      path: p,
+      name: p.split(/[\\/]/).filter(Boolean).pop() || p,
+      parent: "",
+    })).concat(hits);
+  }
+  fsState.hits = hits;
+  fsState.sel = 0;
+  fsRender(hits, null);
+  if (data.indexing) {
+    // 目录索引还没建完:1.5s 后自动重查一次
+    fsState.timer = setTimeout(() => { if (fsState.open) fsDoFetch(query); }, 1500);
+  }
+}
+function fsRender(hits, errMsg) {
+  const list = $("#fs-list");
+  if (errMsg) {
+    list.innerHTML = '<div class="fs-empty">' + esc(errMsg) + "</div>";
+    return;
+  }
+  if (!hits || hits.length === 0) {
+    list.innerHTML = '<div class="fs-empty">' +
+      (fsState.indexing ? "🔍 正在建立目录索引,稍候…" : "没有匹配的文件夹") + "</div>";
+    return;
+  }
+  list.innerHTML = hits.map((h, i) =>
+    '<div class="fs-item' + (i === fsState.sel ? " sel" : "") + '" data-i="' + i + '">' +
+    '<div class="fs-name">📁 ' + esc(h.name) + "</div>" +
+    (h.parent && h.parent !== h.path ? '<div class="fs-path">' + esc(h.parent) + "</div>" : "") +
+    "</div>"
+  ).join("");
+  list.querySelectorAll(".fs-item").forEach(el => {
+    el.addEventListener("mousedown", (e) => {
+      e.preventDefault(); // 保持输入框焦点,避免点击时先失焦
+      fsInsert(Number(el.dataset.i));
+    });
+  });
+}
+function fsMove(d) {
+  if (!fsState.hits.length) return;
+  fsState.sel = (fsState.sel + d + fsState.hits.length) % fsState.hits.length;
+  $("#fs-list").querySelectorAll(".fs-item").forEach((el, i) => {
+    el.classList.toggle("sel", i === fsState.sel);
+    if (i === fsState.sel) el.scrollIntoView({ block: "nearest" });
+  });
+}
+// 把命中的完整路径替换掉输入框里的 "@查询词"
+function fsInsert(i) {
+  const h = fsState.hits[i];
+  if (!h) return;
+  const input = $("#input");
+  const caret = input.selectionStart;
+  const tok = fsTokenAt(input.value, caret);
+  const start = tok ? tok.start : caret;
+  const before = input.value.slice(0, start);
+  const after = input.value.slice(caret);
+  input.value = before + h.path + " " + after;
+  const pos = (before + h.path + " ").length;
+  input.setSelectionRange(pos, pos);
+  fsRemember(h.path);
+  fsClose();
+  autoGrow();
+  input.focus();
+}
+
 /* ---------------- 初始化 ---------------- */
 (async function init() {
   $("#btn-new").addEventListener("click", () => { resetToNew(); $("#input").focus(); });
   $("#btn-send").addEventListener("click", send);
   $("#btn-stop").addEventListener("click", stop);
   $("#input").addEventListener("keydown", (e) => {
+    if (fsState.open) {
+      if (e.key === "ArrowDown") { e.preventDefault(); fsMove(1); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); fsMove(-1); return; }
+      if (e.key === "Escape") { e.preventDefault(); fsClose(); return; }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        if (fsState.hits.length) fsInsert(fsState.sel);
+        else { fsClose(); send(); } // 无命中:直接按原逻辑发送
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
-  $("#input").addEventListener("input", autoGrow);
+  $("#input").addEventListener("input", () => { autoGrow(); fsCheckInput(); });
+  $("#input").addEventListener("blur", fsClose);
   $("#btn-compact").addEventListener("click", async () => {
     if (!state.current || state.running) return;
     const b = $("#btn-compact");
