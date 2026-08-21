@@ -88,11 +88,11 @@ aside {
 }
 .sess-meta { font-size: 11px; color: var(--text3); margin-top: 4px; display: flex; gap: 8px; align-items: center; }
 .sess-meta .s { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
-.s.running { background: var(--amber); }
+.s.running { background: var(--amber); animation: pulse 1.2s ease-in-out infinite; }
 .s.completed { background: #22c55e; }
 .s.failed { background: var(--red); }
 .s.interrupted { background: var(--amber); }
-.s.created, .s.idle { background: var(--border2); }
+.s.idle { background: var(--border2); }
 .del-btn {
   position: absolute; right: 8px; top: 8px; width: 20px; height: 20px;
   border: none; border-radius: 5px; background: transparent; color: var(--text3);
@@ -354,15 +354,26 @@ details.m-think[open] summary { margin-bottom: 6px; }
 "use strict";
 const $ = (s) => document.querySelector(s);
 
+// 浏览器里记住当前会话,刷新页面后自动恢复到刷新前打开的会话
+const LS_SESSION_KEY = "mini_code.current_session";
+
 const state = {
   sessions: [],
   current: null,      // 当前会话 id,null = 新会话
-  running: false,
+  running: false,     // 当前会话是否有活动任务(以服务端为准)
   pendingTask: null,  // 等待 session_created 的 task_id
+  sending: false,     // 消息已发出、会话还没创建完(此期间不要用轮询重置 running)
   live: null,         // 当前流式输出块(DOM)
   pending: null,      // 等待模型首 token 的转圈块(DOM)
   ctxWindow: 0,       // 模型上下文窗口(token)
 };
+
+function readSavedSession() {
+  try { return localStorage.getItem(LS_SESSION_KEY); } catch (e) { return null; }
+}
+function saveSession(id) {
+  try { id ? localStorage.setItem(LS_SESSION_KEY, id) : localStorage.removeItem(LS_SESSION_KEY); } catch (e) {}
+}
 
 /* ---------------- 基础 ---------------- */
 async function api(path, opts) {
@@ -406,7 +417,31 @@ async function loadSessions(select) {
     state.sessions = await api("/api/sessions");
   } catch (e) { return; }
   renderSessions();
+  syncRunning();
   if (select && select !== state.current) selectSession(select);
+}
+// SSE 事件是"有会话发生了变化"的信号:其他会话的事件不进入当前视图,
+// 但触发一次防抖的列表刷新,让侧边栏状态在秒级收敛(而不是等 30s 轮询)。
+let listRefreshTimer = null;
+function scheduleListRefresh(delay) {
+  if (listRefreshTimer) return;
+  listRefreshTimer = setTimeout(() => {
+    listRefreshTimer = null;
+    loadSessions();
+  }, delay == null ? 1500 : delay);
+}
+// 用服务端状态校准当前会话的执行状态:
+// - 页面刷新 / SSE 漏掉终结事件后,停止按钮与运行指示都能自动恢复或收敛;
+// - 会话刚发出消息、session_created 还没回来时(sending),不做降级。
+function syncRunning() {
+  if (!state.current) {
+    // 消息刚发出、会话还没创建完:保持 running,等 session_created 接管
+    if (!state.sending && !state.pendingTask) setRunning(false);
+    return;
+  }
+  const s = state.sessions.find(x => x.session_id === state.current);
+  if (!s) return;
+  setRunning(!!s.active);
 }
 function renderSessions() {
   const list = $("#sess-list");
@@ -418,8 +453,10 @@ function renderSessions() {
   for (const s of state.sessions) {
     const el = document.createElement("div");
     el.className = "sess-item" + (s.session_id === state.current ? " active" : "");
-    const dotClass = ["running", "completed", "failed", "interrupted"].includes(s.status) ? s.status : "idle";
-    const statusText = { running: "执行中", completed: "已完成", failed: "失败", interrupted: "已中断", created: "" }[s.status] || "";
+    // 执行中只看服务端的 active 标志(本进程是否有活动任务):
+    // 持久化的 status 在进程崩溃/重启后可能停留在 "running",不可信。
+    const dotClass = s.active ? "running" : (["completed", "failed", "interrupted"].includes(s.status) ? s.status : "idle");
+    const statusText = s.active ? "执行中" : { completed: "已完成", failed: "失败", interrupted: "已中断" }[s.status] || "";
     el.innerHTML =
       '<div class="sess-title">' + esc(s.title || "未命名会话") + '</div>' +
       '<div class="sess-meta"><span class="s ' + dotClass + '"></span>' +
@@ -629,6 +666,7 @@ async function send() {
   addUser(text);
   pendingStart(); // 等待模型首 token 的转圈提示(vllm 吞长上下文时可见)
   setRunning(true);
+  state.sending = true; // 新会话场景:session_created 回来前,轮询不得重置 running
   try {
     const body = { content: text };
     if (state.current) body.session_id = state.current;
@@ -641,13 +679,21 @@ async function send() {
   } catch (e) {
     addError("发送失败:" + e.message);
     setRunning(false);
+  } finally {
+    state.sending = false;
   }
 }
 async function stop() {
   if (!state.current) { toast("会话尚未创建,无法停止", "err"); return; }
   try {
-    await api("/api/sessions/" + state.current + "/cancel", { method: "POST" });
-    toast("已发送停止请求", "ok");
+    const r = await api("/api/sessions/" + state.current + "/cancel", { method: "POST" });
+    if (r.canceled) {
+      toast("已发送停止请求", "ok");
+    } else {
+      // 服务端没有活动任务(状态可能已经收尾):同步本地,别再留停止按钮
+      toast("该会话当前没有正在执行的任务", "");
+      setRunning(false);
+    }
   } catch (e) { toast("停止失败:" + e.message, "err"); }
 }
 
@@ -660,26 +706,37 @@ function onEvent(m) {
     if (m.task_id && m.task_id === state.pendingTask) {
       state.pendingTask = null;
       state.current = m.session_id;  // 本地视图已包含用户消息,不重新拉历史
+      saveSession(m.session_id);
       setChatTitle("会话 " + m.session_id.slice(0, 8), "");
       renderSessions();
       paintTokens(0);
       compactBtnState();
+      // hub 在 session_created 之后才登记任务(注册 + 写 status=running 都是
+      // 立即的),稍等再拉一次列表,侧边栏就能尽快显示"执行中"。
+      // 不立即拉:此刻 active 可能还没置位,会误闪一下停止按钮。
+      setTimeout(loadSessions, 1000);
+    } else {
+      // 别的渠道(如钉钉)新建的会话:侧边栏立即可见,随后补齐真实状态
+      renderSessions();
+      scheduleListRefresh(1000);
     }
     return;
   }
-  if (m.session_id && state.current && m.session_id !== state.current) return;
+  // 严格按会话隔离:其他会话的事件(包括当前停在新会话视图时)一律不写入
+  // 当前视图、不影响 running 状态;只当作列表变化信号,防抖刷新侧边栏。
+  if (m.session_id && m.session_id !== state.current) {
+    scheduleListRefresh();
+    return;
+  }
+  // 到达这里的会话事件都属于当前会话(上方已按 session_id 严格过滤)
   switch (m.kind) {
     case "reasoning_delta":
-      if (state.current && m.session_id === state.current) {
-        liveStart();
-        liveUpdate("reasoning", m.reasoning || m.content);
-      }
+      liveStart();
+      liveUpdate("reasoning", m.reasoning || m.content);
       break;
     case "content_delta":
-      if (state.current && m.session_id === state.current) {
-        liveStart();
-        liveUpdate("content", m.content);
-      }
+      liveStart();
+      liveUpdate("content", m.content);
       break;
     case "tool_start":
       pendingRemove();
@@ -857,14 +914,15 @@ async function updateTokenUsage() {
 function resetToNew() {
   state.current = null;
   state.pendingTask = null;
+  saveSession(null);
+  // setRunning(false) 已负责按钮与侧边栏刷新,这里不再重复渲染
+  setRunning(false); // 新会话没有运行中的任务;旧会话仍在跑的,点回它可恢复
   liveRemove();
   pendingRemove();
   messagesEl().innerHTML = "";
   showPlaceholder();
   setChatTitle("新会话", "发送后自动创建会话");
   paintTokens(0);
-  renderSessions();
-  compactBtnState();
 }
 async function selectSession(id) {
   state.current = id;
@@ -872,12 +930,18 @@ async function selectSession(id) {
   pendingRemove();
   try {
     const data = await api("/api/sessions/" + id);
+    if (state.current !== id) return; // 等待期间又切走了,丢弃过期响应
     const s = data.session;
     setChatTitle(s.title || "会话 " + id.slice(0, 8), (s.work_dir || "").slice(0, 60));
     renderHistory(data.messages);
+    // 执行状态以服务端为准:会话正在跑时恢复停止按钮,并提示任务仍在进行
+    // (刷新页面不会中断服务端的任务)。setRunning 已同步按钮/侧边栏/压缩键。
+    setRunning(!!s.active);
+    if (s.active) {
+      addStatus("⏳ 任务正在执行中 — 刷新前产生的输出不再回显,后续输出将实时显示");
+    }
     paintTokens(data.tokens);
-    renderSessions();
-    compactBtnState();
+    saveSession(id);
   } catch (e) {
     toast("打开会话失败:" + e.message, "err");
   }
@@ -925,9 +989,18 @@ async function selectSession(id) {
   await loadSessions();
   loadStatus();
   connectEvents();
+  // 刷新页面后恢复之前打开的会话(含其执行状态);会话已删除则丢弃记录
+  const saved = readSavedSession();
+  if (saved) {
+    if (state.sessions.some(s => s.session_id === saved)) selectSession(saved);
+    else saveSession(null);
+  }
   setInterval(loadStatus, 30000);
+  // 定期轮询:校准会话列表,并把当前会话的执行状态同步回服务端
+  // (运行中也不跳过,这样 SSE 漏掉终结事件时停止按钮能自动收敛)
   setInterval(() => {
-    if (!state.running) { loadSessions(); updateTokenUsage(); }
+    loadSessions();
+    updateTokenUsage();
   }, 30000);
   $("#input").focus();
 })();

@@ -319,8 +319,22 @@ func (h *Hub) Unsubscribe(name string) {
 	h.subsMu.Unlock()
 }
 
-// CancelTask cancels the currently running task of a session (if any).
-func (h *Hub) CancelTask(sessionID string) {
+// ActiveTask reports whether the session has a task running in this
+// process. The task registry is in-memory, so it answers "is a task
+// actually running right now, on this server" — it never reports stale
+// tasks of a crashed or restarted process, which is exactly what the web
+// UI needs after a page refresh (the persisted session status alone
+// cannot distinguish a live task from a stale "running" row).
+func (h *Hub) ActiveTask(sessionID string) bool {
+	h.taskMu.Lock()
+	defer h.taskMu.Unlock()
+	_, ok := h.tasks[sessionID]
+	return ok
+}
+
+// CancelTask cancels the currently running task of a session (if any). It
+// reports whether a running task was found and cancelled.
+func (h *Hub) CancelTask(sessionID string) bool {
 	h.taskMu.Lock()
 	cancel, ok := h.tasks[sessionID]
 	h.taskMu.Unlock()
@@ -328,6 +342,7 @@ func (h *Hub) CancelTask(sessionID string) {
 		slog.Info("cancelling task", "session", sessionID)
 		cancel()
 	}
+	return ok
 }
 
 // RunOnce submits an inbound message and blocks until the task it triggered

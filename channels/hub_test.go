@@ -265,3 +265,74 @@ func withKey(m Message, key string) Message {
 	m.SessionKey = key
 	return m
 }
+
+// TestHubActiveTaskAndCancel verifies the live task registry that the web
+// UI relies on after a page refresh: a running task is reported active,
+// CancelTask reports it and interrupts it, and both queries come back
+// empty once the task settles with a terminal status.
+func TestHubActiveTaskAndCancel(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	env := newTestEnv(t, func(n int64, _ []byte) (string, *mockToolCall) {
+		if n == 1 {
+			<-release // hold the first LLM call open so the task stays running
+		}
+		return "done", nil
+	})
+
+	out := env.hub.Subscribe("active-check")
+	defer env.hub.Unsubscribe("active-check")
+
+	env.hub.Submit(NewUserMessage("test", "hang"))
+
+	var id string
+	deadline := time.After(10 * time.Second)
+	for id == "" {
+		select {
+		case m := <-out:
+			if m.Kind == KindStatus && m.Status == StatusSessionCreated {
+				id = m.SessionID
+			}
+		case <-deadline:
+			t.Fatal("no session_created observed")
+		}
+	}
+
+	for i := 0; i < 400 && !env.hub.ActiveTask(id); i++ {
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !env.hub.ActiveTask(id) {
+		t.Fatal("ActiveTask = false while the task is running")
+	}
+	if !env.hub.CancelTask(id) {
+		t.Fatal("CancelTask = false while the task is running")
+	}
+
+	interrupted := false
+	deadline = time.After(10 * time.Second)
+	for !interrupted {
+		select {
+		case m := <-out:
+			if m.Kind == KindStatus && m.Status == StatusInterrupted && m.SessionID == id {
+				interrupted = true
+			}
+		case <-deadline:
+			t.Fatal("no interrupted status observed after cancel")
+		}
+	}
+
+	if env.hub.ActiveTask(id) {
+		t.Fatal("ActiveTask = true after the task was interrupted")
+	}
+	if env.hub.CancelTask(id) {
+		t.Fatal("CancelTask = true with no running task")
+	}
+
+	sess, err := env.mgr.Get(id)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if sess.Status() != "interrupted" {
+		t.Fatalf("session status = %q, want interrupted", sess.Status())
+	}
+}

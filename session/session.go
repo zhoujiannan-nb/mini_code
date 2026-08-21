@@ -184,10 +184,7 @@ type SessionManager struct {
 	store     *SessionStore
 	sessions  map[string]*Session
 	mu        sync.RWMutex
-	onToolCallStart  func(name string, params map[string]interface{})
-	onToolCallEnd    func(name string, params map[string]interface{}, result string)
-	onAssistantReply func(content string, reasoning string)
-	callbackFactory  func(sessionID string) *SessionCallbacks
+	callbackFactory func(sessionID string) *SessionCallbacks
 
 	compactionMu sync.RWMutex
 	compactionOn bool // default true (legacy behavior); hot-swappable via SetCompactionEnabled
@@ -251,17 +248,9 @@ func NewDefaultSessionManager(client *provider.ModelClient) (*SessionManager, er
 	}, nil
 }
 
-// SetToolCallCallbacks sets global callbacks for tool call events (legacy,
-// applies to every session).
-func (m *SessionManager) SetToolCallCallbacks(onStart func(string, map[string]interface{}), onEnd func(string, map[string]interface{}, string), onReply func(string, string)) {
-	m.onToolCallStart = onStart
-	m.onToolCallEnd = onEnd
-	m.onAssistantReply = onReply
-}
-
-// SetSessionCallbackFactory registers a per-session callback factory. When
-// set, it takes precedence over the global callbacks: each session (including
-// sub-agent sessions) gets its own callbacks resolved by session ID.
+// SetSessionCallbackFactory registers the per-session callback factory.
+// Every session (including sub-agent sessions) resolves its callbacks by
+// session ID through this factory; it is wired by the message hub.
 func (m *SessionManager) SetSessionCallbackFactory(f func(sessionID string) *SessionCallbacks) {
 	m.mu.Lock()
 	m.callbackFactory = f
@@ -272,16 +261,11 @@ func (m *SessionManager) SetSessionCallbackFactory(f func(sessionID string) *Ses
 func (m *SessionManager) callbacksFor(sessionID string) *SessionCallbacks {
 	m.mu.RLock()
 	f := m.callbackFactory
-	legacyStart, legacyEnd, legacyReply := m.onToolCallStart, m.onToolCallEnd, m.onAssistantReply
 	m.mu.RUnlock()
-
 	if f != nil {
 		if cbs := f(sessionID); cbs != nil {
 			return cbs
 		}
-	}
-	if legacyStart != nil || legacyEnd != nil || legacyReply != nil {
-		return &SessionCallbacks{OnToolStart: legacyStart, OnToolEnd: legacyEnd, OnReply: legacyReply}
 	}
 	return nil
 }
@@ -394,18 +378,6 @@ func (m *SessionManager) Delete(sessionID string) error {
 	delete(m.sessions, sessionID)
 	m.mu.Unlock()
 	return m.store.Delete(sessionID)
-}
-
-func (m *SessionManager) List(parentID, status string, limit, offset int) ([]*Session, error) {
-	records, err := m.store.ListSessions(parentID, status, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	var sessions []*Session
-	for _, r := range records {
-		sessions = append(sessions, m.newSession(r))
-	}
-	return sessions, nil
 }
 
 func (m *SessionManager) Close() error {

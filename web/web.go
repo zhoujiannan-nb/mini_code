@@ -125,6 +125,11 @@ type SessionSummary struct {
 	SessionID    string `json:"session_id"`
 	Title        string `json:"title"`
 	Status       string `json:"status"`
+	// Active is true only while this server is actually running a task for
+	// the session (hub task registry). It is the authoritative "running
+	// right now" flag for the UI: a persisted status of "running" can be
+	// stale after a process restart, but an active task never is.
+	Active       bool   `json:"active"`
 	AgentRole    string `json:"agent_role"`
 	WorkDir      string `json:"work_dir"`
 	ChannelKey   string `json:"channel_key,omitempty"`
@@ -133,17 +138,35 @@ type SessionSummary struct {
 	MessageCount int    `json:"message_count"`
 }
 
-func summarize(r *session.SessionRecord) SessionSummary {
+func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 	return SessionSummary{
 		SessionID:    r.SessionID,
 		Title:        r.Title,
 		Status:       r.Status,
+		Active:       s.be.Hub().ActiveTask(r.SessionID),
 		AgentRole:    r.AgentRole,
 		WorkDir:      r.WorkDir,
 		ChannelKey:   r.ChannelKey,
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 		MessageCount: len(r.Messages),
+	}
+}
+
+// summarizeSummary builds the same API entry from a lightweight store row
+// (list endpoint — no conversation payloads are loaded server-side).
+func (s *server) summarizeSummary(r session.SessionSummary) SessionSummary {
+	return SessionSummary{
+		SessionID:    r.SessionID,
+		Title:        r.Title,
+		Status:       r.Status,
+		Active:       s.be.Hub().ActiveTask(r.SessionID),
+		AgentRole:    r.AgentRole,
+		WorkDir:      r.WorkDir,
+		ChannelKey:   r.ChannelKey,
+		CreatedAt:    r.CreatedAt,
+		UpdatedAt:    r.UpdatedAt,
+		MessageCount: r.MessageCount,
 	}
 }
 
@@ -155,14 +178,16 @@ func (s *server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Root sessions only: sub-agent sessions (parent_id set) are internal.
-	records, err := s.be.Mgr().GetStore().ListSessions("", "", limit, 0)
+	// The lightweight query skips conversation payloads, so the list stays
+	// cheap enough for the UI to poll it on every SSE signal.
+	records, err := s.be.Mgr().GetStore().ListSessionSummaries(limit, 0)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	out := make([]SessionSummary, 0, len(records))
 	for _, r := range records {
-		out = append(out, summarize(r))
+		out = append(out, s.summarizeSummary(r))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -176,7 +201,7 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 	rec := sess.Record()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"session":  summarize(rec),
+		"session":  s.summarize(rec),
 		"messages": rec.Messages,
 		// Token estimate for the composer footer (xx/context_window).
 		"tokens": util.CountMessagesTokens(rec.Messages),
@@ -257,8 +282,19 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.be.Hub().CancelTask(id)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelling", "session_id": id})
+	canceled := s.be.Hub().CancelTask(id)
+	status := "cancelling"
+	if !canceled {
+		// No running task in this process: the session is idle (or the task
+		// belongs to a different server instance). The UI uses this to tell
+		// the user that there is nothing to stop.
+		status = "no_active_task"
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":     status,
+		"canceled":   canceled,
+		"session_id": id,
+	})
 }
 
 // --- events (consumer side: SSE stream of hub messages) ---

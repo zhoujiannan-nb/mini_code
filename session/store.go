@@ -100,6 +100,72 @@ func (s *SessionStore) migrateChannelKey() {
 	s.db.Execute("ALTER TABLE sessions ADD COLUMN channel_key TEXT DEFAULT ''")
 }
 
+// SessionSummary is a lightweight session row for list views: metadata plus
+// the message count, without the (potentially large) messages payload. It
+// covers root sessions only — sub-agent sessions (parent_id set) are
+// internal and stay out of channel listings.
+type SessionSummary struct {
+	SessionID    string
+	ParentID     string
+	Title        string
+	AgentRole    string
+	WorkDir      string
+	Status       string
+	ChannelKey   string
+	CreatedAt    string
+	UpdatedAt    string
+	MessageCount int
+}
+
+// ListSessionSummaries returns root-session summaries, most recently updated
+// first. The message count comes from json_array_length, so conversation
+// payloads are never loaded into a list response — the endpoint stays cheap
+// enough for frequent polling.
+func (s *SessionStore) ListSessionSummaries(limit, offset int) ([]SessionSummary, error) {
+	rows, err := s.db.FetchAll(
+		`SELECT session_id, parent_id, title, agent_role, work_dir, status, channel_key,
+		        created_at, updated_at,
+		        COALESCE(json_array_length(messages), 0) AS message_count
+		 FROM sessions
+		 WHERE parent_id IS NULL OR parent_id = ''
+		 ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+		limit, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SessionSummary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, SessionSummary{
+			SessionID:    fmt.Sprint(row["session_id"]),
+			ParentID:     fmt.Sprint(row["parent_id"]),
+			Title:        fmt.Sprint(row["title"]),
+			AgentRole:    fmt.Sprint(row["agent_role"]),
+			WorkDir:      fmt.Sprint(row["work_dir"]),
+			Status:       fmt.Sprint(row["status"]),
+			ChannelKey:   fmt.Sprint(row["channel_key"]),
+			CreatedAt:    fmt.Sprint(row["created_at"]),
+			UpdatedAt:    fmt.Sprint(row["updated_at"]),
+			MessageCount: asInt(row["message_count"]),
+		})
+	}
+	return out, nil
+}
+
+// asInt converts a SQLite scalar (int64 via database/sql) to int, tolerating
+// the float64 encoding some drivers use for INTEGER columns.
+func asInt(v interface{}) int {
+	switch n := v.(type) {
+	case int64:
+		return int(n)
+	case int:
+		return n
+	case float64:
+		return int(n)
+	}
+	return 0
+}
+
 func (s *SessionStore) Create(record *SessionRecord) error {
 	now := time.Now().Format(time.RFC3339)
 	record.CreatedAt = now
