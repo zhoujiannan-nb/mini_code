@@ -78,13 +78,3 @@ func (pc PermissionConfig) IsToolAllowed(toolName, subCmd string) bool {
 	}
 	return tp.IsAllowed(subCmd)
 }
-
-func (pc PermissionConfig) AllowedTools() []string {
-	var names []string
-	for name, tp := range pc.Tools {
-		if tp.Action == Allow || len(tp.SubCommands) > 0 {
-			names = append(names, name)
-		}
-	}
-	return names
-}

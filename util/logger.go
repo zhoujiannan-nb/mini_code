@@ -1,7 +1,6 @@
 package util
 
 import (
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -11,15 +10,9 @@ import (
 
 var Log *slog.Logger
 
-// defaultHandler is the original slog handler
-var defaultHandler slog.Handler
-
 const maxLogSize = 50 * 1024 * 1024 // 50MB
 
 func SetupLogger() {
-	// Save the default handler for later restoration
-	defaultHandler = slog.Default().Handler()
-
 	Log = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -66,11 +59,3 @@ func rotateLogFile(path string) {
 	}
 }
 
-// DisableLogger disables all log output (for TUI mode)
-func DisableLogger() {
-	discardHandler := slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})
-	Log = slog.New(discardHandler)
-	slog.SetDefault(Log)
-}

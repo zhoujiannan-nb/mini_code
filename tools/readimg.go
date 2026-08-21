@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/user/mini_code/provider"
 	gdraw "golang.org/x/image/draw"
@@ -97,48 +96,6 @@ func (t *ReadImgTool) Execute(ctx context.Context, params map[string]interface{}
 		provider.NewImagePart(dataURL),
 	}
 	return NewImageResult(parts), nil
-}
-
-func ReadImgBatch(ctx context.Context, paths []string, workspace string) *ToolResult {
-	if len(paths) == 0 {
-		return NewTextResult("No image paths provided")
-	}
-	if len(paths) > 10 {
-		paths = paths[:10]
-	}
-
-	var (
-		mu    sync.Mutex
-		parts []provider.ContentPart
-		errs  []string
-	)
-
-	var wg sync.WaitGroup
-	for _, p := range paths {
-		wg.Add(1)
-		go func(path string) {
-			defer wg.Done()
-			tool := &ReadImgTool{workspace: workspace}
-			result, err := tool.Execute(ctx, map[string]interface{}{"path": path})
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				errs = append(errs, fmt.Sprintf("%s: %s", path, err))
-				return
-			}
-			if result.HasMultimodal() {
-				parts = append(parts, result.Parts...)
-			} else {
-				parts = append(parts, provider.NewTextPart(result.Text))
-			}
-		}(p)
-	}
-	wg.Wait()
-
-	if len(errs) > 0 {
-		parts = append(parts, provider.NewTextPart("Errors:\n"+strings.Join(errs, "\n")))
-	}
-	return NewImageResult(parts)
 }
 
 func resizeImageIfNeeded(raw []byte, mime string) ([]byte, string) {

@@ -20,17 +20,8 @@ func (r *ToolRegistry) Register(t Tool) {
 	r.tools[t.Name()] = t
 }
 
-func (r *ToolRegistry) Unregister(name string) {
-	delete(r.tools, name)
-}
-
 func (r *ToolRegistry) Get(name string) Tool {
 	return r.tools[name]
-}
-
-func (r *ToolRegistry) Has(name string) bool {
-	_, ok := r.tools[name]
-	return ok
 }
 
 func (r *ToolRegistry) GetDefinitions(visibleOnly bool) []provider.ToolSchema {
@@ -62,12 +53,4 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, params map[stri
 		return NewTextResult(result.Text + hint), nil
 	}
 	return result, nil
-}
-
-func (r *ToolRegistry) ToolNames() []string {
-	names := make([]string, 0, len(r.tools))
-	for n := range r.tools {
-		names = append(names, n)
-	}
-	return names
 }

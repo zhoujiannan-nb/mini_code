@@ -61,15 +61,13 @@ func attachProcessTree(cmd *exec.Cmd) func() {
 			info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 			if _, err := windows.SetInformationJobObject(j, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err == nil {
 				if ph, err := windows.OpenProcess(windows.PROCESS_ALL_ACCESS, false, uint32(cmd.Process.Pid)); err == nil {
-					err = windows.AssignProcessToJobObject(j, ph)
+					if err := windows.AssignProcessToJobObject(j, ph); err == nil {
+						job = j
+					}
 					_ = windows.CloseHandle(ph)
 				}
-				if err == nil {
-					job = j
-				} else {
-					_ = windows.CloseHandle(j)
-				}
-			} else {
+			}
+			if job == 0 {
 				_ = windows.CloseHandle(j)
 			}
 		}

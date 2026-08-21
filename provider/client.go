@@ -207,11 +207,6 @@ func (mc *ModelClient) isTokenError(text string) bool {
 	return false
 }
 
-func (mc *ModelClient) TestConnection() bool {
-	resp, err := mc.Chat(context.Background(), []Message{{Role: "user", Content: "Hi"}}, nil)
-	return err == nil && resp != nil && resp.Error == ""
-}
-
 func (mc *ModelClient) Close() error {
 	return nil
 }

@@ -113,15 +113,6 @@ func (m *Message) GetText() string {
 	return text
 }
 
-func (m *Message) HasImages() bool {
-	for _, p := range m.ContentParts {
-		if p.Type == "image_url" && p.ImageURL != nil {
-			return true
-		}
-	}
-	return false
-}
-
 // SetTextContent sets text-only content (clears ContentParts)
 func (m *Message) SetTextContent(text string) {
 	m.Content = text

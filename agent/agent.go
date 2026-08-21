@@ -8,52 +8,11 @@ import (
 	"sync"
 )
 
-type AgentRole int
-
-const (
-	RoleBuild AgentRole = iota
-	RolePlan
-	RoleExplore
-	RoleGenerate
-)
-
-func (r AgentRole) String() string {
-	switch r {
-	case RoleBuild:
-		return "build"
-	case RolePlan:
-		return "plan"
-	case RoleExplore:
-		return "explore"
-	case RoleGenerate:
-		return "generate"
-	default:
-		return "unknown"
-	}
-}
-
-func ParseRole(s string) (AgentRole, error) {
-	switch s {
-	case "build":
-		return RoleBuild, nil
-	case "plan":
-		return RolePlan, nil
-	case "explore":
-		return RoleExplore, nil
-	case "generate":
-		return RoleGenerate, nil
-	default:
-		return -1, fmt.Errorf("unknown agent role: %s", s)
-	}
-}
-
 type AgentConfig struct {
 	Name        string
-	Role        AgentRole
 	Description string
 	Prompt      string
 	Mode        string // "primary" | "subagent"
-	MaxTurns    int
 	Permissions PermissionConfig
 }
 
@@ -83,11 +42,9 @@ func BuildAgentConfig() *AgentConfig {
 	prompt := LoadPrompt("build.txt")
 	return &AgentConfig{
 		Name:        "build",
-		Role:        RoleBuild,
 		Description: "The default agent. Executes tools based on configured permissions.",
 		Prompt:      prompt,
 		Mode:        "primary",
-		MaxTurns:    999,
 		Permissions: mergePermissions(map[string]interface{}{
 			"write_file":  "allow",
 			"edit_file":   "allow",
@@ -103,11 +60,9 @@ func ExploreAgentConfig() *AgentConfig {
 	prompt := LoadPrompt("explore.txt")
 	return &AgentConfig{
 		Name:        "explore",
-		Role:        RoleExplore,
 		Description: "Fast agent specialized for exploring codebases.",
 		Prompt:      prompt,
 		Mode:        "subagent",
-		MaxTurns:    999,
 		Permissions: mergePermissions(map[string]interface{}{
 			"write_file": "deny",
 			"edit_file":  "deny",
@@ -121,11 +76,9 @@ func GenerateAgentConfig() *AgentConfig {
 	prompt := LoadPrompt("generate.txt")
 	return &AgentConfig{
 		Name:        "generate",
-		Role:        RoleGenerate,
 		Description: "API documentation generator sub-agent.",
 		Prompt:      prompt,
 		Mode:        "subagent",
-		MaxTurns:    999,
 		Permissions: mergePermissions(map[string]interface{}{
 			"write_file": "allow",
 			"edit_file":  "allow",
@@ -162,11 +115,9 @@ func loadCustomAgents() map[string]*AgentConfig {
 			}
 			agents[name] = &AgentConfig{
 				Name:        name,
-				Role:        RoleBuild,
 				Description: "Custom agent: " + name,
 				Prompt:      strings.TrimSpace(string(data)),
 				Mode:        "subagent",
-				MaxTurns:    999,
 				Permissions: mergePermissions(map[string]interface{}{
 					"write_file": "deny",
 					"edit_file":  "deny",

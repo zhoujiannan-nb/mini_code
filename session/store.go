@@ -231,35 +231,6 @@ func (s *SessionStore) Delete(sessionID string) error {
 	return err
 }
 
-func (s *SessionStore) ListSessions(parentID, status string, limit, offset int) ([]*SessionRecord, error) {
-	query := "SELECT * FROM sessions WHERE 1=1"
-	var params []interface{}
-	if parentID != "" {
-		query += " AND parent_id = ?"
-		params = append(params, parentID)
-	}
-	if status != "" {
-		query += " AND status = ?"
-		params = append(params, status)
-	}
-	query += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
-	params = append(params, limit, offset)
-
-	rows, err := s.db.FetchAll(query, params...)
-	if err != nil {
-		return nil, err
-	}
-	var records []*SessionRecord
-	for _, row := range rows {
-		r, err := s.rowToRecord(row)
-		if err != nil {
-			continue
-		}
-		records = append(records, r)
-	}
-	return records, nil
-}
-
 func (s *SessionStore) rowToRecord(row map[string]interface{}) (*SessionRecord, error) {
 	r := &SessionRecord{
 		SessionID:  fmt.Sprint(row["session_id"]),
