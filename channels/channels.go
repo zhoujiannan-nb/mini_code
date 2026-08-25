@@ -68,6 +68,7 @@ type Message struct {
 	SessionID  string    `json:"session_id,omitempty"`
 	SessionKey string    `json:"session_key,omitempty"` // stable external conversation key (e.g. DingTalk conversationId)
 	Content    string    `json:"content"`
+	Images     []string  `json:"images,omitempty"` // data URLs (data:image/...;base64,...) attached to a user message; the model sees them on the first turn
 	Reasoning  string    `json:"reasoning,omitempty"` // on assistant messages: model reasoning_content; on KindReasoning: cumulative live reasoning
 	ToolName   string    `json:"tool_name,omitempty"`
 	ToolArgs   string    `json:"tool_args,omitempty"`
@@ -467,7 +468,7 @@ func (h *Hub) process(m Message) {
 	defer h.unregisterTask(sess.ID())
 
 	slog.Info("task started", "task", taskID, "session", sess.ID(), "channel", m.Channel)
-	content, reasoning, err := sess.Prompt(taskCtx, m.Content, h.maxTurns)
+	content, reasoning, err := sess.Prompt(taskCtx, m.Content, m.Images, h.maxTurns)
 	if err != nil {
 		slog.Error("task failed", "task", taskID, "session", sess.ID(), "err", err)
 		h.emit(NewErrorMessage(taskID, sess.ID(), sess.ChannelKey(), m.Channel, err.Error()))

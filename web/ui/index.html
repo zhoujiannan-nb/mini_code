@@ -188,8 +188,18 @@ details.m-think[open] summary { margin-bottom: 6px; }
 
 /* ---------- 输入区 ---------- */
 .composer {
-  flex: 0 0 auto; padding: 14px 24px 10px; background: #fff;
-  border-top: 1px solid var(--border); position: relative;
+  flex: 0 0 auto; padding: 12px 24px 8px; background: var(--bg);
+  position: relative;
+}
+/* 圆角卡片容器 */
+.composer-box {
+  background: #fff; border: 1px solid var(--border); border-radius: 16px;
+  padding: 10px 12px; box-shadow: 0 2px 10px rgba(15,23,42,.05);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.composer-box:focus-within {
+  border-color: var(--border2);
+  box-shadow: 0 4px 16px rgba(15,23,42,.09);
 }
 
 /* @ 文件夹选择器(弹出在输入框上方) */
@@ -212,7 +222,28 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .fs-name { font-size: 13px; font-weight: 600; color: var(--text); }
 .fs-path { font-size: 11.5px; color: var(--text3); font-family: Consolas, monospace; margin-top: 2px; word-break: break-all; }
 .fs-empty { padding: 14px 12px; font-size: 12.5px; color: var(--text3); text-align: center; }
-.composer-row { display: flex; gap: 10px; align-items: flex-end; }
+.composer-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.composer-row .row-flex { flex: 1; }
+
+/* 粘贴截图的缩略图预览 */
+.img-previews { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.img-prev {
+  position: relative; width: 72px; height: 72px; border-radius: 8px;
+  border: 1px solid var(--border2); overflow: hidden; background: var(--bg);
+}
+.img-prev img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.img-prev .rm {
+  position: absolute; top: 2px; right: 2px; width: 18px; height: 18px;
+  border-radius: 50%; background: rgba(15,23,42,.72); color: #fff;
+  font-size: 12px; line-height: 18px; text-align: center; cursor: pointer;
+  border: none; padding: 0;
+}
+.img-prev .rm:hover { background: var(--red); }
+.msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.msg-imgs img {
+  max-width: 240px; max-height: 180px; border-radius: 8px;
+  border: 1px solid var(--border2); cursor: zoom-in;
+}
 .composer-foot {
   display: flex; justify-content: space-between; align-items: center;
   margin-top: 8px; padding: 0 2px; font-size: 11px; color: var(--text3);
@@ -227,17 +258,24 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .compact-btn:hover:not(:disabled) { border-color: var(--green); color: var(--green); }
 .compact-btn:disabled { opacity: .4; cursor: not-allowed; }
 .composer textarea {
-  flex: 1; resize: none; background: #fff; color: var(--text);
-  border: 1px solid var(--border2); border-radius: 10px; padding: 11px 13px;
+  width: 100%; resize: none; background: transparent; color: var(--text);
+  border: none; padding: 4px 4px 0;
   font-size: 14px; font-family: inherit; line-height: 1.5; max-height: 160px; outline: none;
 }
-.composer textarea:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(22,163,74,.12); }
 .send-btn, .stop-btn {
-  height: 42px; padding: 0 20px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
+  height: 34px; padding: 0 18px; border-radius: 999px; font-size: 13px; font-weight: 600; cursor: pointer;
 }
 .send-btn { background: var(--green); color: #fff; border: 1px solid var(--green); }
 .send-btn:hover:not(:disabled) { background: var(--green-d); }
 .send-btn:disabled { opacity: .45; cursor: not-allowed; }
+.plus-btn {
+  width: 34px; height: 34px; flex: 0 0 auto; border-radius: 50%; cursor: pointer;
+  background: #f1f5f9; border: none; color: #475569;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s ease, color .15s ease;
+}
+.plus-btn:hover:not(:disabled) { background: #e2e8f0; color: #1e293b; }
+.plus-btn:disabled { opacity: .45; cursor: not-allowed; }
 .stop-btn { background: #fff; border: 1px solid var(--red); color: var(--red); display: none; }
 .stop-btn:hover { background: var(--red-l); }
 
@@ -325,16 +363,24 @@ details.m-think[open] summary { margin-bottom: 6px; }
         </div>
         <div class="fs-list" id="fs-list"></div>
       </div>
-      <div class="composer-row">
-        <textarea id="input" rows="1" placeholder="输入任务,Enter 发送,Shift+Enter 换行,@ 插入文件夹路径"></textarea>
-        <button class="send-btn" id="btn-send">发送</button>
-        <button class="stop-btn" id="btn-stop">停止</button>
+      <div class="composer-box">
+        <div class="img-previews" id="img-previews" hidden></div>
+        <textarea id="input" rows="1" placeholder="输入任务,Enter 发送,Shift+Enter 换行,粘贴截图,@ 插入文件夹路径"></textarea>
+        <div class="composer-row">
+          <button class="plus-btn" id="btn-plus" title="添加图片(也可直接 Ctrl+V 粘贴)">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </button>
+          <span class="row-flex"></span>
+          <button class="send-btn" id="btn-send">发送</button>
+          <button class="stop-btn" id="btn-stop">停止</button>
+        </div>
+        <input type="file" id="file-shot" accept="image/*" multiple hidden>
       </div>
       <div class="composer-foot">
         <span class="token-usage" id="token-usage">Token —</span>
         <div style="display:flex; align-items:center; gap:10px">
           <button class="compact-btn" id="btn-compact" title="手动压缩当前会话上下文(立即调用模型总结旧对话)">⚡ 压缩</button>
-          <span class="foot-hint">Enter 发送 · Shift+Enter 换行 · @ 选文件夹</span>
+          <span class="foot-hint">Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴截图 · @ 选文件夹</span>
         </div>
       </div>
     </div>
@@ -395,7 +441,75 @@ const state = {
   live: null,         // 当前流式输出块(DOM)
   pending: null,      // 等待模型首 token 的转圈块(DOM)
   ctxWindow: 0,       // 模型上下文窗口(token)
+  pendingImages: [],  // 待发送的截图 data URL(data:image/...;base64,...)
 };
+
+/* ---------------- 截图(粘贴/选择 → 缩放 → 预览) ---------------- */
+const MAX_IMAGES = 4;
+const MAX_IMAGE_DIM = 1280;      // 前端缩放到这个尺寸,控制 base64 体积和 token
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 单张 data URL 上限(前端先拦一道)
+
+// 把图片文件缩放后转成 data URL。PNG 且不大时保留原格式(截图常带透明通道),
+// 否则统一压成 JPEG 0.85(体积最小)。
+function fileToDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > MAX_IMAGE_DIM || h > MAX_IMAGE_DIM) {
+        const k = Math.min(MAX_IMAGE_DIM / w, MAX_IMAGE_DIM / h);
+        w = Math.round(w * k); h = Math.round(h * k);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, w, h); // JPEG 无透明通道,先铺白底
+      ctx.drawImage(img, 0, 0, w, h);
+      const keepPng = file.type === "image/png" && file.size < 512 * 1024;
+      const dataUrl = keepPng ? canvas.toDataURL("image/png")
+                              : canvas.toDataURL("image/jpeg", 0.85);
+      resolve(dataUrl);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("图片读取失败")); };
+    img.src = url;
+  });
+}
+
+async function addImageFiles(files) {
+  for (const f of files) {
+    if (!f || !f.type.startsWith("image/")) continue;
+    if (state.pendingImages.length >= MAX_IMAGES) {
+      toast("最多 " + MAX_IMAGES + " 张截图", "err");
+      break;
+    }
+    try {
+      const dataUrl = await fileToDataURL(f);
+      if (dataUrl.length > MAX_IMAGE_BYTES) { toast("图片过大,已跳过", "err"); continue; }
+      state.pendingImages.push(dataUrl);
+    } catch (e) { toast(e.message, "err"); }
+  }
+  renderImgPreviews();
+}
+
+function renderImgPreviews() {
+  const box = $("#img-previews");
+  box.innerHTML = "";
+  state.pendingImages.forEach((u, i) => {
+    const d = document.createElement("div");
+    d.className = "img-prev";
+    d.innerHTML = '<img src="' + u + '" alt="截图">' +
+      '<button class="rm" title="移除">×</button>';
+    d.querySelector(".rm").addEventListener("click", () => {
+      state.pendingImages.splice(i, 1);
+      renderImgPreviews();
+    });
+    box.appendChild(d);
+  });
+  box.hidden = state.pendingImages.length === 0;
+}
 
 function readSavedSession() {
   try { return localStorage.getItem(LS_SESSION_KEY); } catch (e) { return null; }
@@ -428,6 +542,12 @@ function contentText(m) {
     return m.content.map(p => p.type === "text" ? (p.text || "") : "📷 [图片]").join("\n");
   }
   return "";
+}
+// 提取消息内容里的图片 data URL(多模态消息的 content 是 parts 数组)
+function contentImages(m) {
+  if (!Array.isArray(m.content)) return [];
+  return m.content.filter(p => p.type === "image_url" && p.image_url && p.image_url.url)
+                  .map(p => p.image_url.url);
 }
 function relTime(s) {
   if (!s) return "";
@@ -536,11 +656,27 @@ function addCard(cls, inner) {
   scrollBottom();
   return div;
 }
-function addUser(text) {
-  addCard("user",
-    '<div class="m-head"><span class="m-tag user">你</span></div>' +
-    '<div class="m-text">' + esc(text) + "</div>");
+function addUser(text, images) {
+  let inner = '<div class="m-head"><span class="m-tag user">你</span></div>';
+  if (text) inner += '<div class="m-text">' + esc(text) + "</div>";
+  if (images && images.length) {
+    inner += '<div class="msg-imgs">' +
+      images.map(u => '<img src="' + u + '" alt="截图" title="点击放大">').join("") +
+      "</div>";
+  }
+  addCard("user", inner);
 }
+// 点击聊天里的截图放大查看(简易全屏遮罩,再点关闭)
+document.addEventListener("click", (e) => {
+  const img = e.target.closest(".msg-imgs img");
+  if (!img) return;
+  const ov = document.createElement("div");
+  ov.style.cssText = "position:fixed;inset:0;background:rgba(15,23,42,.82);z-index:99;display:flex;align-items:center;justify-content:center;cursor:zoom-out;padding:32px;";
+  ov.innerHTML = '<img style="max-width:100%;max-height:100%;border-radius:8px;" alt="截图">';
+  ov.querySelector("img").src = img.src;
+  ov.addEventListener("click", () => ov.remove());
+  document.body.appendChild(ov);
+});
 function addAssistant(text, reasoning) {
   let inner = '<div class="m-head"><span class="m-tag ai">Mini Code</span></div>';
   if (reasoning) {
@@ -577,7 +713,12 @@ function renderHistory(messages) {
   for (const msg of messages || []) {
     if (msg.role === "system") continue;
     if (msg.role === "user") {
-      addUser(contentText(msg));
+      // 多模态用户消息:文字取 text part(不再显示"📷 [图片]"占位),图片单独渲染
+      const imgs = contentImages(msg);
+      const txt = Array.isArray(msg.content)
+        ? msg.content.filter(p => p.type === "text").map(p => p.text || "").join("\n")
+        : contentText(msg);
+      addUser(txt, imgs);
     } else if (msg.role === "assistant") {
       addAssistant(contentText(msg), msg.reasoning_content);
       for (const tc of msg.tool_calls || []) {
@@ -688,16 +829,20 @@ function compactBtnState() {
 async function send() {
   const input = $("#input");
   const text = input.value.trim();
-  if (!text || state.running) return;
+  const images = state.pendingImages.slice();
+  if ((!text && images.length === 0) || state.running) return;
   input.value = "";
   autoGrow();
   liveCommit();
-  addUser(text);
+  addUser(text, images);
+  state.pendingImages = [];
+  renderImgPreviews();
   pendingStart(); // 等待模型首 token 的转圈提示(vllm 吞长上下文时可见)
   setRunning(true);
   state.sending = true; // 新会话场景:session_created 回来前,轮询不得重置 running
   try {
     const body = { content: text };
+    if (images.length) body.images = images;
     if (state.current) body.session_id = state.current;
     const r = await api("/api/messages", {
       method: "POST",
@@ -1120,6 +1265,24 @@ function fsInsert(i) {
   });
   $("#input").addEventListener("input", () => { autoGrow(); fsCheckInput(); });
   $("#input").addEventListener("blur", fsClose);
+  // 粘贴截图:输入框里 Ctrl+V 直接取剪贴板里的图片
+  $("#input").addEventListener("paste", (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    const files = [];
+    for (const it of items) {
+      if (it.type && it.type.startsWith("image/")) {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length) { e.preventDefault(); addImageFiles(files); }
+  });
+  $("#btn-plus").addEventListener("click", () => $("#file-shot").click());
+  $("#file-shot").addEventListener("change", (e) => {
+    addImageFiles(Array.from(e.target.files || []));
+    e.target.value = "";
+  });
   $("#btn-compact").addEventListener("click", async () => {
     if (!state.current || state.running) return;
     const b = $("#btn-compact");

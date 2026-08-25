@@ -87,6 +87,70 @@ type AgentLoop struct {
 	// so a persistently empty model fails the task with a clear error
 	// instead of burning the turn budget.
 	emptyRetries int
+
+	// userImages carries image data URLs (data:image/...;base64,...) that
+	// are attached to the initial user message as multimodal content parts,
+	// so the model sees them on the very first turn. Set via SetUserImages
+	// before Run; the loop instance is created per task, so the state is
+	// never shared between tasks.
+	userImages []string
+}
+
+// SetUserImages attaches image data URLs to the initial user message (the
+// model sees them on the first turn). Must be called before Run.
+func (l *AgentLoop) SetUserImages(images []string) { l.userImages = images }
+
+// buildUserMessage builds the initial user message: plain text, or a
+// multimodal message (text part + image parts) when images are attached.
+func (l *AgentLoop) buildUserMessage(text string) provider.Message {
+	if len(l.userImages) == 0 {
+		return provider.Message{Role: "user", Content: text}
+	}
+	var parts []provider.ContentPart
+	if text != "" {
+		parts = append(parts, provider.NewTextPart(text))
+	}
+	for _, u := range l.userImages {
+		parts = append(parts, provider.NewImagePart(u))
+	}
+	m := provider.Message{Role: "user"}
+	m.SetMultimodalContent(parts)
+	return m
+}
+
+// imageURLsOf extracts the image data URLs of a message's content parts
+// (nil for a plain text message).
+func imageURLsOf(m provider.Message) []string {
+	var urls []string
+	for _, p := range m.ContentParts {
+		if p.Type == "image_url" && p.ImageURL != nil {
+			urls = append(urls, p.ImageURL.URL)
+		}
+	}
+	return urls
+}
+
+// userMessageMatches reports whether two user messages carry the same text
+// and the same images — used for the "history already ends with this user
+// message" dedup (interrupt recovery must not re-append the message, but a
+// re-send with images must still get its images).
+func userMessageMatches(last, cur provider.Message) bool {
+	if last.Role != "user" || cur.Role != "user" {
+		return false
+	}
+	if last.GetText() != cur.GetText() {
+		return false
+	}
+	li, ci := imageURLsOf(last), imageURLsOf(cur)
+	if len(li) != len(ci) {
+		return false
+	}
+	for i := range li {
+		if li[i] != ci[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // maxTruncContinues bounds how many times the loop asks the model to
@@ -178,6 +242,7 @@ func (l *AgentLoop) persistTurn(turn int, messages []provider.Message) {
 }
 
 func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, history []provider.Message) (*LoopResult, error) {
+	userMsg := l.buildUserMessage(userMessage)
 	var messages []provider.Message
 	if len(history) > 0 {
 		messages = append(messages, history...)
@@ -185,13 +250,14 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			messages = append([]provider.Message{{Role: "system", Content: systemPrompt}}, messages...)
 		}
 		// Only append user message if history doesn't already end with it
-		if len(messages) == 0 || messages[len(messages)-1].Role != "user" || messages[len(messages)-1].Content != userMessage {
-			messages = append(messages, provider.Message{Role: "user", Content: userMessage})
+		// (interrupt recovery must not re-append the same message).
+		if len(messages) == 0 || !userMessageMatches(messages[len(messages)-1], userMsg) {
+			messages = append(messages, userMsg)
 		}
 	} else {
 		messages = []provider.Message{
 			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userMessage},
+			userMsg,
 		}
 	}
 

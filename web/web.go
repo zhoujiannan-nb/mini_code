@@ -246,9 +246,15 @@ func (s *server) handleCompactSession(w http.ResponseWriter, r *http.Request) {
 // --- messages (producer side of the channel) ---
 
 type SendMessageRequest struct {
-	SessionID string `json:"session_id"` // empty = let the hub create a session
-	Content   string `json:"content"`
+	SessionID string   `json:"session_id"` // empty = let the hub create a session
+	Content   string   `json:"content"`
+	Images    []string `json:"images,omitempty"` // data URLs (data:image/...;base64,...); the model sees them on the first turn
 }
+
+const (
+	maxImagesPerMessage = 4
+	maxImageBytes       = 10 * 1024 * 1024 // per data URL (base64-encoded)
+)
 
 func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	var req SendMessageRequest
@@ -257,13 +263,27 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Content = strings.TrimSpace(req.Content)
-	if req.Content == "" {
+	if req.Content == "" && len(req.Images) == 0 {
 		writeErr(w, http.StatusBadRequest, "content is required")
 		return
 	}
 	if len(req.Content) > 20000 {
 		writeErr(w, http.StatusBadRequest, "content too long (max 20000 bytes)")
 		return
+	}
+	if len(req.Images) > maxImagesPerMessage {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("too many images (max %d)", maxImagesPerMessage))
+		return
+	}
+	for i, img := range req.Images {
+		if !strings.HasPrefix(img, "data:image/") {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("images[%d] must be a data URL (data:image/...;base64,...)", i))
+			return
+		}
+		if len(img) > maxImageBytes {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("images[%d] too large (max 10MB)", i))
+			return
+		}
 	}
 	if req.SessionID != "" {
 		if _, err := s.be.Mgr().Get(req.SessionID); err != nil {
@@ -274,6 +294,7 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 	msg := channels.NewUserMessage(channels.ChannelWeb, req.Content)
 	msg.SessionID = req.SessionID
+	msg.Images = req.Images
 	s.be.Hub().Submit(msg)
 
 	resp := map[string]string{"task_id": msg.ID}
