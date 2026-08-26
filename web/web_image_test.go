@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/user/mini_code/approval"
 	"github.com/user/mini_code/channels"
 	"github.com/user/mini_code/config"
 	"github.com/user/mini_code/provider"
@@ -25,10 +26,12 @@ import (
 type fakeBackend struct {
 	hub *channels.Hub
 	mgr *session.SessionManager
+	ap  *approval.Service
 }
 
-func (f *fakeBackend) Hub() *channels.Hub          { return f.hub }
-func (f *fakeBackend) Mgr() *session.SessionManager { return f.mgr }
+func (f *fakeBackend) Hub() *channels.Hub            { return f.hub }
+func (f *fakeBackend) Mgr() *session.SessionManager   { return f.mgr }
+func (f *fakeBackend) Approvals() *approval.Service   { return f.ap }
 func (f *fakeBackend) Status() StatusInfo          { return StatusInfo{} }
 func (f *fakeBackend) GetConfig() *config.AppConfig {
 	return &config.AppConfig{Model: config.ModelConfig{Provider: "vllm", ModelName: "test"}}
@@ -88,7 +91,7 @@ func TestSendMessageWithImagesE2E(t *testing.T) {
 	defer cancel()
 	go hub.Run(ctx)
 
-	api := httptest.NewServer(NewServer(&fakeBackend{hub: hub, mgr: mgr}))
+	api := httptest.NewServer(NewServer(&fakeBackend{hub: hub, mgr: mgr, ap: approval.NewService(hub, mgr)}))
 	defer api.Close()
 
 	// 2) POST a web message with one image (like the UI paste flow).

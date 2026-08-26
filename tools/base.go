@@ -32,12 +32,23 @@ type Tool interface {
 }
 
 func ToSchema(t Tool) provider.ToolSchema {
+	params := t.Parameters()
+	// Wire invariant: the model API validates `parameters.required` as an
+	// array; a nil slice would marshal as null and be rejected with a 400.
+	if req, ok := params["required"].([]string); ok && req == nil {
+		fixed := make(map[string]interface{}, len(params)+1)
+		for k, v := range params {
+			fixed[k] = v
+		}
+		fixed["required"] = []string{}
+		params = fixed
+	}
 	return provider.ToolSchema{
 		Type: "function",
 		Function: provider.ToolSchemaFunc{
 			Name:        t.Name(),
 			Description: t.Description(),
-			Parameters:  t.Parameters(),
+			Parameters:  params,
 		},
 	}
 }

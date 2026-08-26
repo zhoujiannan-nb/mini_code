@@ -34,6 +34,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/user/mini_code/approval"
 	"github.com/user/mini_code/channels"
 	"github.com/user/mini_code/config"
 	"github.com/user/mini_code/dingtalk"
@@ -132,19 +133,21 @@ func (d *dtController) isRunning() bool {
 
 // runtime bundles everything a mode needs and implements web.Backend.
 type runtime struct {
-	cfg *config.AppConfig
-	cfgMu sync.RWMutex
-	client *provider.ModelClient
-	mgr    *session.SessionManager
-	hub    *channels.Hub
-	dt     *dtController
+	cfg       *config.AppConfig
+	cfgMu     sync.RWMutex
+	client    *provider.ModelClient
+	mgr       *session.SessionManager
+	hub       *channels.Hub
+	subagents *session.SubagentService
+	approvals *approval.Service
+	dt        *dtController
 }
 
 // setup loads config, the model client, the session manager and the message
 // hub. maxTurns is the per-task turn budget (0 = loop default).
 func setup(args []string, maxTurns int) (*runtime, error) {
 	fs := flag.NewFlagSet("mini_code", flag.ExitOnError)
-	agentRole := fs.String("agent", "build", "agent role for new sessions (build/explore)")
+	agentRole := fs.String("agent", "build", "agent role for new sessions (build)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -168,12 +171,45 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 
 	hub := channels.NewHub(mgr, *agentRole, workDir, maxTurns)
 	hub.Attach(mgr)
+
+	// Background sub-agent service (task tool with run_in_background).
+	subagents := session.NewSubagentService(mgr)
+	mgr.SetSubagents(subagents)
+	// Register background jobs with the hub's task registry: the UI's
+	// running indicator and stop button work for sub-agents, and canceling
+	// a parent cascades to its children (Hub.CancelTask).
+	subagents.OnJobStart = func(childID string, cancel context.CancelFunc) {
+		hub.RegisterExternalTask(childID, cancel)
+	}
+	subagents.OnJobEnd = func(childID string) {
+		hub.UnregisterExternalTask(childID)
+	}
+	// Emit the terminal assistant/status messages of sub-agent sessions so
+	// their own session view terminates cleanly (live deltas alone never
+	// end the stream).
+	subagents.OnJobDone = func(sessionID, content, reasoning string, interrupted bool) {
+		am := channels.NewAssistantMessage("", sessionID, channels.ChannelWeb, content)
+		am.Reasoning = reasoning
+		hub.Submit(am)
+		status := channels.StatusTaskDone
+		if interrupted {
+			status = channels.StatusInterrupted
+		}
+		hub.Submit(channels.NewStatusMessage("", sessionID, channels.ChannelWeb, status, ""))
+	}
+
+	// Cautious-mode approval service (runtime gate → UI popup).
+	approvals := approval.NewService(hub, mgr)
+	mgr.SetApprover(approvals)
+
 	return &runtime{
-		cfg:    cfg,
-		client: client,
-		mgr:    mgr,
-		hub:    hub,
-		dt:     newDTController(hub),
+		cfg:       cfg,
+		client:    client,
+		mgr:       mgr,
+		hub:       hub,
+		subagents: subagents,
+		approvals: approvals,
+		dt:        newDTController(hub),
 	}, nil
 }
 
@@ -213,8 +249,9 @@ func main() {
 
 // --- web.Backend ---
 
-func (rt *runtime) Hub() *channels.Hub          { return rt.hub }
-func (rt *runtime) Mgr() *session.SessionManager { return rt.mgr }
+func (rt *runtime) Hub() *channels.Hub            { return rt.hub }
+func (rt *runtime) Mgr() *session.SessionManager   { return rt.mgr }
+func (rt *runtime) Approvals() *approval.Service   { return rt.approvals }
 
 func (rt *runtime) liveConfig() *config.AppConfig {
 	rt.cfgMu.RLock()

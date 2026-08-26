@@ -129,10 +129,19 @@ func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string 
 	return strings.Join(parts, "\n")
 }
 
-func (pb *PromptBuilder) EnableTaskTool(executor tools.SessionCreator, sessionID, workDir string) {
+// EnableTaskTool registers the task tool and the sub-agent control tools
+// (task_output / task_status / task_cancel / task_list) for a primary,
+// root session. Sub-agent sessions never get them (a sub-agent cannot
+// dispatch further sub-agents).
+func (pb *PromptBuilder) EnableTaskTool(mgr *SessionManager, sessionID, workDir string) {
+	dispatcher := mgr.Subagents()
 	pb.taskTool = tools.NewTaskTool()
-	pb.taskTool.SetSessionContext(executor, sessionID, workDir)
+	pb.taskTool.SetSessionContext(sessionID, dispatcher)
 	pb.Tools.Register(pb.taskTool)
+	pb.Tools.Register(tools.NewTaskOutputTool(sessionID, dispatcher))
+	pb.Tools.Register(tools.NewTaskStatusTool(sessionID, dispatcher))
+	pb.Tools.Register(tools.NewTaskCancelTool(sessionID, dispatcher))
+	pb.Tools.Register(tools.NewTaskListTool(sessionID, dispatcher))
 	slog.Debug("TaskTool enabled", "session", sessionID)
 }
 

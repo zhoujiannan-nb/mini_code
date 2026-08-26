@@ -34,14 +34,16 @@ import (
 
 // Message kinds flowing through the hub.
 const (
-	KindUser      = "user"             // inbound user message from a channel
-	KindAssistant = "assistant"        // final assistant reply for a task
-	KindToolStart = "tool_start"       // a tool call is starting
-	KindToolEnd   = "tool_end"         // a tool call has finished
-	KindStatus    = "status"           // lifecycle notice (see Status* constants)
-	KindError     = "error"            // task failed
-	KindReasoning = "reasoning_delta"  // live (cumulative) reasoning_content of the model
-	KindContent   = "content_delta"    // live (cumulative) assistant text of the model
+	KindUser            = "user"              // inbound user message from a channel
+	KindAssistant       = "assistant"         // final assistant reply for a task
+	KindToolStart       = "tool_start"        // a tool call is starting
+	KindToolEnd         = "tool_end"          // a tool call has finished
+	KindStatus          = "status"            // lifecycle notice (see Status* constants)
+	KindError           = "error"             // task failed
+	KindReasoning       = "reasoning_delta"   // live (cumulative) reasoning_content of the model
+	KindContent         = "content_delta"     // live (cumulative) assistant text of the model
+	KindApprovalRequest = "approval_request"  // cautious mode: a destructive operation awaits user approval (Content = ApprovalRequestPayload JSON)
+	KindApprovalResolved = "approval_resolved" // the approval was decided / timed out (Content = ApprovalResolvedPayload JSON)
 )
 
 // Status payloads for Kind == KindStatus (carried in Status).
@@ -67,6 +69,7 @@ type Message struct {
 	Status     string    `json:"status,omitempty"`  // on KindStatus messages: one of the Status* constants
 	SessionID  string    `json:"session_id,omitempty"`
 	SessionKey string    `json:"session_key,omitempty"` // stable external conversation key (e.g. DingTalk conversationId)
+	Mode       string    `json:"mode,omitempty"`        // permission mode for a NEW session (full / cautious); ignored when the message continues an existing session
 	Content    string    `json:"content"`
 	Images     []string  `json:"images,omitempty"` // data URLs (data:image/...;base64,...) attached to a user message; the model sees them on the first turn
 	Reasoning  string    `json:"reasoning,omitempty"` // on assistant messages: model reasoning_content; on KindReasoning: cumulative live reasoning
@@ -134,6 +137,39 @@ func NewToolEndMessage(sessionID, sessionKey, name string, params map[string]int
 		args = string(b)
 	}
 	return Message{ID: util.RandomHex(12), Kind: KindToolEnd, SessionID: sessionID, SessionKey: sessionKey, ToolName: name, ToolArgs: args, ToolResult: result, CreatedAt: time.Now()}
+}
+
+// ApprovalRequestPayload is the JSON carried in a KindApprovalRequest
+// message's Content.
+type ApprovalRequestPayload struct {
+	ID          string    `json:"id"`
+	SessionID   string    `json:"session_id"`
+	ParentID    string    `json:"parent_id,omitempty"`
+	Title       string    `json:"title"`
+	ParentTitle string    `json:"parent_title,omitempty"`
+	ToolName    string    `json:"tool_name"`
+	Args        string    `json:"args"`
+	Deadline    time.Time `json:"deadline"`
+}
+
+// NewApprovalRequestMessage builds the approval popup event.
+func NewApprovalRequestMessage(p ApprovalRequestPayload) Message {
+	b, _ := json.Marshal(p)
+	return Message{ID: util.RandomHex(12), Kind: KindApprovalRequest, SessionID: p.SessionID, Content: string(b), CreatedAt: time.Now()}
+}
+
+// ApprovalResolvedPayload is the JSON carried in a KindApprovalResolved
+// message's Content.
+type ApprovalResolvedPayload struct {
+	ID       string `json:"id"`
+	Approved bool   `json:"approved"`
+	Reason   string `json:"reason"`
+}
+
+// NewApprovalResolvedMessage builds the approval-decided event.
+func NewApprovalResolvedMessage(p ApprovalResolvedPayload) Message {
+	b, _ := json.Marshal(p)
+	return Message{ID: util.RandomHex(12), Kind: KindApprovalResolved, Content: string(b), CreatedAt: time.Now()}
 }
 
 // Hub is the message channel: producers Submit inbound messages, the hub
@@ -334,7 +370,10 @@ func (h *Hub) ActiveTask(sessionID string) bool {
 }
 
 // CancelTask cancels the currently running task of a session (if any). It
-// reports whether a running task was found and cancelled.
+// reports whether a running task was found and cancelled. Canceling a
+// session also cancels all of its running sub-agent jobs (父取消,子代理
+// 一起死): foreground sub-agents die with the parent's context anyway;
+// background jobs are registered here via RegisterExternalTask.
 func (h *Hub) CancelTask(sessionID string) bool {
 	h.taskMu.Lock()
 	cancel, ok := h.tasks[sessionID]
@@ -343,7 +382,32 @@ func (h *Hub) CancelTask(sessionID string) bool {
 		slog.Info("cancelling task", "session", sessionID)
 		cancel()
 	}
+	for _, childID := range h.mgr.ListChildrenIDs(sessionID) {
+		h.taskMu.Lock()
+		childCancel, childOk := h.tasks[childID]
+		h.taskMu.Unlock()
+		if childOk {
+			slog.Info("cancelling child task (parent canceled)", "session", childID, "parent", sessionID)
+			childCancel()
+		}
+	}
 	return ok
+}
+
+// RegisterExternalTask registers a task that runs outside the hub's normal
+// process() path (background sub-agent jobs) so ActiveTask / CancelTask /
+// the UI's running indicator and stop button all work for it.
+func (h *Hub) RegisterExternalTask(sessionID string, cancel context.CancelFunc) {
+	h.taskMu.Lock()
+	h.tasks[sessionID] = cancel
+	h.taskMu.Unlock()
+}
+
+// UnregisterExternalTask removes a previously registered external task.
+func (h *Hub) UnregisterExternalTask(sessionID string) {
+	h.taskMu.Lock()
+	delete(h.tasks, sessionID)
+	h.taskMu.Unlock()
 }
 
 // RunOnce submits an inbound message and blocks until the task it triggered
@@ -469,6 +533,10 @@ func (h *Hub) process(m Message) {
 
 	slog.Info("task started", "task", taskID, "session", sess.ID(), "channel", m.Channel)
 	content, reasoning, err := sess.Prompt(taskCtx, m.Content, m.Images, h.maxTurns)
+	// The loop has just persisted its final messages: apply any settlement
+	// notices that were queued while this task was running (e.g. background
+	// sub-agents that finished in the meantime).
+	h.mgr.FlushInjections(sess.ID())
 	if err != nil {
 		slog.Error("task failed", "task", taskID, "session", sess.ID(), "err", err)
 		h.emit(NewErrorMessage(taskID, sess.ID(), sess.ChannelKey(), m.Channel, err.Error()))
@@ -518,6 +586,13 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 	created, err := h.mgr.CreateSessionRecord(title, h.agentRole, h.workDir, nil)
 	if err != nil {
 		return nil, err
+	}
+	// Permission mode for the new session (web UI chip). Channels that do
+	// not set it (DingTalk, CLI) get the default: full.
+	if m.Mode != "" {
+		if err := h.mgr.SetMode(created.ID(), m.Mode); err != nil {
+			slog.Warn("set new session mode failed", "session", created.ID(), "mode", m.Mode, "err", err)
+		}
 	}
 	if m.SessionKey != "" {
 		if err := h.mgr.SetChannelKey(created.ID(), m.SessionKey); err != nil {

@@ -327,6 +327,74 @@ details.m-think[open] summary { margin-bottom: 6px; }
 #toast.ok { border-color: var(--green-b); color: var(--green-d); background: var(--green-xl); }
 #toast.err { border-color: var(--red-b); color: #b91c1c; background: var(--red-l); }
 
+/* ---------- 模式切换 ---------- */
+.mode-btn {
+  background: #fff; color: var(--text2); border: 1px solid var(--border2);
+  border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer;
+}
+.mode-btn:hover { border-color: var(--green); color: var(--green); }
+.mode-btn.cautious { border-color: var(--amber); color: #b45309; background: #fffbeb; }
+.mode-btn.cautious:hover { border-color: #d97706; }
+
+/* ---------- 审批 ---------- */
+.approval-badge {
+  background: var(--red); color: #fff; border: none; border-radius: 999px;
+  padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+  display: none;
+}
+.approval-badge.show { display: inline-block; animation: pulse 1.2s ease-in-out infinite; }
+.approval-modal { width: 540px; }
+.ap-head { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.ap-sess { font-size: 12.5px; color: var(--text2); margin-bottom: 12px; }
+.ap-tool {
+  font-family: Consolas, monospace; font-size: 12.5px;
+  background: #0f172a; color: #e2e8f0; border-radius: 8px;
+  padding: 12px; max-height: 240px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-all;
+}
+.ap-tool .ap-tname { color: #fbbf24; font-weight: 700; }
+.ap-deadline { font-size: 11.5px; color: var(--text3); margin-top: 10px; font-variant-numeric: tabular-nums; }
+.ap-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+.btn.danger { background: #fff; border-color: var(--red); color: var(--red); }
+.btn.danger:hover { background: var(--red-l); }
+
+/* ---------- 子任务面板 ---------- */
+.chat-head { position: relative; }
+.tasks-btn {
+  background: #fff; color: var(--text2); border: 1px solid var(--border2);
+  border-radius: 6px; padding: 3px 10px; font-size: 11.5px; cursor: pointer;
+  display: none; align-items: center; gap: 5px;
+}
+.tasks-btn.show { display: inline-flex; }
+.tasks-btn:hover { border-color: var(--green); color: var(--green); }
+.tasks-count { background: var(--green); color: #fff; border-radius: 999px; font-size: 10px; padding: 0 5px; line-height: 15px; }
+.tasks-count.hot { background: var(--amber); }
+.tasks-panel {
+  position: absolute; top: 44px; right: 16px; z-index: 50;
+  width: 400px; max-height: 420px; overflow-y: auto;
+  background: #fff; border: 1px solid var(--border2); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(15,23,42,.18);
+  display: none;
+}
+.tasks-panel.open { display: block; }
+.tasks-panel h4 { font-size: 12px; color: var(--text2); padding: 10px 14px 6px; margin: 0; }
+.task-item { padding: 9px 14px; border-top: 1px solid var(--border); cursor: pointer; }
+.task-item:hover { background: var(--bg); }
+.task-item .t1 { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; }
+.task-item .t2 { font-size: 11px; color: var(--text3); margin-top: 3px; word-break: break-all; }
+.task-item .t-act { margin-left: auto; flex: 0 0 auto; }
+.task-stop {
+  border: 1px solid var(--red); background: #fff; color: var(--red);
+  border-radius: 5px; font-size: 10.5px; padding: 1px 7px; cursor: pointer;
+}
+.task-stop:hover { background: var(--red-l); }
+.back-btn {
+  background: none; border: none; color: var(--text3); font-size: 12px;
+  cursor: pointer; display: none;
+}
+.back-btn.show { display: inline-block; }
+.back-btn:hover { color: var(--green); }
+
 @media (max-width: 760px) {
   aside { width: 210px; flex-basis: 210px; }
 }
@@ -338,6 +406,7 @@ details.m-think[open] summary { margin-bottom: 6px; }
   <div class="logo">Mini <span>Code</span></div>
   <div class="pill" id="status-pill">状态加载中…</div>
   <div class="spacer"></div>
+  <button class="approval-badge" id="btn-approval-badge" title="有待审批的危险操作">🔔 审批 <span id="approval-count">0</span></button>
   <button class="icon-btn" id="btn-settings">⚙ 配置</button>
 </header>
 
@@ -347,7 +416,13 @@ details.m-think[open] summary { margin-bottom: 6px; }
     <div class="sess-list" id="sess-list"></div>
   </aside>
   <section class="chat">
-    <div class="chat-head"><span class="title" id="chat-title">新会话</span><span id="chat-sub"></span></div>
+    <div class="chat-head">
+      <button class="back-btn" id="btn-back-parent" title="返回父会话">← 父会话</button>
+      <span class="title" id="chat-title">新会话</span><span id="chat-sub"></span>
+      <span class="spacer"></span>
+      <button class="tasks-btn" id="btn-tasks" title="查看该会话派遣的子代理任务">🧵 子任务 <span class="tasks-count" id="tasks-count">0</span></button>
+      <div class="tasks-panel" id="tasks-panel"></div>
+    </div>
     <div class="messages" id="messages">
       <div class="placeholder" id="placeholder">
         <div class="big">💬</div>
@@ -379,6 +454,7 @@ details.m-think[open] summary { margin-bottom: 6px; }
       <div class="composer-foot">
         <span class="token-usage" id="token-usage">Token —</span>
         <div style="display:flex; align-items:center; gap:10px">
+          <button class="mode-btn" id="btn-mode" title="权限模式">⚡ 完整模式</button>
           <button class="compact-btn" id="btn-compact" title="手动压缩当前会话上下文(立即调用模型总结旧对话)">⚡ 压缩</button>
           <span class="foot-hint">Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴截图 · @ 选文件夹</span>
         </div>
@@ -423,6 +499,19 @@ details.m-think[open] summary { margin-bottom: 6px; }
   </div>
 </div>
 
+<div class="modal-mask" id="approval-mask">
+  <div class="modal approval-modal">
+    <div class="ap-head">⚠️ 谨慎模式:危险操作审批</div>
+    <div class="ap-sess" id="ap-sess"></div>
+    <div class="ap-tool" id="ap-tool"></div>
+    <div class="ap-deadline" id="ap-deadline"></div>
+    <div class="ap-actions">
+      <button class="btn danger" id="ap-deny">拒绝</button>
+      <button class="btn primary" id="ap-approve">批准执行</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -442,6 +531,11 @@ const state = {
   pending: null,      // 等待模型首 token 的转圈块(DOM)
   ctxWindow: 0,       // 模型上下文窗口(token)
   pendingImages: [],  // 待发送的截图 data URL(data:image/...;base64,...)
+  mode: "full",       // 当前会话的权限模式;新会话视图下 = 下一条消息创建会话时使用的模式
+  approvals: {},      // id → payload(待审批队列,跨会话)
+  approvalShown: null,// 审批弹窗里正在展示的 id
+  approvalTimer: null,
+  children: [],       // 当前会话的子任务(子代理会话)摘要
 };
 
 /* ---------------- 截图(粘贴/选择 → 缩放 → 预览) ---------------- */
@@ -567,6 +661,7 @@ async function loadSessions(select) {
   } catch (e) { return; }
   renderSessions();
   syncRunning();
+  if (state.current) loadChildren(); // 子任务状态随列表一起收敛
   if (select && select !== state.current) selectSession(select);
 }
 // SSE 事件是"有会话发生了变化"的信号:其他会话的事件不进入当前视图,
@@ -609,6 +704,7 @@ function renderSessions() {
     el.innerHTML =
       '<div class="sess-title">' + esc(s.title || "未命名会话") + '</div>' +
       '<div class="sess-meta"><span class="s ' + dotClass + '"></span>' +
+      (s.mode === "cautious" ? '<span title="谨慎模式">🛡</span>' : "") +
       (statusText ? "<span>" + statusText + "</span>" : "") +
       "<span>" + relTime(s.updated_at) + "</span><span>" + s.message_count + " 条</span></div>" +
       '<button class="del-btn" title="删除会话">✕</button>';
@@ -844,6 +940,7 @@ async function send() {
     const body = { content: text };
     if (images.length) body.images = images;
     if (state.current) body.session_id = state.current;
+    else body.mode = state.mode; // 新会话:按当前选择的权限模式创建
     const r = await api("/api/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -873,6 +970,15 @@ async function stop() {
 
 /* ---------------- SSE 事件 ---------------- */
 function onEvent(m) {
+  // 审批事件跨会话(子代理/其他会话的危险操作也要用户拍板),先于会话过滤处理
+  if (m.kind === "approval_request") {
+    try { onApprovalRequest(JSON.parse(m.content)); } catch (e) {}
+    return;
+  }
+  if (m.kind === "approval_resolved") {
+    try { onApprovalResolved(JSON.parse(m.content)); } catch (e) {}
+    return;
+  }
   if (m.kind === "status" && m.status === "session_created") {
     if (!state.sessions.some(s => s.session_id === m.session_id)) {
       state.sessions.unshift({ session_id: m.session_id, title: "新会话", status: "created", message_count: 0 });
@@ -885,6 +991,9 @@ function onEvent(m) {
       renderSessions();
       paintTokens(0);
       compactBtnState();
+      paintMode();
+      paintBackBtn("");
+      loadChildren();
       // hub 在 session_created 之后才登记任务(注册 + 写 status=running 都是
       // 立即的),稍等再拉一次列表,侧边栏就能尽快显示"执行中"。
       // 不立即拉:此刻 active 可能还没置位,会误闪一下停止按钮。
@@ -958,6 +1067,182 @@ function connectEvents() {
     try { onEvent(JSON.parse(e.data)); } catch (err) {}
   };
   es.onerror = () => { /* EventSource 自动重连 */ };
+}
+
+/* ---------------- 权限模式切换 ---------------- */
+function paintMode() {
+  const b = $("#btn-mode");
+  const cautious = state.mode === "cautious";
+  b.textContent = (cautious ? "🛡 谨慎模式" : "⚡ 完整模式") + (state.current ? "" : "(新会话)");
+  b.title = state.current
+    ? "点击切换权限模式:完整=直接执行;谨慎=危险操作(删文件/危险命令)需审批,立即生效"
+    : "新会话的权限模式:完整=直接执行;谨慎=危险操作需审批";
+  b.classList.toggle("cautious", cautious);
+}
+async function toggleMode() {
+  const next = state.mode === "cautious" ? "full" : "cautious";
+  if (!state.current) {
+    state.mode = next;
+    paintMode();
+    return;
+  }
+  try {
+    const r = await api("/api/sessions/" + state.current + "/mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: next }),
+    });
+    state.mode = r.mode;
+    paintMode();
+    toast(next === "cautious" ? "已切换为谨慎模式:危险操作将请求审批" : "已切换为完整模式:直接执行", "ok");
+  } catch (e) { toast("切换模式失败:" + e.message, "err"); }
+}
+
+/* ---------------- 审批(谨慎模式) ---------------- */
+function approvalBadge() {
+  const n = Object.keys(state.approvals).length;
+  $("#btn-approval-badge").classList.toggle("show", n > 0);
+  $("#approval-count").textContent = n;
+}
+function onApprovalRequest(p) {
+  if (!p || !p.id || state.approvals[p.id]) return;
+  state.approvals[p.id] = p;
+  approvalBadge();
+  if (!state.approvalShown) showApproval(p.id);
+}
+function onApprovalResolved(p) {
+  if (!p || !p.id) return;
+  const had = !!state.approvals[p.id];
+  delete state.approvals[p.id];
+  approvalBadge();
+  if (state.approvalShown === p.id) {
+    hideApproval();
+    toast(p.approved ? "已批准:" + (p.reason || "") : "已拒绝:" + (p.reason || ""), p.approved ? "ok" : "");
+  } else if (had) {
+    toast((p.approved ? "已批准 " : "已拒绝 ") + (p.reason || ""), "");
+  }
+  if (!state.approvalShown && Object.keys(state.approvals).length) {
+    showApproval(Object.keys(state.approvals)[0]);
+  }
+}
+function showApproval(id) {
+  const p = state.approvals[id];
+  if (!p) return;
+  state.approvalShown = id;
+  let sess = esc(p.title || "会话 " + (p.session_id || "").slice(0, 8));
+  if (p.parent_id) {
+    sess += " <span style='color:var(--text3)'>· 子任务(父:" + esc(p.parent_title || p.parent_id.slice(0, 8)) + ")</span>";
+  }
+  $("#ap-sess").innerHTML = "来源:" + sess;
+  let args = p.args || "";
+  try { args = JSON.stringify(JSON.parse(args), null, 2); } catch (e) {}
+  $("#ap-tool").innerHTML = '<span class="ap-tname">' + esc(p.tool_name) + "</span>\n" + esc(args);
+  $("#approval-mask").classList.add("open");
+  clearInterval(state.approvalTimer);
+  const tick = () => {
+    if (state.approvalShown !== id) { clearInterval(state.approvalTimer); return; }
+    const left = Math.max(0, Math.round((new Date(p.deadline) - Date.now()) / 1000));
+    $("#ap-deadline").textContent = "超时自动拒绝 · 剩余 " + Math.floor(left / 60) + " 分 " + (left % 60) + " 秒";
+    if (left <= 0) clearInterval(state.approvalTimer);
+  };
+  tick();
+  state.approvalTimer = setInterval(tick, 1000);
+}
+function hideApproval() {
+  state.approvalShown = null;
+  clearInterval(state.approvalTimer);
+  $("#approval-mask").classList.remove("open");
+}
+async function decideApproval(id, decision) {
+  try {
+    await api("/api/approvals/" + id + "/decision", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision }),
+    });
+  } catch (e) {
+    toast("审批提交失败:" + e.message, "err");
+    syncApprovals(); // 可能已超时:与服务端对账
+  }
+}
+// 页面加载 / 漏事件后与服务端对账:服务端为准
+async function syncApprovals() {
+  try {
+    const list = await api("/api/approvals");
+    const serverIds = new Set(list.map(p => p.id));
+    for (const id of Object.keys(state.approvals)) {
+      if (!serverIds.has(id)) {
+        delete state.approvals[id];
+        if (state.approvalShown === id) hideApproval();
+      }
+    }
+    for (const p of list) onApprovalRequest(p);
+    approvalBadge();
+  } catch (e) {}
+}
+
+/* ---------------- 子任务(子代理)面板 ---------------- */
+async function loadChildren() {
+  if (!state.current) { state.children = []; renderTasksPanel(); return; }
+  try {
+    state.children = await api("/api/sessions/" + state.current + "/children");
+  } catch (e) { state.children = []; }
+  renderTasksPanel();
+}
+function renderTasksPanel() {
+  const btn = $("#btn-tasks");
+  const kids = state.children || [];
+  const running = kids.filter(c => c.active).length;
+  btn.classList.toggle("show", !!state.current && kids.length > 0);
+  const cnt = $("#tasks-count");
+  cnt.textContent = running > 0 ? running : kids.length;
+  cnt.classList.toggle("hot", running > 0);
+  const panel = $("#tasks-panel");
+  if (!panel.classList.contains("open")) return;
+  if (kids.length === 0) {
+    panel.innerHTML = "<h4>子任务</h4><div class='empty-hint'>暂无子任务</div>";
+    return;
+  }
+  panel.innerHTML = "<h4>子任务(点击打开子会话)</h4>" + kids.map(c => {
+    const dot = c.active ? "running" : (["completed", "failed", "interrupted"].includes(c.status) ? c.status : "idle");
+    const st = c.active ? "执行中" : { completed: "已完成", failed: "失败", interrupted: "已中断" }[c.status] || "";
+    const stop = c.active ? '<button class="task-stop">停止</button>' : "";
+    return '<div class="task-item" data-id="' + c.session_id + '">' +
+      '<div class="t1"><span class="s ' + dot + '"></span>' + esc(c.title || c.session_id.slice(0, 8)) +
+      (st ? " <span style='color:var(--text3);font-weight:400'>" + st + "</span>" : "") +
+      '<span class="t-act">' + stop + "</span></div>" +
+      '<div class="t2">' + esc(c.session_id.slice(0, 12)) + " · " + relTime(c.updated_at) + "</div></div>";
+  }).join("");
+  panel.querySelectorAll(".task-item").forEach(el => {
+    el.addEventListener("click", (e) => {
+      if (e.target.classList.contains("task-stop")) {
+        e.stopPropagation();
+        stopTask(el.dataset.id);
+        return;
+      }
+      closeTasksPanel();
+      selectSession(el.dataset.id);
+    });
+  });
+}
+function toggleTasksPanel() {
+  const p = $("#tasks-panel");
+  if (p.classList.contains("open")) { closeTasksPanel(); return; }
+  p.classList.add("open");
+  loadChildren();
+}
+function closeTasksPanel() { $("#tasks-panel").classList.remove("open"); }
+async function stopTask(id) {
+  try {
+    const r = await api("/api/sessions/" + id + "/cancel", { method: "POST" });
+    toast(r.canceled ? "已发送停止请求" : "该子任务当前没有正在执行的任务", r.canceled ? "ok" : "");
+    loadChildren();
+  } catch (e) { toast("停止失败:" + e.message, "err"); }
+}
+function paintBackBtn(parentId) {
+  const b = $("#btn-back-parent");
+  b.classList.toggle("show", !!parentId);
+  b.onclick = () => { if (parentId) selectSession(parentId); };
 }
 
 /* ---------------- 状态条 ---------------- */
@@ -1097,6 +1382,12 @@ function resetToNew() {
   showPlaceholder();
   setChatTitle("新会话", "发送后自动创建会话");
   paintTokens(0);
+  state.mode = "full"; // 新会话默认完整模式
+  state.children = [];
+  paintMode();
+  paintBackBtn("");
+  closeTasksPanel();
+  renderTasksPanel();
 }
 async function selectSession(id) {
   state.current = id;
@@ -1108,6 +1399,12 @@ async function selectSession(id) {
     const s = data.session;
     setChatTitle(s.title || "会话 " + id.slice(0, 8), (s.work_dir || "").slice(0, 60));
     renderHistory(data.messages);
+    // 权限模式:以服务端为准(谨慎/完整)
+    state.mode = s.mode === "cautious" ? "cautious" : "full";
+    paintMode();
+    paintBackBtn(s.parent_id);
+    closeTasksPanel();
+    loadChildren();
     // 执行状态以服务端为准:会话正在跑时恢复停止按钮,并提示任务仍在进行
     // (刷新页面不会中断服务端的任务)。setRunning 已同步按钮/侧边栏/压缩键。
     setRunning(!!s.active);
@@ -1312,10 +1609,28 @@ function fsInsert(i) {
   $("#settings-mask").addEventListener("click", (e) => {
     if (e.target.id === "settings-mask") e.target.classList.remove("open");
   });
+  // 权限模式 / 子任务 / 审批
+  $("#btn-mode").addEventListener("click", toggleMode);
+  $("#btn-tasks").addEventListener("click", toggleTasksPanel);
+  document.addEventListener("click", (e) => {
+    const p = $("#tasks-panel");
+    if (p.classList.contains("open") && !p.contains(e.target) && e.target.id !== "btn-tasks") closeTasksPanel();
+  });
+  $("#btn-approval-badge").addEventListener("click", () => {
+    const ids = Object.keys(state.approvals);
+    if (ids.length) showApproval(ids[0]);
+  });
+  $("#ap-approve").addEventListener("click", () => { if (state.approvalShown) decideApproval(state.approvalShown, "approve"); });
+  $("#ap-deny").addEventListener("click", () => { if (state.approvalShown) decideApproval(state.approvalShown, "deny"); });
+  $("#approval-mask").addEventListener("click", (e) => {
+    if (e.target.id === "approval-mask") hideApproval(); // 只是收起视图,请求仍待审批
+  });
 
   await loadSessions();
   loadStatus();
   connectEvents();
+  paintMode();
+  syncApprovals(); // 页面刷新后同步未决审批
   // 刷新页面后恢复之前打开的会话(含其执行状态);会话已删除则丢弃记录
   const saved = readSavedSession();
   if (saved) {
@@ -1328,6 +1643,7 @@ function fsInsert(i) {
   setInterval(() => {
     loadSessions();
     updateTokenUsage();
+    syncApprovals();
   }, 30000);
   $("#input").focus();
 })();

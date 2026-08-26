@@ -37,6 +37,7 @@ type AgentLoop struct {
 	onToolCallEnd    func(name string, params map[string]interface{}, result string)
 	onAssistantReply func(content string, reasoning string)
 	onTurn           func(turn int, messages []provider.Message)
+	gate             ToolGate // runtime permission gate (nil = no gate)
 
 	// Per-path locks serialize batched tool calls that touch the same file
 	// path, so one turn can never interleave two writes/edits of the same
@@ -99,6 +100,11 @@ type AgentLoop struct {
 // SetUserImages attaches image data URLs to the initial user message (the
 // model sees them on the first turn). Must be called before Run.
 func (l *AgentLoop) SetUserImages(images []string) { l.userImages = images }
+
+// SetGate installs the runtime permission gate consulted before every tool
+// call (role permissions + cautious-mode approval). Must be called before
+// Run; a nil gate disables checking.
+func (l *AgentLoop) SetGate(g ToolGate) { l.gate = g }
 
 // buildUserMessage builds the initial user message: plain text, or a
 // multimodal message (text part + image parts) when images are attached.
@@ -823,6 +829,15 @@ func (l *AgentLoop) executeSingleTool(ctx context.Context, tc provider.ToolCall)
 	if tc.Function.Arguments != "" {
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
 			slog.Warn("invalid tool call arguments", "name", tc.Function.Name, "error", err, "params", tc.Function.Arguments)
+		}
+	}
+	// Runtime permission gate: role permissions + cautious-mode approval.
+	// A denied call never reaches the tool; the model gets the deny message
+	// as the tool result.
+	if l.gate != nil {
+		if allow, denyMsg := l.gate(ctx, tc.Function.Name, params); !allow {
+			slog.Info("tool call denied by gate", "name", tc.Function.Name)
+			return tools.NewTextResult(denyMsg)
 		}
 	}
 	slog.Info("executing tool", "name", tc.Function.Name, "params", tc.Function.Arguments)

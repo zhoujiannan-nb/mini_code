@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/user/mini_code/approval"
 	"github.com/user/mini_code/channels"
 	"github.com/user/mini_code/config"
 	"github.com/user/mini_code/session"
@@ -24,10 +25,12 @@ import (
 )
 
 // Backend is what the HTTP server needs from the runtime: the hub, the
-// session manager and the live-config hot-apply operations.
+// session manager, the approval service and the live-config hot-apply
+// operations.
 type Backend interface {
 	Hub() *channels.Hub
 	Mgr() *session.SessionManager
+	Approvals() *approval.Service
 	Status() StatusInfo
 	GetConfig() *config.AppConfig
 	SaveConfig(cfg *config.AppConfig) (*SaveResult, error)
@@ -76,12 +79,16 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/compact", s.handleCompactSession)
+	mux.HandleFunc("POST /api/sessions/{id}/mode", s.handleSetMode)
+	mux.HandleFunc("GET /api/sessions/{id}/children", s.handleListChildren)
 	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)
 	mux.HandleFunc("GET /api/fs/search", s.handleFsSearch)
+	mux.HandleFunc("GET /api/approvals", s.handleListApprovals)
+	mux.HandleFunc("POST /api/approvals/{id}/decision", s.handleApprovalDecision)
 
 	// --- compatibility: the original simple goal API ---
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -126,6 +133,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 type SessionSummary struct {
 	SessionID    string `json:"session_id"`
+	ParentID     string `json:"parent_id,omitempty"`
 	Title        string `json:"title"`
 	Status       string `json:"status"`
 	// Active is true only while this server is actually running a task for
@@ -134,6 +142,7 @@ type SessionSummary struct {
 	// stale after a process restart, but an active task never is.
 	Active       bool   `json:"active"`
 	AgentRole    string `json:"agent_role"`
+	Mode         string `json:"mode"`
 	WorkDir      string `json:"work_dir"`
 	ChannelKey   string `json:"channel_key,omitempty"`
 	CreatedAt    string `json:"created_at"`
@@ -144,10 +153,12 @@ type SessionSummary struct {
 func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 	return SessionSummary{
 		SessionID:    r.SessionID,
+		ParentID:     r.ParentID,
 		Title:        r.Title,
 		Status:       r.Status,
 		Active:       s.be.Hub().ActiveTask(r.SessionID),
 		AgentRole:    r.AgentRole,
+		Mode:         s.be.Mgr().ModeOf(r.SessionID),
 		WorkDir:      r.WorkDir,
 		ChannelKey:   r.ChannelKey,
 		CreatedAt:    r.CreatedAt,
@@ -161,10 +172,12 @@ func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 func (s *server) summarizeSummary(r session.SessionSummary) SessionSummary {
 	return SessionSummary{
 		SessionID:    r.SessionID,
+		ParentID:     r.ParentID,
 		Title:        r.Title,
 		Status:       r.Status,
 		Active:       s.be.Hub().ActiveTask(r.SessionID),
 		AgentRole:    r.AgentRole,
+		Mode:         session.NormalizeMode(r.Mode),
 		WorkDir:      r.WorkDir,
 		ChannelKey:   r.ChannelKey,
 		CreatedAt:    r.CreatedAt,
@@ -203,11 +216,12 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec := sess.Record()
+	msgs := sess.SnapshotMessages()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session":  s.summarize(rec),
-		"messages": rec.Messages,
+		"messages": msgs,
 		// Token estimate for the composer footer (xx/context_window).
-		"tokens": util.CountMessagesTokens(rec.Messages),
+		"tokens": util.CountMessagesTokens(msgs),
 	})
 }
 
@@ -243,12 +257,58 @@ func (s *server) handleCompactSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleSetMode switches a session's permission mode (full / cautious).
+// It takes effect from the next tool call on, even mid-task.
+func (s *server) handleSetMode(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if sess, err := s.be.Mgr().Get(id); err != nil || sess == nil {
+		writeErr(w, http.StatusNotFound, "session not found: "+id)
+		return
+	}
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.be.Mgr().SetMode(id, req.Mode); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"session_id": id,
+		"mode":       session.NormalizeMode(req.Mode),
+	})
+}
+
+// handleListChildren returns the sub-agent sessions of one session with
+// their live state (the UI renders them under the parent in the sidebar).
+func (s *server) handleListChildren(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.be.Mgr().Get(id); err != nil {
+		writeErr(w, http.StatusNotFound, "session not found: "+id)
+		return
+	}
+	sums, err := s.be.Mgr().GetStore().ListChildren(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]SessionSummary, 0, len(sums))
+	for _, c := range sums {
+		out = append(out, s.summarizeSummary(c))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // --- messages (producer side of the channel) ---
 
 type SendMessageRequest struct {
 	SessionID string   `json:"session_id"` // empty = let the hub create a session
 	Content   string   `json:"content"`
 	Images    []string `json:"images,omitempty"` // data URLs (data:image/...;base64,...); the model sees them on the first turn
+	Mode      string   `json:"mode,omitempty"`   // permission mode for a NEW session (full / cautious)
 }
 
 const (
@@ -295,6 +355,7 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	msg := channels.NewUserMessage(channels.ChannelWeb, req.Content)
 	msg.SessionID = req.SessionID
 	msg.Images = req.Images
+	msg.Mode = req.Mode
 	s.be.Hub().Submit(msg)
 
 	resp := map[string]string{"task_id": msg.ID}
@@ -319,6 +380,46 @@ func (s *server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		"canceled":   canceled,
 		"session_id": id,
 	})
+}
+
+// --- approvals (cautious mode) ---
+
+// handleListApprovals returns the open approval requests (UI sync after a
+// page reload: the SSE stream only carries events from now on).
+func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
+	if s.be.Approvals() == nil {
+		writeJSON(w, http.StatusOK, []approval.PendingInfo{})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.be.Approvals().Pending())
+}
+
+// handleApprovalDecision applies the user's decision to one request.
+func (s *server) handleApprovalDecision(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Decision string `json:"decision"` // "approve" | "deny"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	approved := req.Decision == "approve"
+	if req.Decision != "approve" && req.Decision != "deny" {
+		writeErr(w, http.StatusBadRequest, "decision must be 'approve' or 'deny'")
+		return
+	}
+	if s.be.Approvals() == nil {
+		writeErr(w, http.StatusConflict, "approval not found or already resolved")
+		return
+	}
+	d, ok := s.be.Approvals().Resolve(id, approved)
+	if !ok {
+		writeErr(w, http.StatusConflict, "approval not found or already resolved")
+		return
+	}
+	slog.Info("approval decided via web", "id", id, "approved", approved)
+	writeJSON(w, http.StatusOK, d)
 }
 
 // --- events (consumer side: SSE stream of hub messages) ---

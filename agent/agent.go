@@ -52,22 +52,31 @@ func BuildAgentConfig() *AgentConfig {
 			"move_file":   "allow",
 			"copy_file":   "allow",
 			"task":        "allow",
+			"task_output": "allow",
+			"task_status": "allow",
+			"task_cancel": "allow",
+			"task_list":   "allow",
 		}),
 	}
 }
 
-func ExploreAgentConfig() *AgentConfig {
-	prompt := LoadPrompt("explore.txt")
+// WorkAgentConfig is the full-permission worker sub-agent. It inherits the
+// parent agent's toolset (everything except the task tool, so sub-agents can
+// never dispatch further sub-agents) and, at dispatch time, the parent
+// session's permission mode (full / cautious — see session package).
+func WorkAgentConfig() *AgentConfig {
+	prompt := LoadPrompt("worker.txt")
 	return &AgentConfig{
-		Name:        "explore",
-		Description: "Fast agent specialized for exploring codebases.",
+		Name:        "work",
+		Description: "Full-permission worker sub-agent. Inherits the parent agent's toolset (minus task) and permission mode; use for delegating substantial work, in the foreground or background.",
 		Prompt:      prompt,
 		Mode:        "subagent",
 		Permissions: mergePermissions(map[string]interface{}{
-			"write_file": "deny",
-			"edit_file":  "deny",
-			"exec":       map[string]interface{}{"rm": "deny", "del": "deny"},
-			"skills":     "allow",
+			"write_file":  "allow",
+			"edit_file":   "allow",
+			"delete_file": "allow",
+			"move_file":   "allow",
+			"copy_file":   "allow",
 		}),
 	}
 }
@@ -119,8 +128,8 @@ func getCustomAgents() map[string]*AgentConfig {
 }
 
 var agentFactories = map[string]func() *AgentConfig{
-	"build":   BuildAgentConfig,
-	"explore": ExploreAgentConfig,
+	"build": BuildAgentConfig,
+	"work":  WorkAgentConfig,
 }
 
 func GetAgentConfig(role string) (*AgentConfig, error) {

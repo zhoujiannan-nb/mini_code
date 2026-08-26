@@ -27,6 +27,7 @@ type SessionRecord struct {
 	AgentRole  string                 `json:"agent_role"`
 	WorkDir    string                 `json:"work_dir"`
 	Status     string                 `json:"status"`
+	Mode       string                 `json:"mode,omitempty"` // "full" (default) | "cautious"
 	ChannelKey string                 `json:"channel_key,omitempty"`
 	Messages   []provider.Message     `json:"messages"`
 	Metadata   map[string]interface{} `json:"metadata"`
@@ -72,6 +73,7 @@ func (s *SessionStore) initDB() {
 		agent_role TEXT DEFAULT 'build',
 		work_dir TEXT DEFAULT '',
 		status TEXT DEFAULT 'created',
+		mode TEXT DEFAULT '',
 		channel_key TEXT DEFAULT '',
 		messages TEXT DEFAULT '[]',
 		metadata TEXT DEFAULT '{}',
@@ -82,6 +84,7 @@ func (s *SessionStore) initDB() {
 	s.db.InitIndex(`CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)`)
 	s.db.InitIndex(`CREATE INDEX IF NOT EXISTS idx_sessions_channel_key ON sessions(channel_key)`)
 	s.migrateChannelKey()
+	s.migrateMode()
 }
 
 // migrateChannelKey adds the channel_key column to databases created before
@@ -100,6 +103,21 @@ func (s *SessionStore) migrateChannelKey() {
 	s.db.Execute("ALTER TABLE sessions ADD COLUMN channel_key TEXT DEFAULT ''")
 }
 
+// migrateMode adds the mode column (permission mode: "" = full, "cautious")
+// to databases created before the column existed.
+func (s *SessionStore) migrateMode() {
+	rows, err := s.db.FetchAll("PRAGMA table_info(sessions)")
+	if err != nil {
+		return
+	}
+	for _, row := range rows {
+		if fmt.Sprint(row["name"]) == "mode" {
+			return
+		}
+	}
+	s.db.Execute("ALTER TABLE sessions ADD COLUMN mode TEXT DEFAULT ''")
+}
+
 // SessionSummary is a lightweight session row for list views: metadata plus
 // the message count, without the (potentially large) messages payload. It
 // covers root sessions only — sub-agent sessions (parent_id set) are
@@ -111,6 +129,7 @@ type SessionSummary struct {
 	AgentRole    string
 	WorkDir      string
 	Status       string
+	Mode         string
 	ChannelKey   string
 	CreatedAt    string
 	UpdatedAt    string
@@ -123,7 +142,7 @@ type SessionSummary struct {
 // enough for frequent polling.
 func (s *SessionStore) ListSessionSummaries(limit, offset int) ([]SessionSummary, error) {
 	rows, err := s.db.FetchAll(
-		`SELECT session_id, parent_id, title, agent_role, work_dir, status, channel_key,
+		`SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, channel_key,
 		        created_at, updated_at,
 		        COALESCE(json_array_length(messages), 0) AS message_count
 		 FROM sessions
@@ -136,20 +155,48 @@ func (s *SessionStore) ListSessionSummaries(limit, offset int) ([]SessionSummary
 	}
 	out := make([]SessionSummary, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, SessionSummary{
-			SessionID:    fmt.Sprint(row["session_id"]),
-			ParentID:     fmt.Sprint(row["parent_id"]),
-			Title:        fmt.Sprint(row["title"]),
-			AgentRole:    fmt.Sprint(row["agent_role"]),
-			WorkDir:      fmt.Sprint(row["work_dir"]),
-			Status:       fmt.Sprint(row["status"]),
-			ChannelKey:   fmt.Sprint(row["channel_key"]),
-			CreatedAt:    fmt.Sprint(row["created_at"]),
-			UpdatedAt:    fmt.Sprint(row["updated_at"]),
-			MessageCount: asInt(row["message_count"]),
-		})
+		out = append(out, summaryFromRow(row))
 	}
 	return out, nil
+}
+
+// ListChildren returns the sub-agent sessions (parent_id set) of one parent,
+// oldest first. Used by the UI to render background sub-agents under their
+// parent session.
+func (s *SessionStore) ListChildren(parentID string) ([]SessionSummary, error) {
+	rows, err := s.db.FetchAll(
+		`SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, channel_key,
+		        created_at, updated_at,
+		        COALESCE(json_array_length(messages), 0) AS message_count
+		 FROM sessions
+		 WHERE parent_id = ?
+		 ORDER BY created_at ASC`,
+		parentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SessionSummary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, summaryFromRow(row))
+	}
+	return out, nil
+}
+
+func summaryFromRow(row map[string]interface{}) SessionSummary {
+	return SessionSummary{
+		SessionID:    fmt.Sprint(row["session_id"]),
+		ParentID:     fmt.Sprint(row["parent_id"]),
+		Title:        fmt.Sprint(row["title"]),
+		AgentRole:    fmt.Sprint(row["agent_role"]),
+		WorkDir:      fmt.Sprint(row["work_dir"]),
+		Status:       fmt.Sprint(row["status"]),
+		Mode:         fmt.Sprint(row["mode"]),
+		ChannelKey:   fmt.Sprint(row["channel_key"]),
+		CreatedAt:    fmt.Sprint(row["created_at"]),
+		UpdatedAt:    fmt.Sprint(row["updated_at"]),
+		MessageCount: asInt(row["message_count"]),
+	}
 }
 
 // asInt converts a SQLite scalar (int64 via database/sql) to int, tolerating
@@ -173,10 +220,10 @@ func (s *SessionStore) Create(record *SessionRecord) error {
 	msgsJSON, _ := json.Marshal(record.Messages)
 	metaJSON, _ := json.Marshal(record.Metadata)
 	_, err := s.db.Execute(
-		`INSERT INTO sessions (session_id, parent_id, title, agent_role, work_dir, status, channel_key, messages, metadata, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (session_id, parent_id, title, agent_role, work_dir, status, mode, channel_key, messages, metadata, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.SessionID, record.ParentID, record.Title, record.AgentRole, record.WorkDir,
-		record.Status, record.ChannelKey, string(msgsJSON), string(metaJSON), record.CreatedAt, record.UpdatedAt,
+		record.Status, record.Mode, record.ChannelKey, string(msgsJSON), string(metaJSON), record.CreatedAt, record.UpdatedAt,
 	)
 	return err
 }
@@ -194,9 +241,9 @@ func (s *SessionStore) Update(record *SessionRecord) error {
 	msgsJSON, _ := json.Marshal(record.Messages)
 	metaJSON, _ := json.Marshal(record.Metadata)
 	_, err := s.db.Execute(
-		`UPDATE sessions SET parent_id=?, title=?, agent_role=?, work_dir=?, status=?, channel_key=?, messages=?, metadata=?, updated_at=?
+		`UPDATE sessions SET parent_id=?, title=?, agent_role=?, work_dir=?, status=?, mode=?, channel_key=?, messages=?, metadata=?, updated_at=?
 		 WHERE session_id=?`,
-		record.ParentID, record.Title, record.AgentRole, record.WorkDir, record.Status, record.ChannelKey,
+		record.ParentID, record.Title, record.AgentRole, record.WorkDir, record.Status, record.Mode, record.ChannelKey,
 		string(msgsJSON), string(metaJSON), record.UpdatedAt, record.SessionID,
 	)
 	return err
@@ -225,6 +272,16 @@ func (s *SessionStore) SetChannelKey(sessionID, key string) error {
 	return err
 }
 
+// SetMode updates the permission mode of a session ("full" / "cautious").
+func (s *SessionStore) SetMode(sessionID, mode string) error {
+	now := time.Now().Format(time.RFC3339)
+	_, err := s.db.Execute(
+		"UPDATE sessions SET mode=?, updated_at=? WHERE session_id=?",
+		mode, now, sessionID,
+	)
+	return err
+}
+
 func (s *SessionStore) Delete(sessionID string) error {
 	s.db.Execute("DELETE FROM sessions WHERE parent_id = ?", sessionID)
 	_, err := s.db.Execute("DELETE FROM sessions WHERE session_id = ?", sessionID)
@@ -239,6 +296,7 @@ func (s *SessionStore) rowToRecord(row map[string]interface{}) (*SessionRecord, 
 		AgentRole:  fmt.Sprint(row["agent_role"]),
 		WorkDir:    fmt.Sprint(row["work_dir"]),
 		Status:     fmt.Sprint(row["status"]),
+		Mode:       fmt.Sprint(row["mode"]),
 		ChannelKey: fmt.Sprint(row["channel_key"]),
 		CreatedAt:  fmt.Sprint(row["created_at"]),
 		UpdatedAt:  fmt.Sprint(row["updated_at"]),

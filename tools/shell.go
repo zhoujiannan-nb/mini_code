@@ -26,6 +26,45 @@ var dangerousPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(shutdown|reboot|poweroff)\b`),
 }
 
+// destructivePatterns marks commands that destroy data but are recoverable
+// (or limited in blast radius): plain rm/del/rmdir and the like, WITHOUT
+// the catastrophic flags (those are caught by dangerousPatterns first).
+// In cautious mode these trigger a UI approval instead of running
+// directly. The command word must be followed by whitespace so that file
+// names like "del.txt" or "rd.txt" do not false-positive.
+var destructivePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(?:^|[;&|(\s])rm\s`),
+	regexp.MustCompile(`(?i)(?:^|[;&|(\s])(del|erase)\s`),
+	regexp.MustCompile(`(?i)(?:^|[;&|(\s])rmdir\s`),
+	regexp.MustCompile(`(?i)(?:^|[;&|(\s])rd\s`),
+	regexp.MustCompile(`(?i)\bremove-item\b`),
+}
+
+// IsHardBlocked reports whether the command matches the unconditional
+// dangerous-pattern blocklist (rm -rf, del /f, format, diskpart, ...).
+func IsHardBlocked(command string) bool {
+	lower := strings.ToLower(strings.TrimSpace(command))
+	for _, p := range dangerousPatterns {
+		if p.MatchString(lower) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsDestructive reports whether the command destroys data in a
+// recoverable way (plain rm/del/rmdir/Remove-Item, ...). It is only
+// meaningful when IsHardBlocked is false.
+func IsDestructive(command string) bool {
+	lower := strings.ToLower(strings.TrimSpace(command))
+	for _, p := range destructivePatterns {
+		if p.MatchString(lower) {
+			return true
+		}
+	}
+	return false
+}
+
 type ExecTool struct {
 	timeout    int
 	workingDir string
@@ -438,11 +477,8 @@ func mkdirCmdNote(command string) string {
 }
 
 func (t *ExecTool) guardCommand(command string) string {
-	lower := strings.ToLower(strings.TrimSpace(command))
-	for _, pattern := range dangerousPatterns {
-		if pattern.MatchString(lower) {
-			return "Error: Command blocked — dangerous pattern detected"
-		}
+	if IsHardBlocked(command) {
+		return "Error: Command blocked — dangerous pattern detected"
 	}
 	return ""
 }

@@ -4,13 +4,30 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/user/mini_code/agent"
 	"github.com/user/mini_code/provider"
-	"github.com/user/mini_code/tools"
 	"github.com/user/mini_code/util"
 )
+
+// Permission modes. The mode is a per-session attribute (not a per-agent
+// one): the same role behaves differently depending on the session's mode.
+// Sub-agent sessions snapshot their parent's mode at dispatch time.
+const (
+	ModeFull     = "full"     // all permitted operations run directly
+	ModeCautious = "cautious" // destructive operations need UI approval
+)
+
+// NormalizeMode maps any input to a valid mode; unknown/empty values fall
+// back to full (legacy sessions have no mode column value).
+func NormalizeMode(m string) string {
+	if strings.EqualFold(strings.TrimSpace(m), ModeCautious) {
+		return ModeCautious
+	}
+	return ModeFull
+}
 
 type Session struct {
 	record           *SessionRecord
@@ -21,6 +38,12 @@ type Session struct {
 	onToolCallStart  func(name string, params map[string]interface{})
 	onToolCallEnd    func(name string, params map[string]interface{}, result string)
 	onAssistantReply func(content string, reasoning string)
+
+	// mu guards record.Messages against concurrent writers (the loop's
+	// per-turn persistence, settlement-notice appends, manual compaction)
+	// and readers (web API, fork snapshots). The store.Update call is kept
+	// inside the critical section because it marshals the messages.
+	mu sync.Mutex
 }
 
 func (s *Session) ID() string             { return s.record.SessionID }
@@ -83,20 +106,29 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		if len(messages) == 0 {
 			return
 		}
+		s.mu.Lock()
 		s.record.Messages = messages
 		s.store.Update(s.record)
+		s.mu.Unlock()
 	}
 
 	loop := NewAgentLoop(s.client, maxTurns, pb.Tools, defs, s.onToolCallStart, s.onToolCallEnd, s.onAssistantReply, turnHook)
 	if s.manager != nil {
 		loop.compactionOn = s.manager.CompactionEnabled()
+		// Runtime permission gate: role permissions + cautious-mode
+		// approval. Applied to every tool call, including in sub-agent
+		// sessions (which snapshot the parent's mode at dispatch time).
+		loop.SetGate(s.gateFor(cfg))
 	}
 	if len(images) > 0 {
 		loop.SetUserImages(images)
 	}
 
 	slog.Info("session prompt", "id", s.ID(), "goal", goal[:min(80, len(goal))])
-	result, err := loop.Run(ctx, systemPrompt, goal, s.record.Messages)
+	s.mu.Lock()
+	history := s.record.Messages
+	s.mu.Unlock()
+	result, err := loop.Run(ctx, systemPrompt, goal, history)
 	if err != nil {
 		s.updateStatus("failed")
 		return "", "", err
@@ -104,8 +136,10 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 
 	// Always save accumulated messages, even on interrupt.
 	if len(result.Messages) > 0 {
+		s.mu.Lock()
 		s.record.Messages = result.Messages
 		s.store.Update(s.record)
+		s.mu.Unlock()
 	}
 
 	reasoning = LastAssistantReasoning(result.Messages)
@@ -151,7 +185,9 @@ func (m *SessionManager) CompactSession(ctx context.Context, sessionID string) (
 	if s.Status() == "running" {
 		return 0, 0, fmt.Errorf("会话正在运行中,请等待任务结束后再压缩")
 	}
+	s.mu.Lock()
 	msgs := s.Record().Messages
+	s.mu.Unlock()
 	if len(msgs) == 0 {
 		return 0, 0, fmt.Errorf("会话还没有消息,无需压缩")
 	}
@@ -170,8 +206,10 @@ func (m *SessionManager) CompactSession(ctx context.Context, sessionID string) (
 	if s.Status() == "running" {
 		return before, after, fmt.Errorf("压缩完成时会话已开始新任务,未应用(下次压缩生效)")
 	}
+	s.mu.Lock()
 	s.Record().Messages = newMsgs
 	m.store.Update(s.Record())
+	s.mu.Unlock()
 	slog.Info("manual compaction applied", "session", sessionID, "before", before, "after", after)
 	return before, after, nil
 }
@@ -195,6 +233,27 @@ type SessionManager struct {
 
 	compactionMu sync.RWMutex
 	compactionOn bool // default true (legacy behavior); hot-swappable via SetCompactionEnabled
+
+	// modes is the authoritative, race-free view of each session's
+	// permission mode. The runtime gate reads it on every tool call while
+	// the web API may change it concurrently, so it has its own lock.
+	modeMu sync.RWMutex
+	modes  map[string]string
+
+	// approver resolves cautious-mode approval requests (wired by the
+	// approval service); nil = approvals are auto-denied.
+	approverMu sync.RWMutex
+	approver   Approver
+
+	// subagents manages background sub-agent jobs (wired at startup).
+	subagentsMu sync.RWMutex
+	subagents   *SubagentService
+
+	// injections queues settlement notifications for sessions whose task
+	// is still running (a running loop owns its message list; the queued
+	// text is appended once the task settles, see FlushInjections).
+	injMu       sync.Mutex
+	injections  map[string][]string
 }
 
 // clientRef returns the current model client.
@@ -238,6 +297,8 @@ func NewSessionManager(client *provider.ModelClient, dbPath string) (*SessionMan
 		store:        store,
 		sessions:     make(map[string]*Session),
 		compactionOn: true,
+		modes:        make(map[string]string),
+		injections:   make(map[string][]string),
 	}, nil
 }
 
@@ -252,7 +313,184 @@ func NewDefaultSessionManager(client *provider.ModelClient) (*SessionManager, er
 		store:        store,
 		sessions:     make(map[string]*Session),
 		compactionOn: true,
+		modes:        make(map[string]string),
+		injections:   make(map[string][]string),
 	}, nil
+}
+
+// --- permission mode ---
+
+// ModeOf returns the session's current permission mode (ModeFull /
+// ModeCautious). Unknown sessions fall back to the stored record, then to
+// full.
+func (m *SessionManager) ModeOf(sessionID string) string {
+	m.modeMu.RLock()
+	if mode, ok := m.modes[sessionID]; ok {
+		m.modeMu.RUnlock()
+		return mode
+	}
+	m.modeMu.RUnlock()
+
+	m.mu.RLock()
+	s, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+	if !ok {
+		rec, err := m.store.Get(sessionID)
+		if err != nil || rec == nil {
+			return ModeFull
+		}
+		mode := NormalizeMode(rec.Mode)
+		m.modeMu.Lock()
+		m.modes[sessionID] = mode
+		m.modeMu.Unlock()
+		return mode
+	}
+	mode := NormalizeMode(s.record.Mode)
+	m.modeMu.Lock()
+	m.modes[sessionID] = mode
+	m.modeMu.Unlock()
+	return mode
+}
+
+// SetMode switches a session's permission mode. It applies to tool calls
+// from the next one on, including for a task that is currently running.
+func (m *SessionManager) SetMode(sessionID, mode string) error {
+	mode = NormalizeMode(mode)
+	if s, err := m.Get(sessionID); err != nil || s == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	if err := m.store.SetMode(sessionID, mode); err != nil {
+		return err
+	}
+	m.modeMu.Lock()
+	m.modes[sessionID] = mode
+	m.modeMu.Unlock()
+	m.mu.Lock()
+	if s, ok := m.sessions[sessionID]; ok {
+		s.record.Mode = mode
+	}
+	m.mu.Unlock()
+	slog.Info("session mode changed", "session", sessionID, "mode", mode)
+	return nil
+}
+
+// --- approver (cautious-mode approval) ---
+
+// SetApprover wires the approval service used by the runtime gate.
+func (m *SessionManager) SetApprover(a Approver) {
+	m.approverMu.Lock()
+	m.approver = a
+	m.approverMu.Unlock()
+}
+
+func (m *SessionManager) approverRef() Approver {
+	m.approverMu.RLock()
+	defer m.approverMu.RUnlock()
+	return m.approver
+}
+
+// --- sub-agent service ---
+
+// SetSubagents wires the background sub-agent service (task tool).
+func (m *SessionManager) SetSubagents(s *SubagentService) {
+	m.subagentsMu.Lock()
+	m.subagents = s
+	m.subagentsMu.Unlock()
+}
+
+// Subagents returns the wired sub-agent service (nil before wiring).
+func (m *SessionManager) Subagents() *SubagentService {
+	m.subagentsMu.RLock()
+	defer m.subagentsMu.RUnlock()
+	return m.subagents
+}
+
+// --- settlement notifications ---
+
+// InjectMessage appends a system-generated user message (e.g. a background
+// sub-agent settlement notice) to a session's conversation. When the
+// session's task is still running, the loop owns its message list, so the
+// text is queued and applied by FlushInjections once the task settles —
+// this keeps the notice from being clobbered by the loop's per-turn
+// persistence.
+func (m *SessionManager) InjectMessage(sessionID, text string) error {
+	s, err := m.Get(sessionID)
+	if err != nil || s == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	if s.Status() == "running" {
+		m.injMu.Lock()
+		m.injections[sessionID] = append(m.injections[sessionID], text)
+		m.injMu.Unlock()
+		slog.Info("settlement notice queued (session running)", "session", sessionID)
+		return nil
+	}
+	return m.appendMessage(sessionID, text)
+}
+
+// FlushInjections applies queued settlement notices. The hub calls it right
+// after a task's Prompt returns (the loop has just persisted its final
+// messages), so the notices land on top of the final state.
+func (m *SessionManager) FlushInjections(sessionID string) {
+	m.injMu.Lock()
+	texts := m.injections[sessionID]
+	delete(m.injections, sessionID)
+	m.injMu.Unlock()
+	for _, t := range texts {
+		if err := m.appendMessage(sessionID, t); err != nil {
+			slog.Warn("flush injection failed", "session", sessionID, "err", err)
+		}
+	}
+}
+
+func (m *SessionManager) appendMessage(sessionID, text string) error {
+	m.mu.Lock()
+	s, ok := m.sessions[sessionID]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	s.mu.Lock()
+	s.record.Messages = append(s.record.Messages, provider.Message{Role: "user", Content: text})
+	m.store.Update(s.record)
+	s.mu.Unlock()
+	return nil
+}
+
+// SnapshotMessages returns a copy of the session's persisted conversation
+// (safe to read while a task may be persisting concurrently).
+func (s *Session) SnapshotMessages() []provider.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]provider.Message, len(s.record.Messages))
+	copy(out, s.record.Messages)
+	return out
+}
+
+// CopyMessages returns a snapshot of a session's persisted conversation
+// (safe to read while a task may be persisting concurrently).
+func (m *SessionManager) CopyMessages(sessionID string) []provider.Message {
+	m.mu.RLock()
+	s, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	return s.SnapshotMessages()
+}
+
+// ListChildrenIDs returns the session IDs of all direct sub-agent sessions
+// of the given parent (from the store). Used to cascade cancellations.
+func (m *SessionManager) ListChildrenIDs(parentID string) []string {
+	sums, err := m.store.ListChildren(parentID)
+	if err != nil {
+		return nil
+	}
+	ids := make([]string, 0, len(sums))
+	for _, s := range sums {
+		ids = append(ids, s.SessionID)
+	}
+	return ids
 }
 
 // SetSessionCallbackFactory registers the per-session callback factory.
@@ -293,11 +531,14 @@ func (m *SessionManager) newSession(record *SessionRecord) *Session {
 		s.onToolCallEnd = cbs.OnToolEnd
 		s.onAssistantReply = cbs.OnReply
 	}
+	// Register the session's mode so the runtime gate can read it without
+	// touching the (concurrently mutated) record.
+	m.modeMu.Lock()
+	if _, ok := m.modes[record.SessionID]; !ok {
+		m.modes[record.SessionID] = NormalizeMode(record.Mode)
+	}
+	m.modeMu.Unlock()
 	return s
-}
-
-func (m *SessionManager) CreateSession(title, agentRole, workDir string, parentID *string) (tools.SessionPrompter, error) {
-	return m.CreateSessionRecord(title, agentRole, workDir, parentID)
 }
 
 // CreateSessionRecord creates a session and returns the concrete *Session
