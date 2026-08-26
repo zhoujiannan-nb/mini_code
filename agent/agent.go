@@ -173,5 +173,3 @@ func ListAllAgents() map[string]string {
 	}
 	return result
 }
-
-
