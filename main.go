@@ -144,7 +144,7 @@ type runtime struct {
 // hub. maxTurns is the per-task turn budget (0 = loop default).
 func setup(args []string, maxTurns int) (*runtime, error) {
 	fs := flag.NewFlagSet("mini_code", flag.ExitOnError)
-	agentRole := fs.String("agent", "build", "agent role for new sessions (build/explore/generate)")
+	agentRole := fs.String("agent", "build", "agent role for new sessions (build/explore)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}

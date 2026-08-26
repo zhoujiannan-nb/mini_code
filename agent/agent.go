@@ -72,25 +72,6 @@ func ExploreAgentConfig() *AgentConfig {
 	}
 }
 
-func GenerateAgentConfig() *AgentConfig {
-	prompt := LoadPrompt("generate.txt")
-	return &AgentConfig{
-		Name:        "generate",
-		Description: "API documentation generator sub-agent.",
-		Prompt:      prompt,
-		Mode:        "subagent",
-		Permissions: mergePermissions(map[string]interface{}{
-			"write_file": "allow",
-			"edit_file":  "allow",
-			"exec":       map[string]interface{}{"rm": "deny", "del": "deny"},
-			"skills":     "allow",
-			"git_clone":  "deny",
-			"git_pull":   "deny",
-			"git_diff":   "allow",
-		}),
-	}
-}
-
 var (
 	customAgents     map[string]*AgentConfig
 	customAgentsOnce sync.Once
@@ -138,9 +119,8 @@ func getCustomAgents() map[string]*AgentConfig {
 }
 
 var agentFactories = map[string]func() *AgentConfig{
-	"build":    BuildAgentConfig,
-	"explore":  ExploreAgentConfig,
-	"generate": GenerateAgentConfig,
+	"build":   BuildAgentConfig,
+	"explore": ExploreAgentConfig,
 }
 
 func GetAgentConfig(role string) (*AgentConfig, error) {
