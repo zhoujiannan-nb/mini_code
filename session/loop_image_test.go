@@ -117,6 +117,7 @@ func TestRunAttachesImagesToUserMessage(t *testing.T) {
 		t.Fatalf("expected success, got error: %q", res.Error)
 	}
 
+	// system + multimodal user.
 	if len(captured.Messages) != 2 {
 		t.Fatalf("expected 2 messages (system + user), got %d", len(captured.Messages))
 	}

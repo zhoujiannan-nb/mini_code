@@ -184,7 +184,7 @@ func TestHubSessionKeyReuse(t *testing.T) {
 		t.Errorf("different conversations should get different sessions: %s %s %s", id1, id3, id4)
 	}
 
-	// The reused session must contain both user messages.
+	// The reused session must contain both user goal messages.
 	sess, _ := env.mgr.Get(id1)
 	userMsgs := 0
 	for _, m := range sess.Record().Messages {

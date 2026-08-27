@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -146,6 +147,7 @@ func GetAgentConfig(role string) (*AgentConfig, error) {
 		for k := range custom {
 			available = append(available, k)
 		}
+		sort.Strings(available) // stable order: map iteration is randomized
 		return nil, fmt.Errorf("unknown agent role: %s, available: %v", role, available)
 	}
 	return factory(), nil

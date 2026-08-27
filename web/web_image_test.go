@@ -45,8 +45,10 @@ func (f *fakeBackend) SaveConfig(cfg *config.AppConfig) (*SaveResult, error) {
 // content parts and is persisted into the session record.
 func TestSendMessageWithImagesE2E(t *testing.T) {
 	// 1) mock model server: capture the chat request, answer with SSE "ok".
+	// A trailing time snapshot is a user-role message too, so capture the
+	// content of EVERY user message, not just the last one.
 	var mu sync.Mutex
-	var lastUserContent interface{}
+	var userContents []interface{}
 	modelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		var req struct {
@@ -56,7 +58,7 @@ func TestSendMessageWithImagesE2E(t *testing.T) {
 			mu.Lock()
 			for _, m := range req.Messages {
 				if m["role"] == "user" {
-					lastUserContent = m["content"]
+					userContents = append(userContents, m["content"])
 				}
 			}
 			mu.Unlock()
@@ -110,20 +112,30 @@ func TestSendMessageWithImagesE2E(t *testing.T) {
 	}
 
 	// 3) wait for the model request to arrive with multimodal user content.
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		mu.Lock()
-		content := lastUserContent
-		mu.Unlock()
-		if parts, ok := content.([]interface{}); ok && len(parts) == 2 {
+	hasMultimodal := func(contents []interface{}) bool {
+		for _, content := range contents {
+			parts, ok := content.([]interface{})
+			if !ok || len(parts) != 2 {
+				continue
+			}
 			p0, _ := parts[0].(map[string]interface{})
 			p1, _ := parts[1].(map[string]interface{})
 			if p0["type"] == "text" && p0["text"] == "look at this" && p1["type"] == "image_url" {
-				break
+				return true
 			}
 		}
+		return false
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		mu.Lock()
+		contents := append([]interface{}(nil), userContents...)
+		mu.Unlock()
+		if hasMultimodal(contents) {
+			break
+		}
 		if time.Now().After(deadline) {
-			t.Fatalf("model never received the multimodal user message; last content: %#v", content)
+			t.Fatalf("model never received the multimodal user message; user contents: %#v", contents)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

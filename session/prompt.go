@@ -1,11 +1,9 @@
 package session
 
 import (
-	"fmt"
 	"log/slog"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/user/mini_code/agent"
 	"github.com/user/mini_code/provider"
@@ -92,24 +90,6 @@ Operating system: Windows. The exec tool runs commands through cmd.exe, NOT a Un
 	}
 }
 
-// currentTimeSection tells the model the actual current date and time. The
-// LLM has no clock of its own and silently guesses dates from its training
-// data ("today" is always a stale 2024/2025 date); date-related tasks
-// (naming files by date, "how many days until X", weekday questions) then
-// fail. Injecting the real timestamp costs a few tokens and makes every
-// date-dependent task correct by construction.
-func currentTimeSection() string {
-	now := time.Now()
-	_, offset := now.Zone()
-	sign := "+"
-	if offset < 0 {
-		sign = "-"
-		offset = -offset
-	}
-	return fmt.Sprintf("# Current Time\n\nThe current date and time is: %s (%s), UTC%s%02d:%02d.\nUse this as the reference for anything date- or time-related (\"today\", \"this week\", file names containing dates, relative-date math). Never guess the current date from memory; if you need more precision or another timezone, verify with exec (e.g. `date`).",
-		now.Format("2006-01-02 15:04:05"), now.Format("Monday"), sign, offset/3600, (offset%3600)/60)
-}
-
 func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string {
 	var parts []string
 	if pb.agentConfig.Prompt != "" {
@@ -121,7 +101,9 @@ func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string 
 	if workDir != "" {
 		parts = append(parts, "\n# Working Directory\n\nThe current working directory is: "+workDir+"\nAll file operations must be confined to this directory.\n")
 	}
-	parts = append(parts, "\n"+currentTimeSection()+"\n")
+	// The system prompt is static on purpose: it is the head of the request
+	// prefix the provider's prefix cache matches, so it must not be
+	// re-rendered with fresh content (e.g. a timestamp) on every task.
 	parts = append(parts, "\n"+environmentSection()+"\n")
 	if extraContext != "" {
 		parts = append(parts, "\n# Additional Context\n\n"+extraContext+"\n")

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/user/mini_code/provider"
@@ -32,6 +33,12 @@ func (r *ToolRegistry) GetDefinitions(visibleOnly bool) []provider.ToolSchema {
 		}
 		defs = append(defs, ToSchema(t))
 	}
+	// Sort by name: Go randomizes map iteration order, and the tools array is
+	// part of the request prefix the provider's prefix cache matches. An
+	// unstable order would re-render that prefix differently on every new
+	// task, so no request of a new task could ever hit the previous task's
+	// cached prefix.
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Function.Name < defs[j].Function.Name })
 	return defs
 }
 
@@ -43,6 +50,7 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, params map[stri
 		for n := range r.tools {
 			names = append(names, n)
 		}
+		sort.Strings(names) // stable order: the message reaches the model as a tool result
 		return nil, fmt.Errorf("tool '%s' not found. Available: %s%s", name, strings.Join(names, ", "), hint)
 	}
 	result, err := t.Execute(ctx, params)

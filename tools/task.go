@@ -3,10 +3,26 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/user/mini_code/agent"
 )
+
+// sortedAgentNames returns the sub-agent names in a stable (sorted) order.
+// Go randomizes map iteration order, and these names flow into model-visible
+// text (tool description / parameter schema / error messages) that is part
+// of the request prefix the provider's prefix cache matches — an unstable
+// order would re-render that prefix differently on every request.
+func sortedAgentNames() []string {
+	agents := agent.ListAllAgents()
+	names := make([]string, 0, len(agents))
+	for name := range agents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
 
 // JobInfo is the JSON-friendly view of one sub-agent job (background or
 // foreground), used by the task_* tools and the web API.
@@ -58,8 +74,8 @@ func (t *TaskTool) Name() string { return "task" }
 func (t *TaskTool) Description() string {
 	agents := agent.ListAllAgents()
 	var lines []string
-	for name, desc := range agents {
-		lines = append(lines, fmt.Sprintf("  - %s: %s", name, desc))
+	for _, name := range sortedAgentNames() {
+		lines = append(lines, fmt.Sprintf("  - %s: %s", name, agents[name]))
 	}
 	return fmt.Sprintf(
 		"Dispatch a sub-task to a dedicated sub-agent. The sub-agent inherits the caller's full tool permissions (minus task) and the current permission mode.\n\n"+
@@ -73,11 +89,6 @@ func (t *TaskTool) Description() string {
 }
 func (t *TaskTool) IsHidden() bool { return false }
 func (t *TaskTool) Parameters() map[string]interface{} {
-	agents := agent.ListAllAgents()
-	var names []string
-	for name := range agents {
-		names = append(names, name)
-	}
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -87,7 +98,7 @@ func (t *TaskTool) Parameters() map[string]interface{} {
 			},
 			"sub_agent": map[string]interface{}{
 				"type":        "string",
-				"description": fmt.Sprintf("Name of sub-agent (default: work). Available: %s", strings.Join(names, ", ")),
+				"description": fmt.Sprintf("Name of sub-agent (default: work). Available: %s", strings.Join(sortedAgentNames(), ", ")),
 			},
 			"run_in_background": map[string]interface{}{
 				"type":        "boolean",
@@ -120,11 +131,7 @@ func (t *TaskTool) Execute(ctx context.Context, params map[string]interface{}) (
 
 	agents := agent.ListAllAgents()
 	if _, ok := agents[subAgent]; !ok {
-		var names []string
-		for n := range agents {
-			names = append(names, n)
-		}
-		return NewTextResult(fmt.Sprintf("Error: unknown sub-agent '%s'. Available: %s", subAgent, strings.Join(names, ", "))), nil
+		return NewTextResult(fmt.Sprintf("Error: unknown sub-agent '%s'. Available: %s", subAgent, strings.Join(sortedAgentNames(), ", "))), nil
 	}
 
 	if runBg {

@@ -140,6 +140,15 @@ func imageURLsOf(m provider.Message) []string {
 // and the same images — used for the "history already ends with this user
 // message" dedup (interrupt recovery must not re-append the message, but a
 // re-send with images must still get its images).
+// historyEndsWithUserMsg reports whether the persisted history ends with
+// userMsg, so interrupt recovery still dedups the goal message.
+func historyEndsWithUserMsg(messages []provider.Message, userMsg provider.Message) bool {
+	if len(messages) == 0 {
+		return false
+	}
+	return userMessageMatches(messages[len(messages)-1], userMsg)
+}
+
 func userMessageMatches(last, cur provider.Message) bool {
 	if last.Role != "user" || cur.Role != "user" {
 		return false
@@ -257,7 +266,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		}
 		// Only append user message if history doesn't already end with it
 		// (interrupt recovery must not re-append the same message).
-		if len(messages) == 0 || !userMessageMatches(messages[len(messages)-1], userMsg) {
+		if len(messages) == 0 || !historyEndsWithUserMsg(messages, userMsg) {
 			messages = append(messages, userMsg)
 		}
 	} else {
