@@ -15,24 +15,78 @@ import (
 var ErrNoChange = errors.New("no config changes")
 
 type AppConfig struct {
-	Model    ModelConfig    `json:"model"`
-	WebPort  int            `json:"web_port"`
-	DingTalk DingTalkConfig `json:"dingtalk"`
+	// Model is the legacy single-model config. On load it is wrapped into
+	// Models (see applyDefaults) and cleared, so saved configs only carry
+	// the models list.
+	Model        ModelConfig    `json:"model"`
+	Models       []ModelConfig  `json:"models"`
+	DefaultModel string         `json:"default_model"`
+
+	// CompactionEnabled toggles automatic long-context compression
+	// globally. Nil (key absent) = enabled (legacy behavior).
+	CompactionEnabled *bool      `json:"compaction_enabled,omitempty"`
+	WebPort           int        `json:"web_port"`
+	DingTalk          DingTalkConfig `json:"dingtalk"`
+}
+
+// Compaction reports whether automatic context compression is on.
+// An absent config key keeps the historical default: enabled.
+func (c *AppConfig) Compaction() bool {
+	return c.CompactionEnabled == nil || *c.CompactionEnabled
+}
+
+// ModelByName returns the model entry with the given name, or nil.
+func (c *AppConfig) ModelByName(name string) *ModelConfig {
+	for i := range c.Models {
+		if c.Models[i].Name == name {
+			return &c.Models[i]
+		}
+	}
+	return nil
+}
+
+// DefaultModelCfg returns the default model entry (falling back to the
+// first configured model), or nil when no model is configured.
+func (c *AppConfig) DefaultModelCfg() *ModelConfig {
+	if m := c.ModelByName(c.DefaultModel); m != nil {
+		return m
+	}
+	if len(c.Models) > 0 {
+		return &c.Models[0]
+	}
+	return nil
 }
 
 // Validate checks the config is usable. Called before a web-driven save.
 func (c *AppConfig) Validate() error {
-	if c.Model.Provider == "" {
-		return fmt.Errorf("model.provider is required")
+	if len(c.Models) == 0 {
+		return fmt.Errorf("at least one model is required")
 	}
-	if c.Model.BaseURL == "" {
-		return fmt.Errorf("model.base_url is required")
+	seen := make(map[string]bool, len(c.Models))
+	for i := range c.Models {
+		m := &c.Models[i]
+		if m.Name == "" {
+			return fmt.Errorf("models[%d].name is required", i)
+		}
+		if seen[m.Name] {
+			return fmt.Errorf("duplicate model name %q", m.Name)
+		}
+		seen[m.Name] = true
+		if m.Provider == "" {
+			return fmt.Errorf("models[%d] (%s): provider is required", i, m.Name)
+		}
+		if m.BaseURL == "" {
+			return fmt.Errorf("models[%d] (%s): base_url is required", i, m.Name)
+		}
+		if m.ModelName == "" {
+			return fmt.Errorf("models[%d] (%s): model_name is required", i, m.Name)
+		}
+		if m.MaxTokens < 0 || m.ContextWindow < 0 {
+			return fmt.Errorf("models[%d] (%s): token limits must be >= 0", i, m.Name)
+		}
 	}
-	if c.Model.ModelName == "" {
-		return fmt.Errorf("model.model_name is required")
-	}
-	if c.Model.MaxTokens < 0 || c.Model.ContextWindow < 0 {
-		return fmt.Errorf("model token limits must be >= 0")
+	if c.DefaultModel != "" && !seen[c.DefaultModel] {
+		return fmt.Errorf("default_model %q not found in models", c.DefaultModel)
 	}
 	if c.WebPort < 1 || c.WebPort > 65535 {
 		return fmt.Errorf("web_port must be between 1 and 65535")
@@ -59,18 +113,22 @@ type DingTalkConfig struct {
 }
 
 type ModelConfig struct {
-	Provider      string  `json:"provider"`
-	BaseURL       string  `json:"base_url"`
-	APIKey        string  `json:"api_key"`
-	ModelName     string  `json:"model_name"`
-	MaxTokens     int     `json:"max_tokens"`
-	ContextWindow int     `json:"context_window"`
-	Temperature   float64 `json:"temperature"`
-	TopP          float64 `json:"top_p"`
-	ReserveTokens int     `json:"reserve_tokens"`
+	// Name is the short key the UI shows in the model dropdown and that
+	// sessions reference (empty = resolved to the model name on load).
+	Name            string  `json:"name,omitempty"`
+	Provider        string  `json:"provider"`
+	BaseURL         string  `json:"base_url"`
+	APIKey          string  `json:"api_key"`
+	ModelName       string  `json:"model_name"`
+	MaxTokens       int     `json:"max_tokens"`
+	ContextWindow   int     `json:"context_window"`
+	Temperature     float64 `json:"temperature"`
+	TopP            float64 `json:"top_p"`
+	ReserveTokens   int     `json:"reserve_tokens"`
 
-	// CompactionEnabled toggles automatic long-context compression.
-	// Nil (key absent in config.json) = enabled (legacy behavior).
+	// CompactionEnabled is the legacy per-model compaction toggle. It is
+	// migrated to the global AppConfig.CompactionEnabled on load and no
+	// longer read at runtime.
 	CompactionEnabled *bool `json:"compaction_enabled,omitempty"`
 }
 
@@ -168,35 +226,64 @@ func LoadConfig() (*AppConfig, error) {
 	return &cfg, nil
 }
 
-// applyDefaults fills in zero-value fields with defaults.
+// applyDefaults fills in zero-value fields with defaults. It also migrates
+// legacy single-model configs: a "model" entry without a "models" list is
+// wrapped into a one-element list, and the legacy per-model compaction
+// toggle is moved to the global switch.
 func applyDefaults(cfg *AppConfig) {
 	d := DefaultModelConfig()
-	if cfg.Model.Provider == "" {
-		cfg.Model.Provider = d.Provider
+
+	// Legacy per-model compaction → global switch (before the legacy
+	// model entry is consumed and cleared below).
+	if cfg.CompactionEnabled == nil && cfg.Model.CompactionEnabled != nil {
+		cfg.CompactionEnabled = cfg.Model.CompactionEnabled
 	}
-	if cfg.Model.BaseURL == "" {
-		cfg.Model.BaseURL = d.BaseURL
+
+	// Legacy single-model config → models list.
+	if len(cfg.Models) == 0 {
+		legacy := cfg.Model
+		if legacy.ModelName == "" {
+			legacy = d
+		}
+		cfg.Models = []ModelConfig{legacy}
+		cfg.Model = ModelConfig{} // do not write the legacy key back
 	}
-	if cfg.Model.APIKey == "" {
-		cfg.Model.APIKey = d.APIKey
+
+	for i := range cfg.Models {
+		m := &cfg.Models[i]
+		if m.Provider == "" {
+			m.Provider = d.Provider
+		}
+		if m.BaseURL == "" {
+			m.BaseURL = d.BaseURL
+		}
+		if m.APIKey == "" {
+			m.APIKey = d.APIKey
+		}
+		if m.ModelName == "" {
+			m.ModelName = d.ModelName
+		}
+		if m.Name == "" {
+			m.Name = m.ModelName
+		}
+		if m.MaxTokens == 0 {
+			m.MaxTokens = d.MaxTokens
+		}
+		if m.ContextWindow == 0 {
+			m.ContextWindow = d.ContextWindow
+		}
+		if m.Temperature == 0 {
+			m.Temperature = d.Temperature
+		}
+		if m.TopP == 0 {
+			m.TopP = d.TopP
+		}
+		if m.ReserveTokens == 0 {
+			m.ReserveTokens = d.ReserveTokens
+		}
 	}
-	if cfg.Model.ModelName == "" {
-		cfg.Model.ModelName = d.ModelName
-	}
-	if cfg.Model.MaxTokens == 0 {
-		cfg.Model.MaxTokens = d.MaxTokens
-	}
-	if cfg.Model.ContextWindow == 0 {
-		cfg.Model.ContextWindow = d.ContextWindow
-	}
-	if cfg.Model.Temperature == 0 {
-		cfg.Model.Temperature = d.Temperature
-	}
-	if cfg.Model.TopP == 0 {
-		cfg.Model.TopP = d.TopP
-	}
-	if cfg.Model.ReserveTokens == 0 {
-		cfg.Model.ReserveTokens = d.ReserveTokens
+	if cfg.DefaultModel == "" {
+		cfg.DefaultModel = cfg.Models[0].Name
 	}
 	if cfg.WebPort == 0 {
 		cfg.WebPort = 7500
@@ -243,46 +330,52 @@ func FirstRunSetup() (*AppConfig, error) {
 	d := DefaultModelConfig()
 	cfg := &AppConfig{}
 
-	// --- Model ---
+	// --- Model (first run configures a single model; more can be added
+	// later from the web settings page) ---
 	fmt.Println("\n--- Model Configuration ---")
 
-	cfg.Model.Provider = ask(reader, "  Provider (vllm/ollama/openai)", d.Provider)
+	m := ModelConfig{}
+	m.Provider = ask(reader, "  Provider (vllm/ollama/openai)", d.Provider)
 
-	cfg.Model.BaseURL = ask(reader, "  Base URL", d.BaseURL)
+	m.BaseURL = ask(reader, "  Base URL", d.BaseURL)
 
-	cfg.Model.APIKey = ask(reader, "  API Key", d.APIKey)
+	m.APIKey = ask(reader, "  API Key", d.APIKey)
 
-	cfg.Model.ModelName = ask(reader, "  Model Name", d.ModelName)
+	m.ModelName = ask(reader, "  Model Name", d.ModelName)
 
 	maxTokens, err := askInt(reader, "  Max Tokens", d.MaxTokens)
 	if err != nil {
 		return nil, err
 	}
-	cfg.Model.MaxTokens = maxTokens
+	m.MaxTokens = maxTokens
 
 	ctxWindow, err := askInt(reader, "  Context Window", d.ContextWindow)
 	if err != nil {
 		return nil, err
 	}
-	cfg.Model.ContextWindow = ctxWindow
+	m.ContextWindow = ctxWindow
 
 	temp, err := askFloat(reader, "  Temperature", d.Temperature)
 	if err != nil {
 		return nil, err
 	}
-	cfg.Model.Temperature = temp
+	m.Temperature = temp
 
 	topP, err := askFloat(reader, "  Top P", d.TopP)
 	if err != nil {
 		return nil, err
 	}
-	cfg.Model.TopP = topP
+	m.TopP = topP
 
 	reserveTokens, err := askInt(reader, "  Reserve Tokens", d.ReserveTokens)
 	if err != nil {
 		return nil, err
 	}
-	cfg.Model.ReserveTokens = reserveTokens
+	m.ReserveTokens = reserveTokens
+
+	m.Name = m.ModelName
+	cfg.Models = []ModelConfig{m}
+	cfg.DefaultModel = m.Name
 
 	// --- Web ---
 	fmt.Println("\n--- Web Configuration ---")

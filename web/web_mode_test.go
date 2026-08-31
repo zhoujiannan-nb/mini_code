@@ -114,6 +114,173 @@ func TestSetModeAPI(t *testing.T) {
 	}
 }
 
+// TestRenameAPI verifies the session rename endpoint end to end:
+// POST /api/sessions/{id}/rename updates the title (trimmed),
+// GET /api/sessions reflects it, blank/over-long titles are rejected with
+// 400, and an unknown session returns 404.
+func TestRenameAPI(t *testing.T) {
+	be := newTestBackend(t)
+	api := httptest.NewServer(NewServer(be))
+	defer api.Close()
+
+	sess, err := be.mgr.CreateSessionRecord("rename-test", "build", t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("CreateSessionRecord: %v", err)
+	}
+	id := sess.ID()
+
+	var renameResp map[string]string
+	if err := postJSON(api.URL+"/api/sessions/"+id+"/rename",
+		map[string]string{"title": "  my project  "}, &renameResp); err != nil {
+		t.Fatalf("POST rename: %v", err)
+	}
+	if renameResp["title"] != "my project" {
+		t.Fatalf("expected trimmed title, got %q", renameResp["title"])
+	}
+
+	var list []SessionSummary
+	if err := getJSON(api.URL+"/api/sessions", &list); err != nil {
+		t.Fatalf("GET /api/sessions: %v", err)
+	}
+	if len(list) != 1 || list[0].Title != "my project" {
+		t.Fatalf("expected renamed session in list, got %+v", list)
+	}
+
+	// blank title → 400
+	resp, err := http.Post(api.URL+"/api/sessions/"+id+"/rename", "application/json",
+		strings.NewReader(`{"title":"   "}`))
+	if err != nil {
+		t.Fatalf("POST blank: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for blank title, got %d", resp.StatusCode)
+	}
+
+	// over-long title → 400
+	long := strings.Repeat("长", session.MaxTitleLen+1)
+	resp, err = http.Post(api.URL+"/api/sessions/"+id+"/rename", "application/json",
+		strings.NewReader(`{"title":"`+long+`"}`))
+	if err != nil {
+		t.Fatalf("POST long: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for over-long title, got %d", resp.StatusCode)
+	}
+
+	// unknown session → 404
+	resp, err = http.Post(api.URL+"/api/sessions/nope/rename", "application/json",
+		strings.NewReader(`{"title":"x"}`))
+	if err != nil {
+		t.Fatalf("POST unknown: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
+// TestSetModelAPI verifies the per-session model endpoint end to end:
+// POST /api/sessions/{id}/model switches the model and reports the new
+// context window, GET /api/sessions and the session detail reflect it,
+// unknown model names are rejected with 400, an empty name resets to the
+// default model, and an unknown session returns 404.
+func TestSetModelAPI(t *testing.T) {
+	be := newTestBackend(t)
+	// The test backend registers one default client under key ""; add a
+	// second named model so there is something to switch to.
+	reg := be.mgr.Models()
+	second, err := provider.NewModelClient(config.ModelConfig{
+		Provider: "vllm", BaseURL: "http://127.0.0.1:1", APIKey: "k",
+		ModelName: "second-model", MaxTokens: 100, ContextWindow: 8192,
+	})
+	if err != nil {
+		t.Fatalf("NewModelClient: %v", err)
+	}
+	reg.Set(map[string]*provider.ModelClient{"": reg.Client(""), "second": second}, "")
+
+	api := httptest.NewServer(NewServer(be))
+	defer api.Close()
+
+	sess, err := be.mgr.CreateSessionRecord("model-test", "build", t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("CreateSessionRecord: %v", err)
+	}
+	id := sess.ID()
+
+	// default model: empty key
+	var list []SessionSummary
+	if err := getJSON(api.URL+"/api/sessions", &list); err != nil {
+		t.Fatalf("GET /api/sessions: %v", err)
+	}
+	if len(list) != 1 || list[0].Model != "" {
+		t.Fatalf("expected one session on the default model, got %+v", list)
+	}
+
+	// switch to the named model
+	var modelResp map[string]interface{}
+	if err := postJSON(api.URL+"/api/sessions/"+id+"/model", map[string]string{"model": "second"}, &modelResp); err != nil {
+		t.Fatalf("POST model: %v", err)
+	}
+	if modelResp["model"] != "second" {
+		t.Fatalf("expected model=second, got %q", modelResp["model"])
+	}
+	if cw, _ := modelResp["context_window"].(float64); cw != 8192 {
+		t.Fatalf("expected context_window=8192, got %v", modelResp["context_window"])
+	}
+	if err := getJSON(api.URL+"/api/sessions", &list); err != nil {
+		t.Fatalf("GET /api/sessions after switch: %v", err)
+	}
+	if list[0].Model != "second" {
+		t.Fatalf("expected list model second, got %q", list[0].Model)
+	}
+
+	// the session detail carries the model and its context window
+	var detail map[string]interface{}
+	if err := getJSON(api.URL+"/api/sessions/"+id, &detail); err != nil {
+		t.Fatalf("GET session detail: %v", err)
+	}
+	sessObj, _ := detail["session"].(map[string]interface{})
+	if sessObj["model"] != "second" {
+		t.Fatalf("expected detail model second, got %q", sessObj["model"])
+	}
+	if cw, _ := detail["context_window"].(float64); cw != 8192 {
+		t.Fatalf("expected detail context_window 8192, got %v", detail["context_window"])
+	}
+
+	// unknown model → 400
+	resp, err := http.Post(api.URL+"/api/sessions/"+id+"/model", "application/json",
+		strings.NewReader(`{"model":"bogus"}`))
+	if err != nil {
+		t.Fatalf("POST bogus model: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown model, got %d", resp.StatusCode)
+	}
+
+	// empty model → back to default
+	var resetResp map[string]interface{}
+	if err := postJSON(api.URL+"/api/sessions/"+id+"/model", map[string]string{"model": ""}, &resetResp); err != nil {
+		t.Fatalf("POST reset model: %v", err)
+	}
+	if resetResp["model"] != "" {
+		t.Fatalf("expected empty model after reset, got %q", resetResp["model"])
+	}
+
+	// unknown session → 404
+	resp, err = http.Post(api.URL+"/api/sessions/nope/model", "application/json",
+		strings.NewReader(`{"model":"second"}`))
+	if err != nil {
+		t.Fatalf("POST model unknown session: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
 // TestApprovalsAPI verifies the approval request lifecycle through the HTTP
 // API: a pending request appears in GET /api/approvals, a decision resolves
 // the blocked RequestApproval call, and a double decision returns 409.

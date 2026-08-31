@@ -84,7 +84,7 @@ aside {
 .sess-item.active { background: var(--green-xl); border-color: var(--green-b); }
 .sess-title {
   font-size: 13px; font-weight: 600; color: #0f172a; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; padding-right: 20px;
+  text-overflow: ellipsis; white-space: nowrap; padding-right: 44px;
 }
 .sess-meta { font-size: 11px; color: var(--text3); margin-top: 4px; display: flex; gap: 8px; align-items: center; }
 .sess-meta .s { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
@@ -100,6 +100,13 @@ aside {
 }
 .sess-item:hover .del-btn { display: block; }
 .del-btn:hover { background: var(--red); color: #fff; }
+.rename-btn {
+  position: absolute; right: 32px; top: 8px; width: 20px; height: 20px;
+  border: none; border-radius: 5px; background: transparent; color: var(--text3);
+  font-size: 12px; cursor: pointer; display: none; line-height: 20px;
+}
+.sess-item:hover .rename-btn { display: block; }
+.rename-btn:hover { background: var(--blue-t); color: #fff; }
 .empty-hint { color: var(--text3); font-size: 12px; text-align: center; padding: 24px 12px; }
 
 /* ---------- 聊天区 ---------- */
@@ -109,7 +116,7 @@ aside {
   background: #fff; border-bottom: 1px solid var(--border);
   font-size: 13px; color: var(--text3);
 }
-.chat-head .title { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-head .title { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .messages { flex: 1; overflow-y: auto; padding: 20px 24px; scroll-behavior: smooth; }
 
 /* 消息:统一的纵向卡片排布 */
@@ -306,6 +313,48 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .frow input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(22,163,74,.12); }
 .frow .hint { font-size: 11px; color: var(--text3); }
 .check-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; }
+/* 模型列表卡片(设置弹窗) */
+.model-card {
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+  margin-bottom: 10px; background: var(--bg);
+}
+.model-card .mc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; }
+.model-card .mc-head b { color: #0f172a; }
+.model-card .mc-rm {
+  margin-left: auto; width: 22px; height: 22px; border: none; border-radius: 6px;
+  background: transparent; color: var(--text3); font-size: 13px; cursor: pointer;
+}
+.model-card .mc-rm:hover { background: var(--red); color: #fff; }
+.add-model-btn {
+  width: 100%; padding: 8px; border: 1px dashed var(--border2); border-radius: 10px;
+  background: transparent; color: var(--text2); font-size: 13px; cursor: pointer; margin-bottom: 12px;
+}
+.add-model-btn:hover { border-color: var(--green); color: var(--green); }
+.frow select {
+  flex: 1; background: #fff; border: 1px solid var(--border2); color: var(--text);
+  border-radius: 8px; padding: 7px 10px; font-size: 13px; outline: none; min-width: 0;
+}
+/* 模型选择(composer 输入行内,发送按钮左侧) */
+.model-menu-wrap { position: relative; display: inline-flex; align-items: center; }
+.model-inline-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border: none; cursor: pointer;
+  font-size: 13px; color: var(--text2); padding: 6px 10px; border-radius: 8px;
+  max-width: 240px;
+}
+.model-inline-btn:hover { background: var(--bg); color: var(--text); }
+.model-inline-btn #model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-inline-btn .chev { font-size: 12px; color: var(--text3); flex: none; }
+.model-menu {
+  position: absolute; bottom: 38px; right: 0; z-index: 60; min-width: 220px; max-height: 320px; overflow-y: auto;
+  background: #fff; border: 1px solid var(--border2); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(15,23,42,.18); display: none;
+}
+.model-menu.open { display: block; }
+.model-menu .mm-item { padding: 8px 14px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.model-menu .mm-item:hover { background: var(--bg); }
+.model-menu .mm-item.cur { color: var(--green-d); font-weight: 600; }
+.model-menu .mm-item .mm-sub { font-size: 11px; color: var(--text3); margin-left: auto; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 .btn {
   padding: 8px 18px; border-radius: 8px; border: 1px solid var(--border2);
@@ -418,7 +467,7 @@ details.m-think[open] summary { margin-bottom: 6px; }
   <section class="chat">
     <div class="chat-head">
       <button class="back-btn" id="btn-back-parent" title="返回父会话">← 父会话</button>
-      <span class="title" id="chat-title">新会话</span><span id="chat-sub"></span>
+      <span class="title" id="chat-title" title="双击重命名">新会话</span><span id="chat-sub"></span>
       <span class="spacer"></span>
       <button class="tasks-btn" id="btn-tasks" title="查看该会话派遣的子代理任务">🧵 子任务 <span class="tasks-count" id="tasks-count">0</span></button>
       <div class="tasks-panel" id="tasks-panel"></div>
@@ -446,6 +495,10 @@ details.m-think[open] summary { margin-bottom: 6px; }
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
           </button>
           <span class="row-flex"></span>
+          <div class="model-menu-wrap">
+            <button class="model-inline-btn" id="btn-model" title="选择模型(新会话:下一条消息生效;已有会话:下次任务生效)"><span id="model-name">默认</span><span class="chev">⌄</span></button>
+            <div class="model-menu" id="model-menu"></div>
+          </div>
           <button class="send-btn" id="btn-send">发送</button>
           <button class="stop-btn" id="btn-stop">停止</button>
         </div>
@@ -466,18 +519,12 @@ details.m-think[open] summary { margin-bottom: 6px; }
 <div class="modal-mask" id="settings-mask">
   <div class="modal">
     <h2>配置</h2>
-    <h3>模型</h3>
-    <div class="frow"><label>Provider</label><input type="text" id="c-provider" placeholder="vllm / ollama / openai"></div>
-    <div class="frow"><label>Base URL</label><input type="text" id="c-baseurl"></div>
-    <div class="frow"><label>API Key</label><input type="text" id="c-apikey"></div>
-    <div class="frow"><label>Model Name</label><input type="text" id="c-modelname"></div>
-    <div class="frow"><label>Max Tokens</label><input type="number" id="c-maxtokens"></div>
-    <div class="frow"><label>Context Window</label><input type="number" id="c-ctxwindow"></div>
-    <div class="frow"><label>Temperature</label><input type="number" id="c-temp" step="0.1" min="0" max="2"></div>
-    <div class="frow"><label>Top P</label><input type="number" id="c-topp" step="0.05" min="0" max="1"></div>
-    <div class="frow"><label>Reserve Tokens</label><input type="number" id="c-reserve"></div>
+    <h3>模型(可配置多个,会话里下拉选择)</h3>
+    <div id="model-list"></div>
+    <button class="add-model-btn" id="btn-add-model">＋ 添加模型</button>
+    <div class="frow"><label>默认模型</label><select id="c-default-model"></select></div>
     <div class="frow"><label>上下文自动压缩</label>
-      <div class="check-row" style="margin:0"><input type="checkbox" id="c-compaction"><label for="c-compaction" style="width:auto">接近上下文上限时自动压缩旧对话</label></div>
+      <div class="check-row" style="margin:0"><input type="checkbox" id="c-compaction"><label for="c-compaction" style="width:auto">接近上下文上限时自动压缩旧对话(全局)</label></div>
       <span class="hint">关闭后不再压缩,长任务更易撞上限</span>
     </div>
 
@@ -529,7 +576,11 @@ const state = {
   sending: false,     // 消息已发出、会话还没创建完(此期间不要用轮询重置 running)
   live: null,         // 当前流式输出块(DOM)
   pending: null,      // 等待模型首 token 的转圈块(DOM)
-  ctxWindow: 0,       // 模型上下文窗口(token)
+  ctxWindow: 0,       // 当前会话模型的上下文窗口(token)
+  defaultCtxWindow: 0,// 默认模型的上下文窗口(新会话视图用)
+  models: [],         // 已配置的模型列表(来自 /api/status)
+  defaultModel: "",   // 默认模型名
+  model: "",          // 当前会话的模型名;新会话视图下 = 下一条消息创建会话时使用的模型
   pendingImages: [],  // 待发送的截图 data URL(data:image/...;base64,...)
   mode: "full",       // 当前会话的权限模式;新会话视图下 = 下一条消息创建会话时使用的模式
   approvals: {},      // id → payload(待审批队列,跨会话)
@@ -706,11 +757,16 @@ function renderSessions() {
       '<div class="sess-meta"><span class="s ' + dotClass + '"></span>' +
       (s.mode === "cautious" ? '<span title="谨慎模式">🛡</span>' : "") +
       (statusText ? "<span>" + statusText + "</span>" : "") +
-      "<span>" + relTime(s.updated_at) + "</span><span>" + s.message_count + " 条</span></div>" +
-      '<button class="del-btn" title="删除会话">✕</button>';
+       "<span>" + relTime(s.updated_at) + "</span><span>" + s.message_count + " 条</span></div>" +
+       '<button class="rename-btn" title="重命名会话">✎</button>' +
+       '<button class="del-btn" title="删除会话">✕</button>';
     el.addEventListener("click", (e) => {
-      if (e.target.classList.contains("del-btn")) return;
+      if (e.target.classList.contains("del-btn") || e.target.classList.contains("rename-btn")) return;
       selectSession(s.session_id);
+    });
+    el.querySelector(".rename-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      renameSession(s.session_id, s.title);
     });
     el.querySelector(".del-btn").addEventListener("click", async (e) => {
       e.stopPropagation();
@@ -724,6 +780,27 @@ function renderSessions() {
     });
     list.appendChild(el);
   }
+}
+
+/* ---------------- 会话重命名 ---------------- */
+async function renameSession(id, currentTitle) {
+  const t = prompt("重命名会话", currentTitle || "");
+  if (t == null) return; // 取消
+  const title = t.trim();
+  if (!title) { toast("标题不能为空", "err"); return; }
+  if ([...title].length > 60) { toast("标题过长(最多 60 字)", "err"); return; }
+  try {
+    const r = await api("/api/sessions/" + id + "/rename", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    const s = state.sessions.find(x => x.session_id === id);
+    if (s) s.title = r.title;
+    if (state.current === id) setChatTitle(r.title, s ? (s.work_dir || "").slice(0, 60) : "");
+    renderSessions();
+    toast("已重命名", "ok");
+  } catch (err) { toast("重命名失败:" + err.message, "err"); }
 }
 
 /* ---------------- 消息区 ---------------- */
@@ -940,7 +1017,10 @@ async function send() {
     const body = { content: text };
     if (images.length) body.images = images;
     if (state.current) body.session_id = state.current;
-    else body.mode = state.mode; // 新会话:按当前选择的权限模式创建
+    else {
+      body.mode = state.mode;   // 新会话:按当前选择的权限模式创建
+      body.model = state.model; // 新会话:按当前选择的模型创建
+    }
     const r = await api("/api/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -992,6 +1072,7 @@ function onEvent(m) {
       paintTokens(0);
       compactBtnState();
       paintMode();
+      paintModel(); // 会话已创建:按钮提示从"新会话"切到"当前会话模型"
       paintBackBtn("");
       loadChildren();
       // hub 在 session_created 之后才登记任务(注册 + 写 status=running 都是
@@ -1096,6 +1177,62 @@ async function toggleMode() {
     paintMode();
     toast(next === "cautious" ? "已切换为谨慎模式:危险操作将请求审批" : "已切换为完整模式:直接执行", "ok");
   } catch (e) { toast("切换模式失败:" + e.message, "err"); }
+}
+
+/* ---------------- 模型选择(composer 下拉) ---------------- */
+function paintModel() {
+  const m = state.models.find(x => x.name === state.model);
+  $("#model-name").textContent = m ? m.name : (state.model || "默认");
+  $("#btn-model").title = state.current
+    ? "当前会话模型:" + (m ? m.name : "默认") + "(切换后下次任务生效)"
+    : "新会话使用的模型(下一条消息生效)";
+}
+function toggleModelMenu() {
+  const menu = $("#model-menu");
+  if (menu.classList.contains("open")) { closeModelMenu(); return; }
+  menu.innerHTML = state.models.map(m =>
+    '<div class="mm-item' + (m.name === state.model ? " cur" : "") + '" data-name="' + esc(m.name) + '">' +
+    esc(m.name) +
+    (m.name === state.defaultModel ? '<span class="mm-sub">默认</span>' : '<span class="mm-sub">' + fmtK(m.context_window) + '</span>') +
+    '</div>').join("");
+  if (!state.models.length) {
+    menu.innerHTML = '<div class="mm-item" style="cursor:default;color:var(--text3)">未配置模型(设置里添加)</div>';
+  }
+  menu.querySelectorAll(".mm-item[data-name]").forEach(el => {
+    el.addEventListener("click", () => pickModel(el.dataset.name));
+  });
+  menu.classList.add("open");
+}
+function closeModelMenu() { $("#model-menu").classList.remove("open"); }
+async function pickModel(name) {
+  closeModelMenu();
+  if (name === state.model) return;
+  const prev = state.model;
+  state.model = name;
+  paintModel();
+  if (!state.current) {
+    // 新会话:token 条的窗口跟着所选模型走
+    const m = state.models.find(x => x.name === name);
+    if (m) state.ctxWindow = m.context_window || 0;
+    paintTokens(0);
+    toast("新会话将使用模型 " + name, "");
+    return;
+  }
+  try {
+    const r = await api("/api/sessions/" + state.current + "/model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: name }),
+    });
+    if (r.context_window) state.ctxWindow = r.context_window;
+    paintTokens(0);
+    updateTokenUsage();
+    toast("已切换模型 " + name + ",下次任务生效", "ok");
+  } catch (e) {
+    state.model = prev;
+    paintModel();
+    toast("切换模型失败:" + e.message, "err");
+  }
 }
 
 /* ---------------- 审批(谨慎模式) ---------------- */
@@ -1254,32 +1391,78 @@ async function loadStatus() {
       : (s.dingtalk_enabled ? '<span class="dot off"></span>钉钉:配置异常' : '<span class="dot off"></span>钉钉:未启用');
     const comp = s.compaction_enabled ? "" : " · 压缩已关闭";
     $("#status-pill").innerHTML = "<b>" + esc(s.model_name || "未配置模型") + "</b> · " + dt + " · 端口 " + s.web_port + comp;
-    state.ctxWindow = s.context_window || 0;
-    if (state.current) {
-      updateTokenUsage();
-    } else {
+    // 模型列表 + 默认模型(下拉框数据源)
+    state.models = s.models || [];
+    state.defaultModel = s.default_model || (state.models[0] && state.models[0].name) || "";
+    state.defaultCtxWindow = s.context_window || 0;
+    // 当前选择的模型若已不存在(配置被改),回落默认
+    if (state.model && !state.models.some(x => x.name === state.model)) state.model = state.defaultModel;
+    if (!state.current) {
+      state.ctxWindow = state.defaultCtxWindow;
       paintTokens(0);
     }
+    paintModel();
   } catch (e) {
     $("#status-pill").textContent = "状态获取失败";
   }
 }
 
 /* ---------------- 配置 ---------------- */
+let modelDraft = []; // 设置弹窗里的模型草稿(编辑中,保存时才提交)
+function modelTemplate() {
+  return { name: "", provider: "vllm", base_url: "", api_key: "", model_name: "",
+           max_tokens: 31072, context_window: 131072, temperature: 0.6, top_p: 0.9, reserve_tokens: 4096 };
+}
+function renderModelCards() {
+  const box = $("#model-list");
+  box.innerHTML = "";
+  modelDraft.forEach((m, i) => {
+    const card = document.createElement("div");
+    card.className = "model-card";
+    const field = (k, label, ph, type) =>
+      '<div class="frow"><label>' + label + '</label><input type="' + (type || "text") + '" data-k="' + k +
+      '" placeholder="' + (ph || "") + '" value="' + esc(m[k] == null ? "" : m[k]) + '"></div>';
+    card.innerHTML =
+      '<div class="mc-head"><b>模型 ' + (i + 1) + '</b><button class="mc-rm" title="删除该模型">✕</button></div>' +
+      field("name", "显示名", "下拉框里显示的名字,唯一") +
+      field("provider", "Provider", "vllm / ollama") +
+      field("base_url", "Base URL") +
+      field("api_key", "API Key") +
+      field("model_name", "Model Name", "服务端模型名") +
+      field("max_tokens", "Max Tokens", "", "number") +
+      field("context_window", "Context Window", "", "number") +
+      field("temperature", "Temperature", "", "number") +
+      field("top_p", "Top P", "", "number") +
+      field("reserve_tokens", "Reserve Tokens", "", "number");
+    card.querySelectorAll("input").forEach(inp => {
+      inp.addEventListener("input", () => { m[inp.dataset.k] = inp.value; paintDefaultModelSelect(); });
+    });
+    card.querySelector(".mc-rm").addEventListener("click", () => {
+      modelDraft.splice(i, 1);
+      renderModelCards();
+    });
+    box.appendChild(card);
+  });
+  paintDefaultModelSelect();
+}
+function paintDefaultModelSelect() {
+  const sel = $("#c-default-model");
+  const cur = sel.value;
+  sel.innerHTML = modelDraft.map(m =>
+    '<option value="' + esc(m.name || "") + '">' + esc(m.name || "(未命名)") + '</option>').join("");
+  if (modelDraft.some(m => m.name === cur)) sel.value = cur;
+}
 async function openSettings() {
   let cfg;
   try { cfg = await api("/api/config"); } catch (e) { toast("读取配置失败:" + e.message, "err"); return; }
-  const M = cfg.model || {}, D = cfg.dingtalk || {};
-  $("#c-provider").value = M.provider || "";
-  $("#c-baseurl").value = M.base_url || "";
-  $("#c-apikey").value = M.api_key || "";
-  $("#c-modelname").value = M.model_name || "";
-  $("#c-maxtokens").value = M.max_tokens || "";
-  $("#c-ctxwindow").value = M.context_window || "";
-  $("#c-compaction").checked = M.compaction_enabled !== false; // 缺省 = 开启
-  $("#c-temp").value = M.temperature || "";
-  $("#c-topp").value = M.top_p || "";
-  $("#c-reserve").value = M.reserve_tokens || "";
+  const D = cfg.dingtalk || {};
+  // 模型列表草稿(服务端加载时已保证 models 非空)
+  modelDraft = (cfg.models && cfg.models.length ? cfg.models : [cfg.model || {}]).map(m =>
+    Object.assign(modelTemplate(), m));
+  if (!modelDraft.length) modelDraft = [modelTemplate()];
+  renderModelCards();
+  $("#c-default-model").value = cfg.default_model || modelDraft[0].name || "";
+  $("#c-compaction").checked = cfg.compaction_enabled !== false; // 缺省 = 开启
   $("#d-enabled").checked = !!D.enabled;
   $("#d-appkey").value = D.app_key || "";
   $("#d-appsecret").value = D.app_secret || "";
@@ -1291,20 +1474,33 @@ async function openSettings() {
 }
 async function saveSettings() {
   const num = (v) => (v === "" ? 0 : Number(v));
+  const models = modelDraft.map(m => ({
+    name: (m.name || "").trim(),
+    provider: (m.provider || "").trim(),
+    base_url: (m.base_url || "").trim(),
+    api_key: (m.api_key || "").trim(),
+    model_name: (m.model_name || "").trim(),
+    max_tokens: num(m.max_tokens),
+    context_window: num(m.context_window),
+    temperature: num(m.temperature),
+    top_p: num(m.top_p),
+    reserve_tokens: num(m.reserve_tokens),
+  }));
+  for (const m of models) {
+    if (!m.name || !m.provider || !m.base_url || !m.model_name) {
+      toast("每个模型都要填:显示名 / Provider / Base URL / Model Name", "err");
+      return;
+    }
+  }
+  const names = models.map(m => m.name);
+  if (new Set(names).size !== names.length) { toast("模型显示名不能重复", "err"); return; }
+  let defModel = $("#c-default-model").value;
+  if (!names.includes(defModel)) defModel = names[0];
   const cfg = {
     web_port: num($("#w-port").value),
-    model: {
-      provider: $("#c-provider").value.trim(),
-      base_url: $("#c-baseurl").value.trim(),
-      api_key: $("#c-apikey").value.trim(),
-      model_name: $("#c-modelname").value.trim(),
-      max_tokens: num($("#c-maxtokens").value),
-      context_window: num($("#c-ctxwindow").value),
-      compaction_enabled: $("#c-compaction").checked,
-      temperature: num($("#c-temp").value),
-      top_p: num($("#c-topp").value),
-      reserve_tokens: num($("#c-reserve").value),
-    },
+    models,
+    default_model: defModel,
+    compaction_enabled: $("#c-compaction").checked,
     dingtalk: {
       enabled: $("#d-enabled").checked,
       app_key: $("#d-appkey").value.trim(),
@@ -1381,10 +1577,13 @@ function resetToNew() {
   messagesEl().innerHTML = "";
   showPlaceholder();
   setChatTitle("新会话", "发送后自动创建会话");
-  paintTokens(0);
   state.mode = "full"; // 新会话默认完整模式
+  state.model = state.defaultModel || ""; // 新会话默认模型
+  state.ctxWindow = state.defaultCtxWindow;
   state.children = [];
   paintMode();
+  paintModel();
+  paintTokens(0);
   paintBackBtn("");
   closeTasksPanel();
   renderTasksPanel();
@@ -1402,6 +1601,10 @@ async function selectSession(id) {
     // 权限模式:以服务端为准(谨慎/完整)
     state.mode = s.mode === "cautious" ? "cautious" : "full";
     paintMode();
+    // 模型:以服务端为准(空 = 默认模型);token 条窗口跟着会话模型走
+    state.model = s.model || state.defaultModel || "";
+    if (data.context_window) state.ctxWindow = data.context_window;
+    paintModel();
     paintBackBtn(s.parent_id);
     closeTasksPanel();
     loadChildren();
@@ -1611,10 +1814,33 @@ function fsInsert(i) {
   });
   // 权限模式 / 子任务 / 审批
   $("#btn-mode").addEventListener("click", toggleMode);
+  // 模型切换(composer 输入行内下拉)
+  $("#btn-model").addEventListener("click", toggleModelMenu);
+  // 设置弹窗:添加模型卡片
+  $("#btn-add-model").addEventListener("click", () => {
+    modelDraft.push(modelTemplate());
+    renderModelCards();
+    const cards = $("#model-list").querySelectorAll(".model-card");
+    const last = cards[cards.length - 1];
+    if (last) {
+      last.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      const f = last.querySelector("input");
+      if (f) f.focus();
+    }
+  });
+  // 双击聊天头标题重命名当前会话
+  $("#chat-title").addEventListener("dblclick", () => {
+    if (!state.current) return;
+    const s = state.sessions.find(x => x.session_id === state.current);
+    renameSession(state.current, s ? s.title : "");
+  });
   $("#btn-tasks").addEventListener("click", toggleTasksPanel);
   document.addEventListener("click", (e) => {
     const p = $("#tasks-panel");
     if (p.classList.contains("open") && !p.contains(e.target) && e.target.id !== "btn-tasks") closeTasksPanel();
+    // 点模型按钮/菜单之外时收起模型下拉
+    const wrap = $("#model-menu").closest(".model-menu-wrap");
+    if ($("#model-menu").classList.contains("open") && !wrap.contains(e.target)) closeModelMenu();
   });
   $("#btn-approval-badge").addEventListener("click", () => {
     const ids = Object.keys(state.approvals);

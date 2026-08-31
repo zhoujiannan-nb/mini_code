@@ -101,6 +101,14 @@ func (s *SubagentService) prepare(parentID, role, goal string, fork bool) (*Sess
 			slog.Warn("snapshot child mode failed", "child", child.ID(), "err", err)
 		}
 	}
+	// Model inheritance: the child snapshots the parent's model, so
+	// sub-agent work runs on the same model the parent session uses
+	// (an empty parent key means the default model — nothing to set).
+	if mk := parent.ModelKey(); mk != "" {
+		if err := s.mgr.SetModel(child.ID(), mk); err != nil {
+			slog.Warn("snapshot child model failed", "child", child.ID(), "model", mk, "err", err)
+		}
+	}
 	if fork {
 		hist := s.mgr.CopyMessages(parentID)
 		if len(hist) > 0 && hist[0].Role == "system" {

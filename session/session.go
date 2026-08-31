@@ -52,6 +52,7 @@ func (s *Session) Title() string          { return s.record.Title }
 func (s *Session) Status() string         { return s.record.Status }
 func (s *Session) WorkDir() string        { return s.record.WorkDir }
 func (s *Session) AgentRole() string      { return s.record.AgentRole }
+func (s *Session) ModelKey() string       { return s.record.ModelKey }
 func (s *Session) ChannelKey() string     { return s.record.ChannelKey }
 func (s *Session) Record() *SessionRecord { return s.record }
 
@@ -112,7 +113,13 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		s.mu.Unlock()
 	}
 
-	loop := NewAgentLoop(s.client, maxTurns, pb.Tools, defs, s.onToolCallStart, s.onToolCallEnd, s.onAssistantReply, turnHook)
+	// Snapshot the session's client under the session lock: a concurrent
+	// SetModel may swap it, and this task must run to completion on the
+	// client it started with.
+	s.mu.Lock()
+	client := s.client
+	s.mu.Unlock()
+	loop := NewAgentLoop(client, maxTurns, pb.Tools, defs, s.onToolCallStart, s.onToolCallEnd, s.onAssistantReply, turnHook)
 	if s.manager != nil {
 		loop.compactionOn = s.manager.CompactionEnabled()
 		// Runtime permission gate: role permissions + cautious-mode
@@ -193,7 +200,15 @@ func (m *SessionManager) CompactSession(ctx context.Context, sessionID string) (
 	}
 	before := util.CountMessagesTokens(msgs)
 
-	newMsgs, err := NewContextCompactor(m.clientRef()).Compact(ctx, msgs)
+	// Compact with the session's own model, so the summary is produced by
+	// the same model the conversation runs on.
+	s.mu.Lock()
+	client := s.client
+	s.mu.Unlock()
+	if client == nil {
+		return before, before, fmt.Errorf("会话未配置模型,无法压缩")
+	}
+	newMsgs, err := NewContextCompactor(client).Compact(ctx, msgs)
 	if err != nil {
 		return before, before, fmt.Errorf("压缩失败: %w", err)
 	}
@@ -224,9 +239,11 @@ type SessionCallbacks struct {
 }
 
 type SessionManager struct {
-	client    *provider.ModelClient
-	clientMu  sync.RWMutex
-	store     *SessionStore
+	// models is the registry of configured model clients. Sessions
+	// reference one by name (record.ModelKey); empty/unknown names
+	// resolve to the default model. It is hot-replaced on config save.
+	models *provider.ModelRegistry
+	store  *SessionStore
 	sessions  map[string]*Session
 	mu        sync.RWMutex
 	callbackFactory func(sessionID string) *SessionCallbacks
@@ -256,20 +273,31 @@ type SessionManager struct {
 	injections  map[string][]string
 }
 
-// clientRef returns the current model client.
-func (m *SessionManager) clientRef() *provider.ModelClient {
-	m.clientMu.RLock()
-	defer m.clientMu.RUnlock()
-	return m.client
+// clientFor resolves the model client for a session's model key. Empty or
+// unknown keys fall back to the default model's client (nil when the
+// registry is empty, e.g. in tests that inject prompt functions).
+func (m *SessionManager) clientFor(modelKey string) *provider.ModelClient {
+	return m.models.Client(modelKey)
 }
 
-// SetClient hot-swaps the model client used by newly created sessions (and
-// sub-agent sessions). Sessions already running keep using their existing
-// client until they finish.
-func (m *SessionManager) SetClient(c *provider.ModelClient) {
-	m.clientMu.Lock()
-	m.client = c
-	m.clientMu.Unlock()
+// SetModels hot-replaces the model registry (startup / config save).
+// Sessions already running keep using their existing client until they
+// finish; idle sessions keep their snapshot too, so a config edit applies
+// to sessions from the next model switch or reload — same semantics as the
+// legacy single-client hot-swap.
+func (m *SessionManager) SetModels(clients map[string]*provider.ModelClient, defaultName string) {
+	m.models.Set(clients, defaultName)
+}
+
+// Models exposes the model registry (read-only use by the web layer).
+func (m *SessionManager) Models() *provider.ModelRegistry {
+	return m.models
+}
+
+// ContextWindowFor returns the context window of the given model key
+// (default model for empty/unknown keys); 0 when nothing resolves.
+func (m *SessionManager) ContextWindowFor(modelKey string) int {
+	return m.models.ContextWindow(modelKey)
 }
 
 // SetCompactionEnabled hot-toggles automatic context compression. It applies
@@ -287,13 +315,28 @@ func (m *SessionManager) CompactionEnabled() bool {
 	return m.compactionOn
 }
 
+// NewRegistryWithDefault builds a model registry whose default model is
+// the given client (nil client → empty registry, for tests that inject
+// prompt functions instead of a real model).
+func NewRegistryWithDefault(client *provider.ModelClient) *provider.ModelRegistry {
+	r := provider.NewModelRegistry()
+	if client != nil {
+		r.Set(map[string]*provider.ModelClient{"": client}, "")
+	}
+	return r
+}
+
+// NewSessionManager creates a SessionManager. The client (may be nil in
+// tests) is registered as the default model; a multi-model registry can be
+// installed later via SetModels.
 func NewSessionManager(client *provider.ModelClient, dbPath string) (*SessionManager, error) {
 	store, err := NewSessionStore(dbPath)
 	if err != nil {
 		return nil, err
 	}
+	registry := NewRegistryWithDefault(client)
 	return &SessionManager{
-		client:       client,
+		models:       registry,
 		store:        store,
 		sessions:     make(map[string]*Session),
 		compactionOn: true,
@@ -308,8 +351,9 @@ func NewDefaultSessionManager(client *provider.ModelClient) (*SessionManager, er
 	if err != nil {
 		return nil, err
 	}
+	registry := NewRegistryWithDefault(client)
 	return &SessionManager{
-		client:       client,
+		models:       registry,
 		store:        store,
 		sessions:     make(map[string]*Session),
 		compactionOn: true,
@@ -371,6 +415,66 @@ func (m *SessionManager) SetMode(sessionID, mode string) error {
 	}
 	m.mu.Unlock()
 	slog.Info("session mode changed", "session", sessionID, "mode", mode)
+	return nil
+}
+
+// SetModel switches a session's model (config model name; empty = default
+// model). It applies from the next task on — a task that is currently
+// running keeps the client it started with (same semantics as the legacy
+// global model hot-swap). The in-memory record and client snapshot are
+// synced under the session lock so a concurrent Prompt either sees the old
+// pair or the new pair, never a mix.
+func (m *SessionManager) SetModel(sessionID, name string) error {
+	name = strings.TrimSpace(name)
+	if name != "" && !m.models.Has(name) {
+		return fmt.Errorf("未知模型: %s", name)
+	}
+	s, err := m.Get(sessionID)
+	if err != nil || s == nil {
+		return fmt.Errorf("会话不存在: %s", sessionID)
+	}
+	if err := m.store.SetModelKey(sessionID, name); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.record.ModelKey = name
+	s.client = m.clientFor(name)
+	s.mu.Unlock()
+	slog.Info("session model changed", "session", sessionID, "model", name)
+	return nil
+}
+
+// --- session title ---
+
+// MaxTitleLen caps the length of a user-chosen session title (in runes).
+const MaxTitleLen = 60
+
+// RenameSession renames a session (the sidebar title). It is safe while a
+// task is running: the loop persists the shared record pointer, so its next
+// per-turn write carries the new title; syncing the in-memory record here
+// (like SetMode / SetChannelKey) keeps a later whole-row persistence from
+// resurrecting the old title.
+func (m *SessionManager) RenameSession(sessionID, title string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return fmt.Errorf("标题不能为空")
+	}
+	if len([]rune(title)) > MaxTitleLen {
+		return fmt.Errorf("标题过长(最多 %d 字)", MaxTitleLen)
+	}
+	s, err := m.Get(sessionID)
+	if err != nil || s == nil {
+		return fmt.Errorf("会话不存在: %s", sessionID)
+	}
+	if err := m.store.SetTitle(sessionID, title); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if s, ok := m.sessions[sessionID]; ok {
+		s.record.Title = title
+	}
+	m.mu.Unlock()
+	slog.Info("session renamed", "session", sessionID, "title", title)
 	return nil
 }
 
@@ -522,7 +626,7 @@ func (m *SessionManager) newSession(record *SessionRecord) *Session {
 	s := &Session{
 		record:   record,
 		store:    m.store,
-		client:   m.clientRef(),
+		client:   m.clientFor(record.ModelKey),
 		agentCfg: cfg,
 		manager:  m,
 	}

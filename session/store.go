@@ -28,6 +28,9 @@ type SessionRecord struct {
 	WorkDir    string                 `json:"work_dir"`
 	Status     string                 `json:"status"`
 	Mode       string                 `json:"mode,omitempty"` // "full" (default) | "cautious"
+	// ModelKey references a configured model by name; empty = the default
+	// model. Sub-agent sessions snapshot their parent's key at dispatch.
+	ModelKey   string                 `json:"model_key,omitempty"`
 	ChannelKey string                 `json:"channel_key,omitempty"`
 	Messages   []provider.Message     `json:"messages"`
 	Metadata   map[string]interface{} `json:"metadata"`
@@ -74,6 +77,7 @@ func (s *SessionStore) initDB() {
 		work_dir TEXT DEFAULT '',
 		status TEXT DEFAULT 'created',
 		mode TEXT DEFAULT '',
+		model_key TEXT DEFAULT '',
 		channel_key TEXT DEFAULT '',
 		messages TEXT DEFAULT '[]',
 		metadata TEXT DEFAULT '{}',
@@ -85,6 +89,7 @@ func (s *SessionStore) initDB() {
 	s.db.InitIndex(`CREATE INDEX IF NOT EXISTS idx_sessions_channel_key ON sessions(channel_key)`)
 	s.migrateChannelKey()
 	s.migrateMode()
+	s.migrateModelKey()
 }
 
 // migrateChannelKey adds the channel_key column to databases created before
@@ -118,6 +123,21 @@ func (s *SessionStore) migrateMode() {
 	s.db.Execute("ALTER TABLE sessions ADD COLUMN mode TEXT DEFAULT ''")
 }
 
+// migrateModelKey adds the model_key column to databases created before
+// the column existed.
+func (s *SessionStore) migrateModelKey() {
+	rows, err := s.db.FetchAll("PRAGMA table_info(sessions)")
+	if err != nil {
+		return
+	}
+	for _, row := range rows {
+		if fmt.Sprint(row["name"]) == "model_key" {
+			return
+		}
+	}
+	s.db.Execute("ALTER TABLE sessions ADD COLUMN model_key TEXT DEFAULT ''")
+}
+
 // SessionSummary is a lightweight session row for list views: metadata plus
 // the message count, without the (potentially large) messages payload. It
 // covers root sessions only — sub-agent sessions (parent_id set) are
@@ -130,6 +150,7 @@ type SessionSummary struct {
 	WorkDir      string
 	Status       string
 	Mode         string
+	ModelKey     string
 	ChannelKey   string
 	CreatedAt    string
 	UpdatedAt    string
@@ -142,7 +163,7 @@ type SessionSummary struct {
 // enough for frequent polling.
 func (s *SessionStore) ListSessionSummaries(limit, offset int) ([]SessionSummary, error) {
 	rows, err := s.db.FetchAll(
-		`SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, channel_key,
+		`SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key,
 		        created_at, updated_at,
 		        COALESCE(json_array_length(messages), 0) AS message_count
 		 FROM sessions
@@ -165,7 +186,7 @@ func (s *SessionStore) ListSessionSummaries(limit, offset int) ([]SessionSummary
 // parent session.
 func (s *SessionStore) ListChildren(parentID string) ([]SessionSummary, error) {
 	rows, err := s.db.FetchAll(
-		`SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, channel_key,
+		`SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key,
 		        created_at, updated_at,
 		        COALESCE(json_array_length(messages), 0) AS message_count
 		 FROM sessions
@@ -192,6 +213,7 @@ func summaryFromRow(row map[string]interface{}) SessionSummary {
 		WorkDir:      fmt.Sprint(row["work_dir"]),
 		Status:       fmt.Sprint(row["status"]),
 		Mode:         fmt.Sprint(row["mode"]),
+		ModelKey:     fmt.Sprint(row["model_key"]),
 		ChannelKey:   fmt.Sprint(row["channel_key"]),
 		CreatedAt:    fmt.Sprint(row["created_at"]),
 		UpdatedAt:    fmt.Sprint(row["updated_at"]),
@@ -220,10 +242,10 @@ func (s *SessionStore) Create(record *SessionRecord) error {
 	msgsJSON, _ := json.Marshal(record.Messages)
 	metaJSON, _ := json.Marshal(record.Metadata)
 	_, err := s.db.Execute(
-		`INSERT INTO sessions (session_id, parent_id, title, agent_role, work_dir, status, mode, channel_key, messages, metadata, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key, messages, metadata, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.SessionID, record.ParentID, record.Title, record.AgentRole, record.WorkDir,
-		record.Status, record.Mode, record.ChannelKey, string(msgsJSON), string(metaJSON), record.CreatedAt, record.UpdatedAt,
+		record.Status, record.Mode, record.ModelKey, record.ChannelKey, string(msgsJSON), string(metaJSON), record.CreatedAt, record.UpdatedAt,
 	)
 	return err
 }
@@ -241,9 +263,9 @@ func (s *SessionStore) Update(record *SessionRecord) error {
 	msgsJSON, _ := json.Marshal(record.Messages)
 	metaJSON, _ := json.Marshal(record.Metadata)
 	_, err := s.db.Execute(
-		`UPDATE sessions SET parent_id=?, title=?, agent_role=?, work_dir=?, status=?, mode=?, channel_key=?, messages=?, metadata=?, updated_at=?
+		`UPDATE sessions SET parent_id=?, title=?, agent_role=?, work_dir=?, status=?, mode=?, model_key=?, channel_key=?, messages=?, metadata=?, updated_at=?
 		 WHERE session_id=?`,
-		record.ParentID, record.Title, record.AgentRole, record.WorkDir, record.Status, record.Mode, record.ChannelKey,
+		record.ParentID, record.Title, record.AgentRole, record.WorkDir, record.Status, record.Mode, record.ModelKey, record.ChannelKey,
 		string(msgsJSON), string(metaJSON), record.UpdatedAt, record.SessionID,
 	)
 	return err
@@ -282,6 +304,31 @@ func (s *SessionStore) SetMode(sessionID, mode string) error {
 	return err
 }
 
+// SetTitle renames a session. It is a targeted update (not the whole-row
+// Update) so a rename can neither clobber the agent loop's concurrent
+// per-turn message persistence nor be clobbered by it. It deliberately does
+// not bump updated_at: a rename is a label change, not conversation
+// activity, and the list order (updated_at DESC) should stay stable.
+func (s *SessionStore) SetTitle(sessionID, title string) error {
+	_, err := s.db.Execute(
+		"UPDATE sessions SET title=? WHERE session_id=?",
+		title, sessionID,
+	)
+	return err
+}
+
+// SetModelKey switches the session's model (config model name; empty =
+// default model). Like SetMode it is a targeted update and bumps
+// updated_at, so the session jumps to the top of the list on switch.
+func (s *SessionStore) SetModelKey(sessionID, key string) error {
+	now := time.Now().Format(time.RFC3339)
+	_, err := s.db.Execute(
+		"UPDATE sessions SET model_key=?, updated_at=? WHERE session_id=?",
+		key, now, sessionID,
+	)
+	return err
+}
+
 func (s *SessionStore) Delete(sessionID string) error {
 	s.db.Execute("DELETE FROM sessions WHERE parent_id = ?", sessionID)
 	_, err := s.db.Execute("DELETE FROM sessions WHERE session_id = ?", sessionID)
@@ -297,6 +344,7 @@ func (s *SessionStore) rowToRecord(row map[string]interface{}) (*SessionRecord, 
 		WorkDir:    fmt.Sprint(row["work_dir"]),
 		Status:     fmt.Sprint(row["status"]),
 		Mode:       fmt.Sprint(row["mode"]),
+		ModelKey:   fmt.Sprint(row["model_key"]),
 		ChannelKey: fmt.Sprint(row["channel_key"]),
 		CreatedAt:  fmt.Sprint(row["created_at"]),
 		UpdatedAt:  fmt.Sprint(row["updated_at"]),

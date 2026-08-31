@@ -135,12 +135,34 @@ func (d *dtController) isRunning() bool {
 type runtime struct {
 	cfg       *config.AppConfig
 	cfgMu     sync.RWMutex
-	client    *provider.ModelClient
+	clients   []*provider.ModelClient // all model clients (closed on shutdown)
 	mgr       *session.SessionManager
 	hub       *channels.Hub
 	subagents *session.SubagentService
 	approvals *approval.Service
 	dt        *dtController
+}
+
+// buildModelClients creates a client for every configured model. It returns
+// the name→client map plus the flat list (for closing on shutdown).
+func buildModelClients(models []config.ModelConfig) (map[string]*provider.ModelClient, []*provider.ModelClient, error) {
+	clients := make(map[string]*provider.ModelClient, len(models))
+	all := make([]*provider.ModelClient, 0, len(models))
+	for _, mc := range models {
+		c, err := provider.NewModelClient(mc)
+		if err != nil {
+			return nil, nil, fmt.Errorf("model %q: %w", mc.Name, err)
+		}
+		clients[mc.Name] = c
+		all = append(all, c)
+	}
+	return clients, all, nil
+}
+
+func (rt *runtime) closeClients() {
+	for _, c := range rt.clients {
+		c.Close()
+	}
 }
 
 // setup loads config, the model client, the session manager and the message
@@ -156,16 +178,19 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
-	client, err := provider.NewModelClient(cfg.Model)
+	clients, allClients, err := buildModelClients(cfg.Models)
 	if err != nil {
 		return nil, fmt.Errorf("create model client: %w", err)
 	}
-	mgr, err := session.NewDefaultSessionManager(client)
+	mgr, err := session.NewDefaultSessionManager(nil)
 	if err != nil {
-		client.Close()
+		for _, c := range allClients {
+			c.Close()
+		}
 		return nil, fmt.Errorf("create session manager: %w", err)
 	}
-	mgr.SetCompactionEnabled(cfg.Model.Compaction())
+	mgr.SetModels(clients, cfg.DefaultModel)
+	mgr.SetCompactionEnabled(cfg.Compaction())
 
 	workDir, _ := os.Getwd()
 
@@ -204,7 +229,7 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 
 	return &runtime{
 		cfg:       cfg,
-		client:    client,
+		clients:   allClients,
 		mgr:       mgr,
 		hub:       hub,
 		subagents: subagents,
@@ -262,12 +287,28 @@ func (rt *runtime) liveConfig() *config.AppConfig {
 
 func (rt *runtime) Status() web.StatusInfo {
 	cfg := rt.liveConfig()
+	def := cfg.DefaultModelCfg()
+	providerName, modelName, ctxWindow := "", "", 0
+	if def != nil {
+		providerName, modelName, ctxWindow = def.Provider, def.ModelName, def.ContextWindow
+	}
+	models := make([]web.ModelInfo, 0, len(cfg.Models))
+	for _, mc := range cfg.Models {
+		models = append(models, web.ModelInfo{
+			Name:          mc.Name,
+			ModelName:     mc.ModelName,
+			Provider:      mc.Provider,
+			ContextWindow: mc.ContextWindow,
+		})
+	}
 	return web.StatusInfo{
 		WebPort:       cfg.WebPort,
-		Provider:      cfg.Model.Provider,
-		ModelName:     cfg.Model.ModelName,
-		ContextWindow: cfg.Model.ContextWindow,
-		Compaction:    cfg.Model.Compaction(),
+		Provider:      providerName,
+		ModelName:     modelName,
+		ContextWindow: ctxWindow,
+		Models:        models,
+		DefaultModel:  cfg.DefaultModel,
+		Compaction:    cfg.Compaction(),
 		DTEnabled:     cfg.DingTalk.Enabled,
 		DTRunning:     rt.dt.isRunning(),
 	}
@@ -278,20 +319,26 @@ func (rt *runtime) GetConfig() *config.AppConfig {
 }
 
 // SaveConfig persists cfg to disk and hot-applies the changed parts:
-// model config swaps the provider client, DingTalk config restarts the
+// model config rebuilds the model registry, DingTalk config restarts the
 // channel. The web port takes effect on next start.
 func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 	old := rt.liveConfig()
 
-	oldModelJSON, _ := json.Marshal(old.Model)
-	newModelJSON, _ := json.Marshal(cfg.Model)
-	modelChanged := string(oldModelJSON) != string(newModelJSON)
+	oldModelsJSON, _ := json.Marshal(struct {
+		Models       []config.ModelConfig `json:"models"`
+		DefaultModel string               `json:"default_model"`
+	}{old.Models, old.DefaultModel})
+	newModelsJSON, _ := json.Marshal(struct {
+		Models       []config.ModelConfig `json:"models"`
+		DefaultModel string               `json:"default_model"`
+	}{cfg.Models, cfg.DefaultModel})
+	modelsChanged := string(oldModelsJSON) != string(newModelsJSON)
 
 	oldDTJSON, _ := json.Marshal(old.DingTalk)
 	newDTJSON, _ := json.Marshal(cfg.DingTalk)
 	dtChanged := string(oldDTJSON) != string(newDTJSON)
 
-	if !modelChanged && !dtChanged && old.WebPort == cfg.WebPort {
+	if !modelsChanged && !dtChanged && old.WebPort == cfg.WebPort && old.Compaction() == cfg.Compaction() {
 		return &web.SaveResult{Message: "配置没有变化"}, nil
 	}
 
@@ -309,24 +356,25 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 	result := &web.SaveResult{}
 	notes := []string{}
 
-	if old.Model.Compaction() != cfg.Model.Compaction() {
-		rt.mgr.SetCompactionEnabled(cfg.Model.Compaction())
-		if cfg.Model.Compaction() {
+	if old.Compaction() != cfg.Compaction() {
+		rt.mgr.SetCompactionEnabled(cfg.Compaction())
+		if cfg.Compaction() {
 			notes = append(notes, "上下文自动压缩已开启")
 		} else {
 			notes = append(notes, "上下文自动压缩已关闭")
 		}
 	}
-	if modelChanged {
-		nc, err := provider.NewModelClient(cfg.Model)
+	if modelsChanged {
+		clients, allClients, err := buildModelClients(cfg.Models)
 		if err != nil {
 			return nil, fmt.Errorf("配置已保存,但切换模型失败(当前仍用旧模型): %w", err)
 		}
-		rt.mgr.SetClient(nc)
-		rt.client = nc
+		rt.mgr.SetModels(clients, cfg.DefaultModel)
+		rt.closeClients()
+		rt.clients = allClients
 		result.ModelSwapped = true
 		notes = append(notes, "模型配置已立即生效(进行中的任务完成后切换)")
-		slog.Info("model client swapped", "model", cfg.Model.ModelName)
+		slog.Info("model registry rebuilt", "models", len(clients), "default", cfg.DefaultModel)
 	}
 	if dtChanged {
 		outcome := rt.dt.apply(cfg.DingTalk)
@@ -370,7 +418,7 @@ func runWeb(args []string) {
 	if err != nil {
 		fatal(err)
 	}
-	defer rt.client.Close()
+	defer rt.closeClients()
 	defer rt.mgr.Close()
 	if port == 0 {
 		port = rt.liveConfig().WebPort
@@ -404,7 +452,7 @@ func runInteractive(args []string) {
 	if err != nil {
 		fatal(err)
 	}
-	defer rt.client.Close()
+	defer rt.closeClients()
 	defer rt.mgr.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -517,7 +565,7 @@ func runDingTalk(args []string) {
 	if err != nil {
 		fatal(err)
 	}
-	defer rt.client.Close()
+	defer rt.closeClients()
 	defer rt.mgr.Close()
 
 	dt := rt.liveConfig().DingTalk

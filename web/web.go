@@ -36,15 +36,27 @@ type Backend interface {
 	SaveConfig(cfg *config.AppConfig) (*SaveResult, error)
 }
 
-// StatusInfo describes the runtime state shown in the UI header.
-type StatusInfo struct {
-	WebPort       int    `json:"web_port"`
-	Provider      string `json:"provider"`
+// ModelInfo describes one configured model for the UI dropdown.
+type ModelInfo struct {
+	Name          string `json:"name"`
 	ModelName     string `json:"model_name"`
+	Provider      string `json:"provider"`
 	ContextWindow int    `json:"context_window"`
-	Compaction    bool   `json:"compaction_enabled"`
-	DTEnabled     bool   `json:"dingtalk_enabled"`
-	DTRunning     bool   `json:"dingtalk_running"`
+}
+
+// StatusInfo describes the runtime state shown in the UI header.
+// Provider/ModelName/ContextWindow describe the DEFAULT model; Models
+// carries the full list for the UI dropdown.
+type StatusInfo struct {
+	WebPort       int         `json:"web_port"`
+	Provider      string      `json:"provider"`
+	ModelName     string      `json:"model_name"`
+	ContextWindow int         `json:"context_window"`
+	Models        []ModelInfo `json:"models"`
+	DefaultModel  string      `json:"default_model"`
+	Compaction    bool        `json:"compaction_enabled"`
+	DTEnabled     bool        `json:"dingtalk_enabled"`
+	DTRunning     bool        `json:"dingtalk_running"`
 }
 
 // SaveResult reports what a config save changed at runtime.
@@ -80,6 +92,8 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/compact", s.handleCompactSession)
 	mux.HandleFunc("POST /api/sessions/{id}/mode", s.handleSetMode)
+	mux.HandleFunc("POST /api/sessions/{id}/model", s.handleSetModel)
+	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleRenameSession)
 	mux.HandleFunc("GET /api/sessions/{id}/children", s.handleListChildren)
 	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
@@ -136,6 +150,7 @@ type SessionSummary struct {
 	ParentID     string `json:"parent_id,omitempty"`
 	Title        string `json:"title"`
 	Status       string `json:"status"`
+	Model        string `json:"model,omitempty"` // configured model name; empty = default model
 	// Active is true only while this server is actually running a task for
 	// the session (hub task registry). It is the authoritative "running
 	// right now" flag for the UI: a persisted status of "running" can be
@@ -159,6 +174,7 @@ func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 		Active:       s.be.Hub().ActiveTask(r.SessionID),
 		AgentRole:    r.AgentRole,
 		Mode:         s.be.Mgr().ModeOf(r.SessionID),
+		Model:        r.ModelKey,
 		WorkDir:      r.WorkDir,
 		ChannelKey:   r.ChannelKey,
 		CreatedAt:    r.CreatedAt,
@@ -178,6 +194,7 @@ func (s *server) summarizeSummary(r session.SessionSummary) SessionSummary {
 		Active:       s.be.Hub().ActiveTask(r.SessionID),
 		AgentRole:    r.AgentRole,
 		Mode:         session.NormalizeMode(r.Mode),
+		Model:        r.ModelKey,
 		WorkDir:      r.WorkDir,
 		ChannelKey:   r.ChannelKey,
 		CreatedAt:    r.CreatedAt,
@@ -222,6 +239,9 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		"messages": msgs,
 		// Token estimate for the composer footer (xx/context_window).
 		"tokens": util.CountMessagesTokens(msgs),
+		// Context window of THIS session's model (the token bar must track
+		// the per-session model, not the global default).
+		"context_window": s.be.Mgr().ContextWindowFor(rec.ModelKey),
 	})
 }
 
@@ -282,6 +302,60 @@ func (s *server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleSetModel switches a session's model (config model name; empty =
+// default model). It takes effect from the session's next task on.
+func (s *server) handleSetModel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if sess, err := s.be.Mgr().Get(id); err != nil || sess == nil {
+		writeErr(w, http.StatusNotFound, "session not found: "+id)
+		return
+	}
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.be.Mgr().SetModel(id, req.Model); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	name := strings.TrimSpace(req.Model)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"session_id":     id,
+		"model":          name,
+		"context_window": s.be.Mgr().ContextWindowFor(name),
+	})
+}
+
+// handleRenameSession renames a session (the sidebar title). It is valid
+// while a task is running; the UI picks up the new title from the response
+// (and the next list poll).
+func (s *server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if sess, err := s.be.Mgr().Get(id); err != nil || sess == nil {
+		writeErr(w, http.StatusNotFound, "session not found: "+id)
+		return
+	}
+	var req struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.be.Mgr().RenameSession(id, req.Title); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	slog.Info("session renamed via web", "id", id, "title", strings.TrimSpace(req.Title))
+	writeJSON(w, http.StatusOK, map[string]string{
+		"session_id": id,
+		"title":      strings.TrimSpace(req.Title),
+	})
+}
+
 // handleListChildren returns the sub-agent sessions of one session with
 // their live state (the UI renders them under the parent in the sidebar).
 func (s *server) handleListChildren(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +383,7 @@ type SendMessageRequest struct {
 	Content   string   `json:"content"`
 	Images    []string `json:"images,omitempty"` // data URLs (data:image/...;base64,...); the model sees them on the first turn
 	Mode      string   `json:"mode,omitempty"`   // permission mode for a NEW session (full / cautious)
+	Model     string   `json:"model,omitempty"`  // model name for a NEW session (config key); ignored for existing sessions
 }
 
 const (
@@ -356,6 +431,7 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	msg.SessionID = req.SessionID
 	msg.Images = req.Images
 	msg.Mode = req.Mode
+	msg.Model = req.Model
 	s.be.Hub().Submit(msg)
 
 	resp := map[string]string{"task_id": msg.ID}
