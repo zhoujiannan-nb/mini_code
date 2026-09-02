@@ -101,6 +101,12 @@ func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string 
 	if workDir != "" {
 		parts = append(parts, "\n# Working Directory\n\nThe current working directory is: "+workDir+"\nAll file operations must be confined to this directory.\n")
 	}
+	// User plugins from ~/.mini_code/plugins.md (one per line, optional
+	// "desc:" suffix). Re-read on every task, so edits to the file take
+	// effect from the next task without a restart.
+	if ps := pluginsSection(); ps != "" {
+		parts = append(parts, ps)
+	}
 	// The system prompt is static on purpose: it is the head of the request
 	// prefix the provider's prefix cache matches, so it must not be
 	// re-rendered with fresh content (e.g. a timestamp) on every task.
