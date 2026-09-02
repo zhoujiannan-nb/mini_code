@@ -159,7 +159,6 @@ func (mc *ModelClient) Chat(ctx context.Context, messages []Message, tools []Too
 }
 
 func (mc *ModelClient) doRequest(ctx context.Context, body []byte) (*http.Response, error) {
-	tempDumpRequestBody(body) // TEMP-DEBUG (DELETE ME): dump before send so a canceled request is captured too
 	req, err := http.NewRequestWithContext(ctx, "POST", mc.provider.BuildURL(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
