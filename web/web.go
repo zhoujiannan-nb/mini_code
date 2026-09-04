@@ -83,6 +83,7 @@ func NewServer(be Backend) http.Handler {
 	// --- web UI ---
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /index.html", s.handleIndex)
+	mux.HandleFunc("GET /favicon.ico", s.handleFavicon)
 
 	// --- API ---
 	mux.HandleFunc("GET /api/healthz", s.handleHealthz)
@@ -131,6 +132,18 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(page))
+}
+
+// handleFavicon serves the embedded app icon as the browser tab favicon.
+func (s *server) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	b, err := uiFS.ReadFile("ui/favicon.ico")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/x-icon")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Write(b)
 }
 
 // --- health & status ---
