@@ -14,8 +14,6 @@ const toolConstraints = `<tool_requirements>
 # Tool Usage Instructions
 - Tool calls must be made exclusively through structured tool_calls with valid JSON object parameters.
 - By default, all independent tool calls within a single response are executed in a batch — parallel execution improves efficiency.
-- It is prohibited to use text simulating the ` + "<tool_call></tool_call>" + ` format within the body of the text to make unauthorized calls.
-- The format of the JSON parameters must be valid.
 </tool_requirements>
 `
 const taskProgressAnchor = `<progress_anchor>
@@ -28,6 +26,12 @@ const taskProgressAnchor = `<progress_anchor>
 - Keep all responses concise. Refresh full progress at least every 3-4 turns.
 - Self-reminder: If reasoning becomes lengthy, immediately stop and refocus on the main task.
 </progress_anchor>`
+
+const workConstraints = `<work_requirements>
+# Work Requirements
+- Place all scripts, dependencies, and all files needed or generated during task execution into _work_{timestamp} under current directory.
+- For temporary files only; no final outputs. Auto-cleaned after task completion.
+</work_requirements>`
 
 const extraConstraints = `<extra_requirements>
 # Extra Requirements
@@ -97,6 +101,7 @@ func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string 
 	}
 	parts = append(parts, toolConstraints)
 	parts = append(parts, taskProgressAnchor)
+	parts = append(parts, workConstraints)
 	parts = append(parts, extraConstraints)
 	if workDir != "" {
 		parts = append(parts, "\n# Working Directory\n\nThe current working directory is: "+workDir+"\nAll file operations must be confined to this directory.\n")
@@ -146,4 +151,3 @@ func (pb *PromptBuilder) GetFilteredDefinitions(cfg *agent.AgentConfig) []provid
 	}
 	return filtered
 }
-
