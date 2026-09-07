@@ -159,11 +159,11 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 // --- sessions ---
 
 type SessionSummary struct {
-	SessionID    string `json:"session_id"`
-	ParentID     string `json:"parent_id,omitempty"`
-	Title        string `json:"title"`
-	Status       string `json:"status"`
-	Model        string `json:"model,omitempty"` // configured model name; empty = default model
+	SessionID string `json:"session_id"`
+	ParentID  string `json:"parent_id,omitempty"`
+	Title     string `json:"title"`
+	Status    string `json:"status"`
+	Model     string `json:"model,omitempty"` // configured model name; empty = default model
 	// Active is true only while this server is actually running a task for
 	// the session (hub task registry). It is the authoritative "running
 	// right now" flag for the UI: a persisted status of "running" can be
@@ -197,7 +197,6 @@ func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 }
 
 // summarizeSummary builds the same API entry from a lightweight store row
-// (list endpoint — no conversation payloads are loaded server-side).
 func (s *server) summarizeSummary(r session.SessionSummary) SessionSummary {
 	return SessionSummary{
 		SessionID:    r.SessionID,
