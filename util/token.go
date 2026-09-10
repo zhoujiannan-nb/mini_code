@@ -8,7 +8,10 @@ import (
 )
 
 // CountMessagesTokens counts tokens in messages using tiktoken.
-// Images use a rough estimate (1100 tokens) since calculation is model-specific.
+// Image parts are counted with the Qwen2-VL visual-token formula (see
+// image_tokens.go) instead of a fixed estimate, so context budgeting reflects
+// the real token cost of each image. This is a pure read: it never mutates the
+// messages, so it cannot affect the context sequence sent to the model.
 func CountMessagesTokens(messages []provider.Message) int {
 	tke, err := tiktoken.GetEncoding("cl100k_base")
 	if err != nil {
@@ -27,7 +30,11 @@ func CountMessagesTokens(messages []provider.Message) int {
 				case "text":
 					total += len(tke.Encode(p.Text, nil, nil))
 				case "image_url":
-					total += 1100
+					if p.ImageURL != nil && p.ImageURL.URL != "" {
+						total += imageTokensFromDataURL(p.ImageURL.URL)
+					} else {
+						total += fallbackImageTokens
+					}
 				}
 			}
 		} else {
@@ -75,7 +82,11 @@ func fallbackCountMessagesTokens(messages []provider.Message) int {
 				case "text":
 					total += len(p.Text) / 4
 				case "image_url":
-					total += 1100
+					if p.ImageURL != nil && p.ImageURL.URL != "" {
+						total += imageTokensFromDataURL(p.ImageURL.URL)
+					} else {
+						total += fallbackImageTokens
+					}
 				}
 			}
 		} else {
