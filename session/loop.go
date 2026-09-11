@@ -33,6 +33,8 @@ type AgentLoop struct {
 	toolDefinitions  []provider.ToolSchema
 	compactor        *ContextCompactor
 	compactionOn     bool // false = skip CheckAndCompress entirely
+	ctxState         *tools.ContextState // shared context view for context tools (nil = disabled)
+	contextRemindersOn bool             // experimental: inject 50%/70% usage notices (nil ctxState-safe)
 	onToolCallStart  func(name string, params map[string]interface{})
 	onToolCallEnd    func(name string, params map[string]interface{}, result string)
 	onAssistantReply func(content string, reasoning string)
@@ -105,6 +107,16 @@ func (l *AgentLoop) SetUserImages(images []string) { l.userImages = images }
 // call (role permissions + cautious-mode approval). Must be called before
 // Run; a nil gate disables checking.
 func (l *AgentLoop) SetGate(g ToolGate) { l.gate = g }
+
+// SetContextState installs the shared context state the context tools read
+// (context_usage / compact_context). The loop publishes the current usage
+// each turn and consumes any pending active-compaction request. Must be
+// called before Run; a nil state disables the context tools' live data.
+func (l *AgentLoop) SetContextState(state *tools.ContextState) { l.ctxState = state }
+
+// SetContextRemindersOn toggles the experimental context-usage notices
+// (injected at 50% / 70% of the budget). Must be called before Run.
+func (l *AgentLoop) SetContextRemindersOn(on bool) { l.contextRemindersOn = on }
 
 // buildUserMessage builds the initial user message: plain text, or a
 // multimodal message (text part + image parts) when images are attached.
@@ -256,6 +268,99 @@ func (l *AgentLoop) persistTurn(turn int, messages []provider.Message) {
 	}
 }
 
+// Context-usage notice thresholds (fractions of the max input budget). The
+// notices are an experimental, session-toggle-gated feature: they nudge the
+// model to compact proactively before the 85% auto-compaction threshold.
+const (
+	usageNoticeStage1 = 0.5 // announce at 50% of the budget
+	usageNoticeStage2 = 0.7 // announce at 70% of the budget
+)
+
+// usageNoticeRole is the role of the injected notice. It is a "user" message so
+// every chat template honors it (a trailing "system" notice is ignored by some
+// templates that only read the first system message). The marker-based dedup is
+// role-agnostic, so the role can be changed freely.
+const usageNoticeRole = "user"
+
+// usageNoticeMarker returns the stable marker embedded in a usage notice of the
+// given stage. It is used to detect already-announced stages by scanning the
+// context, so no external state is needed and a compaction that summarizes the
+// notice naturally re-arms the reminder if usage is still high.
+func usageNoticeMarker(pct int) string {
+	return fmt.Sprintf("__CTX_USAGE_%d__", pct)
+}
+
+// usageNotice builds the system notice message for the given stage (50 or 70).
+// The text is English and states that, when several notices are present, the
+// most recent one is the current state ("the last one takes effect").
+func usageNotice(pct, tokens, maxInput int) provider.Message {
+	var text string
+	if pct >= 70 {
+		text = fmt.Sprintf("Context usage is now at %d%% of the input budget (%d / %d tokens). Consider calling compact_context to summarize older work. If multiple context-usage notices appear, the most recent one is the current state.", pct, tokens, maxInput)
+	} else {
+		text = fmt.Sprintf("Context usage is now at %d%% of the input budget (%d / %d tokens). If multiple context-usage notices appear, the most recent one is the current state.", pct, tokens, maxInput)
+	}
+	return provider.Message{Role: usageNoticeRole, Content: text + " " + usageNoticeMarker(pct)}
+}
+
+// scanUsageNoticeMarkers reports whether a 70% and/or 50% usage notice has
+// already been announced in the context (by its marker).
+func scanUsageNoticeMarkers(messages []provider.Message) (has70, has50 bool) {
+	for _, m := range messages {
+		t := m.GetText()
+		if !has70 && strings.Contains(t, usageNoticeMarker(70)) {
+			has70 = true
+		}
+		if !has50 && strings.Contains(t, usageNoticeMarker(50)) {
+			has50 = true
+		}
+	}
+	return has70, has50
+}
+
+// maybeInjectUsageReminder appends a context-usage notice to the tail of the
+// conversation when the context crosses 50% or 70% of the budget and that stage
+// has not been announced yet in the current context. It is cache-friendly: the
+// notice is only ever appended to the end (extending the prefix), never
+// inserted or removed from the middle, so the KV prefix cache is preserved.
+// Returns the (possibly extended) messages.
+func (l *AgentLoop) maybeInjectUsageReminder(messages []provider.Message) []provider.Message {
+	maxInput := l.client.GetMaxInput()
+	if maxInput <= 0 {
+		return messages
+	}
+	tokens := util.CountMessagesTokens(messages)
+	pct := float64(tokens) / float64(maxInput)
+	// Current stage: 2 (>=70%), 1 (>=50%), 0 (below 50%).
+	current := 0
+	if pct >= usageNoticeStage2 {
+		current = 2
+	} else if pct >= usageNoticeStage1 {
+		current = 1
+	}
+	if current == 0 {
+		return messages
+	}
+	// Announced stage: the highest stage whose marker is already present.
+	has70, has50 := scanUsageNoticeMarkers(messages)
+	announced := 0
+	if has70 {
+		announced = 2
+	} else if has50 {
+		announced = 1
+	}
+	if current <= announced {
+		return messages
+	}
+	// Inject the notice for the current stage (appended to the tail).
+	label := 50
+	if current == 2 {
+		label = 70
+	}
+	slog.Info("injecting context usage notice", "stage", label, "tokens", tokens, "max", maxInput)
+	return append(messages, usageNotice(label, tokens, maxInput))
+}
+
 func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, history []provider.Message) (*LoopResult, error) {
 	userMsg := l.buildUserMessage(userMessage)
 	var messages []provider.Message
@@ -287,7 +392,19 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			return &LoopResult{Interrupted: true, Messages: messages, Turns: turn - 1}, nil
 		}
 
-		// compact context (skipped entirely when the compaction toggle is off)
+		// Active compaction requested by the model via the compact_context tool:
+		// compact now regardless of the auto threshold, using the model's own
+		// instruction. Consumed before the auto-compaction check.
+		if l.ctxState != nil {
+			if pending, instruction := l.ctxState.TakePendingCompaction(); pending {
+				if newMsgs, err := l.compactor.CompactWithInstruction(ctx, messages, instruction); err != nil {
+					slog.Warn("active compaction failed", "err", err)
+				} else {
+					messages = newMsgs
+				}
+			}
+		}
+		// Auto compaction (threshold-based), skipped entirely when the toggle is off.
 		if l.compactionOn {
 			var err error
 			messages, err = l.compactor.CheckAndCompress(ctx, messages, l.client.GetMaxInput())
@@ -298,6 +415,18 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				slog.Info("agent loop interrupted after compaction", "turn", turn)
 				return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
 			}
+		}
+		// Publish the current context usage to the context tools (context_usage
+		// reads it; it reflects the context about to be sent to the model).
+		if l.ctxState != nil {
+			l.ctxState.SetUsage(util.CountMessagesTokens(messages), l.client.GetMaxInput())
+		}
+		// Context usage notices (experimental, gated by the session toggle): when
+		// the context crosses 50% / 70% of the budget, append a system notice to
+		// the tail. Cache-friendly: it only extends the prefix, never edits the
+		// middle, so the KV prefix cache is preserved.
+		if l.contextRemindersOn {
+			messages = l.maybeInjectUsageReminder(messages)
 		}
 		l.persistTurn(turn, messages)
 

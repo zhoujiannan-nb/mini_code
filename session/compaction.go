@@ -14,6 +14,11 @@ import (
 const (
 	compactThreshold = 0.85
 	recentKeep       = 6
+	// recentMaxRatio caps the verbatim "recent" window at this fraction of
+	// maxInput. If the last recentKeep messages exceed this (e.g. the model
+	// just read a huge file and it dominates the tail), the excess is pushed
+	// into the compacted region so the recent window cannot blow the budget.
+	recentMaxRatio = 0.16
 )
 
 var compactSystemPrompt = "You are an anchored context summarization assistant for coding sessions."
@@ -82,6 +87,17 @@ func (c *ContextCompactor) CheckAndCompress(ctx context.Context, messages []prov
 }
 
 func (c *ContextCompactor) Compact(ctx context.Context, messages []provider.Message) ([]provider.Message, error) {
+	return c.compactCore(ctx, messages, "")
+}
+
+// CompactWithInstruction is like Compact but passes a model-supplied
+// instruction to the summarizer (used by the active compact_context tool,
+// which compacts on demand regardless of the auto threshold).
+func (c *ContextCompactor) CompactWithInstruction(ctx context.Context, messages []provider.Message, instruction string) ([]provider.Message, error) {
+	return c.compactCore(ctx, messages, instruction)
+}
+
+func (c *ContextCompactor) compactCore(ctx context.Context, messages []provider.Message, instruction string) ([]provider.Message, error) {
 	var systemMsg *provider.Message
 	var nonSystem []provider.Message
 	for _, msg := range messages {
@@ -108,7 +124,33 @@ func (c *ContextCompactor) Compact(ctx context.Context, messages []provider.Mess
 		}
 	}
 
-	start := len(nonSystem) - recentKeep
+	n := len(nonSystem)
+	// Per-message token counts, used to cap the recent window below.
+	perMsg := make([]int, n)
+	for i := range nonSystem {
+		perMsg[i] = util.CountMessagesTokens(nonSystem[i : i+1])
+	}
+
+	// Start: keep the last up-to-recentKeep messages verbatim.
+	start := n - recentKeep
+	if start < 0 {
+		start = 0
+	}
+	// Cap the recent window at recentMaxRatio of maxInput: if the kept tail is
+	// too big (e.g. a huge file read at the end), push its oldest messages into
+	// the compacted region. Always keep at least the last message, so a single
+	// oversized tail message is still retained rather than dropped entirely.
+	if maxInput := c.client.GetMaxInput(); maxInput > 0 {
+		capTokens := int(float64(maxInput) * recentMaxRatio)
+		recentTokens := 0
+		for i := start; i < n; i++ {
+			recentTokens += perMsg[i]
+		}
+		for start < n-1 && recentTokens > capTokens {
+			recentTokens -= perMsg[start]
+			start++
+		}
+	}
 	// The recent window must never start with a tool message: a tool result
 	// is only valid API input while the assistant message that declared its
 	// tool_calls is kept alongside it. Walk the boundary back to a safe
@@ -126,7 +168,7 @@ func (c *ContextCompactor) Compact(ctx context.Context, messages []provider.Mess
 	recent := nonSystem[start:]
 
 	historyText := c.formatMessages(toCompact)
-	summary, err := c.callLLMCompact(ctx, goal, historyText)
+	summary, err := c.callLLMCompact(ctx, goal, historyText, instruction)
 	if err != nil {
 		// Surface the error to callers. CheckAndCompress (auto path)
 		// deliberately ignores it and keeps the original context; the manual
@@ -163,9 +205,12 @@ func (c *ContextCompactor) formatMessages(messages []provider.Message) string {
 	return strings.Join(parts, "\n\n")
 }
 
-func (c *ContextCompactor) callLLMCompact(ctx context.Context, goal, historyText string) (string, error) {
+func (c *ContextCompactor) callLLMCompact(ctx context.Context, goal, historyText, instruction string) (string, error) {
 	systemPrompt := loadCompactionPrompt()
 	userPrompt := fmt.Sprintf(compactUserTemplate, goal, historyText)
+	if instruction != "" {
+		userPrompt += fmt.Sprintf("\n\n**Additional focus (requested by the model)**: %s", instruction)
+	}
 	messages := []provider.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},

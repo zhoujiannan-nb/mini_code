@@ -384,6 +384,12 @@ details.m-think[open] summary { margin-bottom: 6px; }
 }
 .mode-btn:hover { border-color: var(--green); color: var(--green); }
 .mode-btn.cautious { border-color: var(--amber); color: #b45309; background: #fffbeb; }
+.ctx-toggle {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  font-size: 11px; color: var(--text2); user-select: none; white-space: nowrap;
+}
+.ctx-toggle input { margin: 0; cursor: pointer; }
+.ctx-toggle.off { color: var(--text3); }
 .mode-btn.cautious:hover { border-color: #d97706; }
 
 /* ---------- 审批 ---------- */
@@ -508,6 +514,9 @@ details.m-think[open] summary { margin-bottom: 6px; }
       <div class="composer-foot">
         <span class="token-usage" id="token-usage">Token —</span>
         <div style="display:flex; align-items:center; gap:10px">
+          <label class="ctx-toggle" id="ctx-toggle" title="实验:上下文占用提醒(达 50%/70% 注入提醒,并可用 context_usage/compact_context 工具主动查看/压缩)">
+            <input type="checkbox" id="ctx-reminders" checked> 上下文提醒
+          </label>
           <button class="mode-btn" id="btn-mode" title="权限模式">⚡ 完整模式</button>
           <button class="compact-btn" id="btn-compact" title="手动压缩当前会话上下文(立即调用模型总结旧对话)">⚡ 压缩</button>
           <span class="foot-hint">Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴截图 · @ 选文件夹</span>
@@ -584,6 +593,7 @@ const state = {
   model: "",          // 当前会话的模型名;新会话视图下 = 下一条消息创建会话时使用的模型
   pendingImages: [],  // 待发送的截图 data URL(data:image/...;base64,...)
   mode: "full",       // 当前会话的权限模式;新会话视图下 = 下一条消息创建会话时使用的模式
+  contextReminders: true, // 实验:上下文占用提醒开关;新会话视图下 = 创建会话时的偏好
   approvals: {},      // id → payload(待审批队列,跨会话)
   approvalShown: null,// 审批弹窗里正在展示的 id
   approvalTimer: null,
@@ -1021,6 +1031,7 @@ async function send() {
     else {
       body.mode = state.mode;   // 新会话:按当前选择的权限模式创建
       body.model = state.model; // 新会话:按当前选择的模型创建
+      body.context_reminders = state.contextReminders; // 新会话:按当前开关创建
     }
     const r = await api("/api/messages", {
       method: "POST",
@@ -1178,6 +1189,33 @@ async function toggleMode() {
     paintMode();
     toast(next === "cautious" ? "已切换为谨慎模式:危险操作将请求审批" : "已切换为完整模式:直接执行", "ok");
   } catch (e) { toast("切换模式失败:" + e.message, "err"); }
+}
+
+/* ---------------- 上下文占用提醒(实验开关) ---------------- */
+function paintContextReminders() {
+  const cb = $("#ctx-reminders");
+  const label = $("#ctx-toggle");
+  if (!cb) return;
+  cb.checked = state.contextReminders;
+  label.classList.toggle("off", !state.contextReminders);
+}
+async function toggleContextReminders() {
+  const next = $("#ctx-reminders").checked;
+  state.contextReminders = next;
+  paintContextReminders();
+  if (!state.current) return; // 新会话:仅记录偏好,创建会话时随消息带上
+  try {
+    await api("/api/sessions/" + state.current + "/context-reminders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: next }),
+    });
+    toast(next ? "上下文占用提醒已开启" : "上下文占用提醒已关闭", "ok");
+  } catch (e) {
+    toast("切换失败:" + e.message, "err");
+    state.contextReminders = !next;
+    paintContextReminders();
+  }
 }
 
 /* ---------------- 模型选择(composer 下拉) ---------------- */
@@ -1580,10 +1618,12 @@ function resetToNew() {
   setChatTitle("新会话", "发送后自动创建会话");
   state.mode = "full"; // 新会话默认完整模式
   state.model = state.defaultModel || ""; // 新会话默认模型
+  state.contextReminders = true; // 新会话默认开启上下文提醒
   state.ctxWindow = state.defaultCtxWindow;
   state.children = [];
   paintMode();
   paintModel();
+  paintContextReminders();
   paintTokens(0);
   paintBackBtn("");
   closeTasksPanel();
@@ -1606,6 +1646,9 @@ async function selectSession(id) {
     state.model = s.model || state.defaultModel || "";
     if (data.context_window) state.ctxWindow = data.context_window;
     paintModel();
+    // 上下文提醒开关:以服务端为准(缺省 = 开)
+    state.contextReminders = s.context_reminders !== false;
+    paintContextReminders();
     paintBackBtn(s.parent_id);
     closeTasksPanel();
     loadChildren();
@@ -1813,8 +1856,9 @@ function fsInsert(i) {
   $("#settings-mask").addEventListener("click", (e) => {
     if (e.target.id === "settings-mask") e.target.classList.remove("open");
   });
-  // 权限模式 / 子任务 / 审批
+  // 权限模式 / 上下文提醒 / 子任务 / 审批
   $("#btn-mode").addEventListener("click", toggleMode);
+  $("#ctx-reminders").addEventListener("change", toggleContextReminders);
   // 模型切换(composer 输入行内下拉)
   $("#btn-model").addEventListener("click", toggleModelMenu);
   // 设置弹窗:添加模型卡片
@@ -1857,6 +1901,7 @@ function fsInsert(i) {
   loadStatus();
   connectEvents();
   paintMode();
+  paintContextReminders();
   syncApprovals(); // 页面刷新后同步未决审批
   // 刷新页面后恢复之前打开的会话(含其执行状态);会话已删除则丢弃记录
   const saved = readSavedSession();

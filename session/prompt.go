@@ -138,6 +138,15 @@ func (pb *PromptBuilder) EnableTaskTool(mgr *SessionManager, sessionID, workDir 
 	slog.Debug("TaskTool enabled", "session", sessionID)
 }
 
+// EnableContextTools registers the context-management tools (context_usage /
+// compact_context), wired to the per-task context state the agent loop updates
+// each turn. Every session gets its own ContextState, so each session manages
+// its own context.
+func (pb *PromptBuilder) EnableContextTools(state *tools.ContextState) {
+	pb.Tools.Register(tools.NewContextUsageTool(state))
+	pb.Tools.Register(tools.NewCompactContextTool(state))
+}
+
 func (pb *PromptBuilder) GetFilteredDefinitions(cfg *agent.AgentConfig) []provider.ToolSchema {
 	defs := pb.Tools.GetDefinitions(false)
 	if cfg == nil || len(cfg.Permissions.Tools) == 0 {

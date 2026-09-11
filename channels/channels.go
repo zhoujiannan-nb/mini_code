@@ -71,6 +71,10 @@ type Message struct {
 	SessionKey string    `json:"session_key,omitempty"` // stable external conversation key (e.g. DingTalk conversationId)
 	Mode       string    `json:"mode,omitempty"`        // permission mode for a NEW session (full / cautious); ignored when the message continues an existing session
 	Model      string    `json:"model,omitempty"`       // model name for a NEW session (config key); ignored when the message continues an existing session
+	// ContextReminders is the experimental context-usage notices preference for
+	// a NEW session (web UI toggle). nil = keep the default (on); non-nil = set.
+	// Ignored when the message continues an existing session.
+	ContextReminders *bool `json:"context_reminders,omitempty"`
 	Content    string    `json:"content"`
 	Images     []string  `json:"images,omitempty"` // data URLs (data:image/...;base64,...) attached to a user message; the model sees them on the first turn
 	Reasoning  string    `json:"reasoning,omitempty"` // on assistant messages: model reasoning_content; on KindReasoning: cumulative live reasoning
@@ -601,6 +605,11 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 		if err := h.mgr.SetModel(created.ID(), m.Model); err != nil {
 			slog.Warn("set new session model failed", "session", created.ID(), "model", m.Model, "err", err)
 		}
+	}
+	// Experimental context-usage notices for the new session (web UI toggle).
+	// nil = keep the default (on); non-nil = set to the given value.
+	if m.ContextReminders != nil {
+		created.SetContextRemindersEnabled(*m.ContextReminders)
 	}
 	if m.SessionKey != "" {
 		if err := h.mgr.SetChannelKey(created.ID(), m.SessionKey); err != nil {

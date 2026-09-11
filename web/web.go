@@ -93,6 +93,7 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/compact", s.handleCompactSession)
 	mux.HandleFunc("POST /api/sessions/{id}/mode", s.handleSetMode)
+	mux.HandleFunc("POST /api/sessions/{id}/context-reminders", s.handleSetContextReminders)
 	mux.HandleFunc("POST /api/sessions/{id}/model", s.handleSetModel)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleRenameSession)
 	mux.HandleFunc("GET /api/sessions/{id}/children", s.handleListChildren)
@@ -169,30 +170,32 @@ type SessionSummary struct {
 	// right now" flag for the UI: a persisted status of "running" can be
 	// stale after a process restart, but an active task never is.
 	Active       bool   `json:"active"`
-	AgentRole    string `json:"agent_role"`
-	Mode         string `json:"mode"`
-	WorkDir      string `json:"work_dir"`
-	ChannelKey   string `json:"channel_key,omitempty"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
-	MessageCount int    `json:"message_count"`
+	AgentRole        string `json:"agent_role"`
+	Mode             string `json:"mode"`
+	WorkDir          string `json:"work_dir"`
+	ChannelKey       string `json:"channel_key,omitempty"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+	MessageCount     int    `json:"message_count"`
+	ContextReminders bool   `json:"context_reminders"` // experimental context-usage notices (session-level, default on)
 }
 
 func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 	return SessionSummary{
-		SessionID:    r.SessionID,
-		ParentID:     r.ParentID,
-		Title:        r.Title,
-		Status:       r.Status,
-		Active:       s.be.Hub().ActiveTask(r.SessionID),
-		AgentRole:    r.AgentRole,
-		Mode:         s.be.Mgr().ModeOf(r.SessionID),
-		Model:        r.ModelKey,
-		WorkDir:      r.WorkDir,
-		ChannelKey:   r.ChannelKey,
-		CreatedAt:    r.CreatedAt,
-		UpdatedAt:    r.UpdatedAt,
-		MessageCount: len(r.Messages),
+		SessionID:        r.SessionID,
+		ParentID:         r.ParentID,
+		Title:            r.Title,
+		Status:           r.Status,
+		Active:           s.be.Hub().ActiveTask(r.SessionID),
+		AgentRole:        r.AgentRole,
+		Mode:             s.be.Mgr().ModeOf(r.SessionID),
+		Model:            r.ModelKey,
+		WorkDir:          r.WorkDir,
+		ChannelKey:       r.ChannelKey,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
+		MessageCount:     len(r.Messages),
+		ContextReminders: contextRemindersOf(r),
 	}
 }
 
@@ -257,6 +260,20 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// contextRemindersOf reads the experimental context-usage notices flag from a
+// session record's metadata; an absent key keeps the default: enabled.
+func contextRemindersOf(r *session.SessionRecord) bool {
+	if r.Metadata == nil {
+		return true
+	}
+	v, ok := r.Metadata["context_reminders"]
+	if !ok {
+		return true
+	}
+	b, _ := v.(bool)
+	return b
+}
+
 func (s *server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, err := s.be.Mgr().Get(id); err != nil {
@@ -311,6 +328,30 @@ func (s *server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"session_id": id,
 		"mode":       session.NormalizeMode(req.Mode),
+	})
+}
+
+// handleSetContextReminders toggles the experimental context-usage notices for
+// a session (session-level, default on). It takes effect from the session's
+// next task on; the current in-flight task keeps its setting.
+func (s *server) handleSetContextReminders(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, err := s.be.Mgr().Get(id)
+	if err != nil || sess == nil {
+		writeErr(w, http.StatusNotFound, "session not found: "+id)
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	sess.SetContextRemindersEnabled(req.Enabled)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"session_id":        id,
+		"context_reminders": req.Enabled,
 	})
 }
 
@@ -391,11 +432,12 @@ func (s *server) handleListChildren(w http.ResponseWriter, r *http.Request) {
 // --- messages (producer side of the channel) ---
 
 type SendMessageRequest struct {
-	SessionID string   `json:"session_id"` // empty = let the hub create a session
-	Content   string   `json:"content"`
-	Images    []string `json:"images,omitempty"` // data URLs (data:image/...;base64,...); the model sees them on the first turn
-	Mode      string   `json:"mode,omitempty"`   // permission mode for a NEW session (full / cautious)
-	Model     string   `json:"model,omitempty"`  // model name for a NEW session (config key); ignored for existing sessions
+	SessionID        string   `json:"session_id"` // empty = let the hub create a session
+	Content          string   `json:"content"`
+	Images           []string `json:"images,omitempty"` // data URLs (data:image/...;base64,...); the model sees them on the first turn
+	Mode             string   `json:"mode,omitempty"`   // permission mode for a NEW session (full / cautious)
+	Model            string   `json:"model,omitempty"`  // model name for a NEW session (config key); ignored for existing sessions
+	ContextReminders *bool    `json:"context_reminders,omitempty"` // new-session preference; nil = default (on)
 }
 
 const (
@@ -444,6 +486,7 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	msg.Images = req.Images
 	msg.Mode = req.Mode
 	msg.Model = req.Model
+	msg.ContextReminders = req.ContextReminders
 	s.be.Hub().Submit(msg)
 
 	resp := map[string]string{"task_id": msg.ID}

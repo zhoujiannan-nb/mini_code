@@ -9,6 +9,7 @@ import (
 
 	"github.com/user/mini_code/agent"
 	"github.com/user/mini_code/provider"
+	"github.com/user/mini_code/tools"
 	"github.com/user/mini_code/util"
 )
 
@@ -56,6 +57,29 @@ func (s *Session) ModelKey() string       { return s.record.ModelKey }
 func (s *Session) ChannelKey() string     { return s.record.ChannelKey }
 func (s *Session) Record() *SessionRecord { return s.record }
 
+// ContextRemindersEnabled reports whether the experimental context-usage
+// notices (50%/70% budget reminders) are on for this session. An absent
+// metadata key keeps the historical default: enabled.
+func (s *Session) ContextRemindersEnabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.record.Metadata["context_reminders"]
+	if !ok {
+		return true
+	}
+	b, _ := v.(bool)
+	return b
+}
+
+// SetContextRemindersEnabled toggles the experimental context-usage notices for
+// this session and persists the choice.
+func (s *Session) SetContextRemindersEnabled(on bool) {
+	s.mu.Lock()
+	s.record.Metadata["context_reminders"] = on
+	s.store.Update(s.record)
+	s.mu.Unlock()
+}
+
 // Prompt runs one agent task and returns the final reply text together with
 // the reasoning_content the model produced for it (may be empty).
 //
@@ -96,6 +120,10 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	if cfg.Mode == "primary" && s.manager != nil && isRootSession {
 		pb.EnableTaskTool(s.manager, s.ID(), s.record.WorkDir)
 	}
+	// Context-management tools (context_usage / compact_context), wired to a
+	// per-task context state the agent loop updates each turn.
+	ctxState := tools.NewContextState()
+	pb.EnableContextTools(ctxState)
 
 	systemPrompt := pb.BuildSystemPrompt(s.record.WorkDir, "")
 	defs := pb.GetFilteredDefinitions(cfg)
@@ -130,6 +158,10 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	if len(images) > 0 {
 		loop.SetUserImages(images)
 	}
+	// Wire the shared context state (context tools) and the experimental
+	// context-usage notices toggle (session-level, default on).
+	loop.SetContextState(ctxState)
+	loop.SetContextRemindersOn(s.ContextRemindersEnabled())
 
 	slog.Info("session prompt", "id", s.ID(), "goal", goal[:min(80, len(goal))])
 	s.mu.Lock()
