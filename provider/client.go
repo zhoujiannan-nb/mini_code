@@ -23,11 +23,29 @@ type ModelClient struct {
 type chatRequest struct {
 	Model       string       `json:"model"`
 	Messages    []Message    `json:"messages"`
-	Temperature float64      `json:"temperature"`
-	MaxTokens   int          `json:"max_tokens"`
-	Stream      bool         `json:"stream"`
-	Tools       []ToolSchema `json:"tools,omitempty"`
-	ToolChoice  string       `json:"tool_choice,omitempty"`
+	// Temperature is a pointer so a provider can omit it entirely: DeepSeek
+	// rejects temperature (and the other sampling penalties) when thinking mode
+	// is enabled, so the DeepSeek provider nils it in that case.
+	Temperature     *float64       `json:"temperature,omitempty"`
+	TopP            float64        `json:"top_p,omitempty"`
+	MaxTokens       int            `json:"max_tokens"`
+	Stream          bool           `json:"stream"`
+	StreamOptions   *streamOptions `json:"stream_options,omitempty"`
+	Tools           []ToolSchema   `json:"tools,omitempty"`
+	ToolChoice      string         `json:"tool_choice,omitempty"`
+	Thinking        *thinkingConfig `json:"thinking,omitempty"`
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	// ChatTemplateKwargs is passed verbatim to the model's Jinja chat
+	// template (SGLang). Qwen3-style templates use it for the thinking
+	// switch (enable_thinking); templates that do not reference a kwarg
+	// simply ignore it, so it is safe to send on any deployment.
+	ChatTemplateKwargs map[string]interface{} `json:"chat_template_kwargs,omitempty"`
+	PresencePenalty    *float64               `json:"presence_penalty,omitempty"`
+
+	// temperatureExplicit marks a per-call temperature override (set from
+	// chatOptions.TemperatureExplicit, e.g. the 0.3 compaction summary).
+	// Unexported: never serialized.
+	temperatureExplicit bool
 }
 
 type chatCompletion struct {
@@ -46,6 +64,15 @@ var providerRegistry = map[string]func(cfg config.ModelConfig) Provider{
 	"vllm": func(cfg config.ModelConfig) Provider {
 		return NewVLLMProvider(cfg.BaseURL, cfg.APIKey, cfg.ModelName, cfg.MaxTokens, cfg.ContextWindow, cfg.Temperature, cfg.TopP)
 	},
+	// SGLang is OpenAI-compatible like vLLM. The endpoint is {base}/chat/completions;
+	// a direct SGLang deployment puts /v1 in base_url, while a reverse proxy that
+	// rewrites the path (e.g. /proxy/model/x -> /v1) keeps base_url bare.
+	"sglang": func(cfg config.ModelConfig) Provider {
+		return NewSGLangProvider(cfg.BaseURL, cfg.APIKey, cfg.ModelName, cfg.MaxTokens, cfg.ContextWindow, cfg.Temperature, cfg.TopP, cfg.Thinking, cfg.ReasoningEffort)
+	},
+	"deepseek": func(cfg config.ModelConfig) Provider {
+		return NewDeepSeekProvider(cfg.BaseURL, cfg.APIKey, cfg.ModelName, cfg.MaxTokens, cfg.ContextWindow, cfg.Temperature, cfg.TopP, cfg.Thinking, cfg.ReasoningEffort)
+	},
 	"ollama": func(cfg config.ModelConfig) Provider {
 		return NewOllamaProvider(cfg.BaseURL, cfg.APIKey, cfg.ModelName, cfg.MaxTokens, cfg.ContextWindow, cfg.Temperature, cfg.TopP)
 	},
@@ -63,6 +90,76 @@ func NewModelClient(cfg config.ModelConfig) (*ModelClient, error) {
 	}, nil
 }
 
+// WithReasoning returns a client whose provider carries an explicit thinking
+// depth (thinking switch + reasoning_effort), leaving the shared registry
+// client untouched. It backs the per-session thinking override set from the
+// composer: only DeepSeek and SGLang honor these fields, so any other provider
+// (or an empty override) returns the receiver unchanged. The HTTP client is
+// shared, so the derived client adds no connections.
+func (mc *ModelClient) WithReasoning(thinking, effort string) *ModelClient {
+	if mc == nil || (thinking == "" && effort == "") {
+		return mc
+	}
+	switch p := mc.provider.(type) {
+	case *SGLangProvider:
+		cp := *p
+		cp.Thinking = thinking
+		cp.ReasoningEffort = effort
+		return &ModelClient{provider: &cp, providerType: mc.providerType, httpClient: mc.httpClient}
+	case *DeepSeekProvider:
+		cp := *p
+		cp.Thinking = thinking
+		cp.ReasoningEffort = effort
+		return &ModelClient{provider: &cp, providerType: mc.providerType, httpClient: mc.httpClient}
+	}
+	return mc
+}
+
+// ListModels calls the OpenAI-compatible {baseURL}/models endpoint and returns
+// the model IDs. baseURL should be the API root the same way it is for chat
+// (e.g. "https://api.deepseek.com" or "http://proxy/proxy/model/x"); the client
+// only appends /models, so a reverse proxy that rewrites /v1 works unchanged.
+// Used by the web UI's "fetch models" button to populate the model picker.
+func ListModels(baseURL, apiKey string) ([]string, error) {
+	url := strings.TrimRight(baseURL, "/") + "/models"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer " + apiKey)
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		msg := string(body)
+		if len(msg) > 300 {
+			msg = msg[:300] + "…"
+		}
+		return nil, fmt.Errorf("models endpoint returned %d: %s", resp.StatusCode, msg)
+	}
+	var out struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("parse models response: %w", err)
+	}
+	ids := make([]string, 0, len(out.Data))
+	for _, d := range out.Data {
+		if d.ID != "" {
+			ids = append(ids, d.ID)
+		}
+	}
+	return ids, nil
+}
+
 func (mc *ModelClient) Chat(ctx context.Context, messages []Message, tools []ToolSchema, opts ...ChatOption) (*ChatResponse, error) {
 	o := chatOptions{
 		Temperature: 0.7,
@@ -76,21 +173,34 @@ func (mc *ModelClient) Chat(ctx context.Context, messages []Message, tools []Too
 		o.Temperature = p.Temperature
 		o.MaxTokens = p.MaxTokens
 	}
+	if p, ok := mc.provider.(*SGLangProvider); ok && p.MaxTokens > 0 {
+		// Respect the configured output budget; sampling defaults are
+		// applied by SGLangProvider.ConfigureRequest.
+		o.MaxTokens = p.MaxTokens
+	}
+	if p, ok := mc.provider.(*DeepSeekProvider); ok && p.MaxTokens > 0 {
+		// Respect the configured output budget (previously the hardcoded
+		// 8192 default was sent regardless of config).
+		o.MaxTokens = p.MaxTokens
+	}
 	for _, opt := range opts {
 		opt(&o)
 	}
 
+	temp := o.Temperature
 	req := chatRequest{
-		Model:       mc.modelName(),
-		Messages:    messages,
-		Temperature: o.Temperature,
-		MaxTokens:   o.MaxTokens,
-		Stream:      false,
+		Model:               mc.modelName(),
+		Messages:            messages,
+		Temperature:         &temp,
+		MaxTokens:           o.MaxTokens,
+		Stream:              false,
+		temperatureExplicit: o.TemperatureExplicit,
 	}
 	if len(tools) > 0 {
 		req.Tools = tools
 		req.ToolChoice = "auto"
 	}
+	mc.provider.ConfigureRequest(&req)
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -119,6 +229,11 @@ func (mc *ModelClient) Chat(ctx context.Context, messages []Message, tools []Too
 			resp.Body.Close()
 			errText := string(respBody)
 			if mc.isTokenError(errText) {
+				return &ChatResponse{Error: fmt.Sprintf("API error: %d - %s", resp.StatusCode, errText)}, nil
+			}
+			// Auth / balance / parameter errors will not heal on retry: fail fast
+			// instead of burning 3 attempts (and the user's quota) on a 401/402/422.
+			if isNonRetryableStatus(resp.StatusCode) {
 				return &ChatResponse{Error: fmt.Sprintf("API error: %d - %s", resp.StatusCode, errText)}, nil
 			}
 			if ctx.Err() != nil {
@@ -173,10 +288,27 @@ func (mc *ModelClient) modelName() string {
 	switch p := mc.provider.(type) {
 	case *VLLMProvider:
 		return p.ModelName
+	case *SGLangProvider:
+		return p.ModelName
+	case *DeepSeekProvider:
+		return p.ModelName
 	case *OllamaProvider:
 		return p.ModelName
 	}
 	return ""
+}
+
+// isNonRetryableStatus reports whether an HTTP status is a deterministic
+// failure that retrying cannot fix: bad credentials (401), insufficient
+// balance (402), or a malformed request (422). These fail fast so we do not
+// burn the retry budget (and the user's quota) re-sending a request the
+// provider will reject identically every time.
+func isNonRetryableStatus(code int) bool {
+	switch code {
+	case 401, 402, 422:
+		return true
+	}
+	return false
 }
 
 // isTokenError reports whether an API error message indicates the request

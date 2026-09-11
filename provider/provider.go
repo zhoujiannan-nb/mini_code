@@ -153,11 +153,63 @@ type StreamChunk struct {
 	ReasoningContent string
 }
 
+// PromptTokensDetails is the OpenAI/SGLang/vLLM cache-hit shape:
+// usage.prompt_tokens_details.cached_tokens.
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+	// Cache-hit reporting. Providers use different fields: SGLang/vLLM (and
+	// OpenAI) populate PromptTokensDetails.CachedTokens, while DeepSeek uses the
+	// custom top-level PromptCacheHitTokens. Both are parsed; CachedTokens()
+	// reads whichever is present.
+	PromptTokensDetails  *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	PromptCacheHitTokens int                  `json:"prompt_cache_hit_tokens,omitempty"`
+}
+
+// CachedTokens returns the number of prompt tokens served from the provider's
+// KV prefix cache, reading whichever field the provider populated. It returns
+// 0 when the provider does not report cache hits (e.g. an SGLang server started
+// without --enable-cache-report), so callers can treat 0 as "unknown/none"
+// rather than a real miss.
+func (u *Usage) CachedTokens() int {
+	if u == nil {
+		return 0
+	}
+	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
+		return u.PromptTokensDetails.CachedTokens
+	}
+	return u.PromptCacheHitTokens
+}
+
+// CacheReported reports whether the provider actually included cache-hit
+// information, even when the hit count is a genuine 0. OpenAI/SGLang/vLLM
+// include the prompt_tokens_details object (so its presence means "reported"),
+// while DeepSeek only sends prompt_cache_hit_tokens when reporting is on. This
+// lets the UI tell "0% cache hits" apart from "this deployment does not report
+// cache hits at all".
+func (u *Usage) CacheReported() bool {
+	if u == nil {
+		return false
+	}
+	return u.PromptTokensDetails != nil || u.PromptCacheHitTokens > 0
+}
+
+// streamOptions requests the provider to include a usage block in the final
+// streaming chunk. Without it, OpenAI-compatible servers (vLLM/SGLang) omit
+// usage from streams, so cache-hit accounting would be invisible.
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
+// thinkingConfig is DeepSeek's thinking-mode switch: {"type":"enabled"|"disabled"}.
+type thinkingConfig struct {
+	Type string `json:"type"`
 }
 
 type ToolSchema struct {
@@ -178,6 +230,11 @@ type Provider interface {
 	GetContextWindow() int
 	GetMaxTokens() int
 	GetMaxInput() int
+	// ConfigureRequest sets provider-specific request-body fields (top_p,
+	// stream_options, thinking mode, ...) on a request whose model/messages/
+	// temperature/max_tokens/stream are already set. Providers that add nothing
+	// leave the request unchanged.
+	ConfigureRequest(req *chatRequest)
 }
 
 type ChatOption func(*chatOptions)
@@ -185,10 +242,17 @@ type ChatOption func(*chatOptions)
 type chatOptions struct {
 	Temperature float64
 	MaxTokens   int
+	// TemperatureExplicit marks a per-call temperature override (e.g. the
+	// 0.3 compaction summary). Providers may apply their own sampling
+	// defaults unless this is set.
+	TemperatureExplicit bool
 }
 
 func WithTemperature(t float64) ChatOption {
-	return func(o *chatOptions) { o.Temperature = t }
+	return func(o *chatOptions) {
+		o.Temperature = t
+		o.TemperatureExplicit = true
+	}
 }
 
 func WithMaxTokens(n int) ChatOption {

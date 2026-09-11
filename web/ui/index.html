@@ -258,6 +258,8 @@ details.m-think[open] summary { margin-bottom: 6px; }
 }
 .token-usage { font-variant-numeric: tabular-nums; }
 .token-usage.warn { color: var(--amber); font-weight: 600; }
+#cache-hit { color: var(--green, #3fb950); }
+#cache-hit.nohit { color: var(--muted, #8b949e); }
 .foot-hint { opacity: .8; }
 .compact-btn {
   background: #fff; color: var(--text2); border: 1px solid var(--border2);
@@ -335,6 +337,13 @@ details.m-think[open] summary { margin-bottom: 6px; }
   flex: 1; background: #fff; border: 1px solid var(--border2); color: var(--text);
   border-radius: 8px; padding: 7px 10px; font-size: 13px; outline: none; min-width: 0;
 }
+.frow .mc-fetch {
+  flex: 0 0 auto; width: 34px; height: 32px; border: 1px solid var(--border2);
+  border-radius: 8px; background: #fff; color: var(--text2); cursor: pointer; font-size: 14px;
+}
+.frow .mc-fetch:hover { border-color: var(--green); color: var(--green); }
+.frow .mc-fetch:disabled { opacity: .5; cursor: default; }
+.frow input:disabled { background: #f1f5f9; color: var(--text3); cursor: not-allowed; }
 /* 模型选择(composer 输入行内,发送按钮左侧) */
 .model-menu-wrap { position: relative; display: inline-flex; align-items: center; }
 .model-inline-btn {
@@ -356,6 +365,46 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .model-menu .mm-item:hover { background: var(--bg); }
 .model-menu .mm-item.cur { color: var(--green-d); font-weight: 600; }
 .model-menu .mm-item .mm-sub { font-size: 11px; color: var(--text3); margin-left: auto; }
+/* 思考强度(双击模型按钮弹出,滑动选择;最左默认→off→低→中→高) */
+.think-badge {
+  font-size: 11px; color: var(--green-d, #15803d); background: var(--green-xl, #dcfce7);
+  border-radius: 6px; padding: 1px 6px; font-weight: 600; flex: none; white-space: nowrap;
+}
+.think-pop {
+  position: absolute; bottom: 38px; right: 0; z-index: 61; width: 268px;
+  background: #fff; border: 1px solid var(--border2); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(15,23,42,.18); padding: 14px 16px; display: none;
+}
+.think-pop.open { display: block; }
+.think-pop .tp-head { font-size: 12px; color: var(--text2); margin-bottom: 14px; }
+.think-pop .tp-head b { color: var(--text); }
+.think-pop input[type=range] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 8px; border-radius: 999px; outline: none; cursor: pointer; margin: 0;
+  background: linear-gradient(90deg,
+    var(--green, #22a34a) 0%, var(--green, #22a34a) var(--tp-pct, 0%),
+    #e2e8f0 var(--tp-pct, 0%), #e2e8f0 100%);
+}
+.think-pop input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; border: 2px solid var(--green, #22a34a);
+  box-shadow: 0 1px 5px rgba(15,23,42,.28);
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.think-pop input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.12); }
+.think-pop input[type=range]:active::-webkit-slider-thumb {
+  transform: scale(1.22); box-shadow: 0 0 0 7px rgba(22,163,74,.15);
+}
+.think-pop input[type=range]::-moz-range-thumb {
+  width: 16px; height: 16px; border-radius: 50%; background: #fff;
+  border: 2px solid var(--green, #22a34a); box-shadow: 0 1px 5px rgba(15,23,42,.28);
+}
+.think-pop .tp-scale { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text3); margin: 8px 0 0; padding: 0 1px; }
+.think-pop .tp-scale span { flex: 1; text-align: center; }
+.think-pop .tp-scale span:first-child { text-align: left; }
+.think-pop .tp-scale span:last-child { text-align: right; }
+.think-pop .tp-note { font-size: 11px; color: var(--text3); line-height: 1.5; margin-top: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 .btn {
   padding: 8px 18px; border-radius: 8px; border: 1px solid var(--border2);
@@ -503,8 +552,16 @@ details.m-think[open] summary { margin-bottom: 6px; }
           </button>
           <span class="row-flex"></span>
           <div class="model-menu-wrap">
-            <button class="model-inline-btn" id="btn-model" title="选择模型(新会话:下一条消息生效;已有会话:下次任务生效)"><span id="model-name">默认</span><span class="chev">⌄</span></button>
+            <button class="model-inline-btn" id="btn-model" title="单击:选择模型 · 双击:调整思考强度(新会话:下一条消息生效;已有会话:下次任务生效)"><span id="model-name">默认</span><span id="think-badge" class="think-badge" hidden></span><span class="chev">⌄</span></button>
             <div class="model-menu" id="model-menu"></div>
+            <div class="think-pop" id="think-pop">
+              <div class="tp-head">思考强度 · <b id="tp-model">—</b></div>
+              <div id="tp-body">
+                <input type="range" id="tp-effort" min="0" max="4" step="1" value="0">
+                <div class="tp-scale" id="tp-scale"></div>
+              </div>
+              <div class="tp-note" id="tp-note"></div>
+            </div>
           </div>
           <button class="send-btn" id="btn-send">发送</button>
           <button class="stop-btn" id="btn-stop">停止</button>
@@ -513,6 +570,7 @@ details.m-think[open] summary { margin-bottom: 6px; }
       </div>
       <div class="composer-foot">
         <span class="token-usage" id="token-usage">Token —</span>
+        <span class="token-usage" id="cache-hit" title="上一轮 LLM 调用的 KV 前缀缓存命中(cached / prompt tokens)。n/a = 该部署未上报缓存命中(如 SGLang 未开 --enable-cache-report);0% = 已上报但本轮无命中。"></span>
         <div style="display:flex; align-items:center; gap:10px">
           <label class="ctx-toggle" id="ctx-toggle" title="实验:上下文占用提醒(达 50%/70% 注入提醒,并可用 context_usage/compact_context 工具主动查看/压缩)">
             <input type="checkbox" id="ctx-reminders" checked> 上下文提醒
@@ -594,6 +652,8 @@ const state = {
   pendingImages: [],  // 待发送的截图 data URL(data:image/...;base64,...)
   mode: "full",       // 当前会话的权限模式;新会话视图下 = 下一条消息创建会话时使用的模式
   contextReminders: true, // 实验:上下文占用提醒开关;新会话视图下 = 创建会话时的偏好
+  thinking: "",       // 当前会话的思考开关覆盖("" = 用模型默认;enabled / disabled)
+  reasoningEffort: "",// 当前会话的思考深度覆盖("" = 用模型默认;随 provider 取值)
   approvals: {},      // id → payload(待审批队列,跨会话)
   approvalShown: null,// 审批弹窗里正在展示的 id
   approvalTimer: null,
@@ -1032,6 +1092,8 @@ async function send() {
       body.mode = state.mode;   // 新会话:按当前选择的权限模式创建
       body.model = state.model; // 新会话:按当前选择的模型创建
       body.context_reminders = state.contextReminders; // 新会话:按当前开关创建
+      body.thinking = state.thinking || "";               // 新会话:思考开关(空 = 模型默认)
+      body.reasoning_effort = state.reasoningEffort || ""; // 新会话:思考深度(空 = 模型默认)
     }
     const r = await api("/api/messages", {
       method: "POST",
@@ -1125,6 +1187,10 @@ function onEvent(m) {
     case "context_usage":
       // 每轮 loop 开头(压缩检查后)后端推送的上下文 token 数,直接画,不走 HTTP
       paintTokens(m.tokens);
+      break;
+    case "usage":
+      // 每轮 LLM 调用后后端推送的真实 usage,画缓存命中率
+      paintCacheHit(m.prompt_tokens, m.cached_tokens, m.cache_reported);
       break;
     case "assistant":
       pendingRemove();
@@ -1226,9 +1292,99 @@ async function toggleContextReminders() {
 function paintModel() {
   const m = state.models.find(x => x.name === state.model);
   $("#model-name").textContent = m ? m.name : (state.model || "默认");
-  $("#btn-model").title = state.current
+  $("#btn-model").title = (state.current
     ? "当前会话模型:" + (m ? m.name : "默认") + "(切换后下次任务生效)"
-    : "新会话使用的模型(下一条消息生效)";
+    : "新会话使用的模型(下一条消息生效)") + " · 单击切换模型,双击调整思考强度";
+  paintReasoning();
+}
+// 当前所选模型的 provider(用于判断是否支持思考强度)。
+function currentProvider() {
+  const m = state.models.find(x => x.name === state.model);
+  return m ? m.provider : "";
+}
+// 当前模型是否支持思考强度(仅 deepseek / sglang)。
+function thinkingSupported() { return THINKING_PROVIDERS.has(currentProvider()); }
+// 当前 provider 的思考强度刻度(不支持则 null)。
+function thinkScale() { return THINK_SCALE[currentProvider()] || null; }
+// 当前 (thinking, effort) 在刻度上的下标;匹配不到则回「默认」(0)。
+function thinkIndex() {
+  const scale = thinkScale();
+  if (!scale) return 0;
+  const i = scale.findIndex(s => s.thinking === (state.thinking || "") && s.effort === (state.reasoningEffort || ""));
+  return i < 0 ? 0 : i;
+}
+// 思考强度的人类可读标签(画在模型按钮的徽标上)。
+function reasoningLabel() {
+  const scale = thinkScale();
+  if (!scale) return "";
+  return "思考:" + scale[thinkIndex()].label;
+}
+// paintReasoning 刷新模型按钮上的思考徽标。
+function paintReasoning() {
+  const badge = $("#think-badge");
+  if (!badge) return;
+  if (!thinkingSupported()) { badge.hidden = true; return; }
+  badge.hidden = false;
+  badge.textContent = reasoningLabel();
+}
+// updateThinkFill 把滑轨已选部分染绿(--tp-pct),拖动时更顺滑。
+function updateThinkFill() {
+  const s = $("#tp-effort");
+  if (!s) return;
+  const max = parseInt(s.max, 10) || 1;
+  const pct = Math.max(0, Math.min(100, (parseInt(s.value, 10) || 0) / max * 100));
+  s.style.setProperty("--tp-pct", pct + "%");
+}
+// openThinkingPop 打开思考强度浮层(双击模型按钮):最左默认→off→低→中→高。
+function openThinkingPop() {
+  closeModelMenu();
+  const pop = $("#think-pop");
+  const prov = currentProvider();
+  const m = state.models.find(x => x.name === state.model);
+  $("#tp-model").textContent = (m ? m.name : (state.model || "默认")) + (prov ? " · " + prov : "");
+  const scale = thinkScale();
+  if (!scale) {
+    $("#tp-body").style.display = "none";
+    $("#tp-note").textContent = "当前模型(" + (prov || "未知 provider") + ")不支持思考强度调整,仅 deepseek / sglang 支持。";
+    pop.classList.add("open");
+    return;
+  }
+  $("#tp-body").style.display = "";
+  $("#tp-note").textContent = state.current ? "调整后从下次任务生效。" : "新会话将按此思考强度创建。";
+  const slider = $("#tp-effort");
+  slider.max = String(scale.length - 1);
+  slider.value = String(thinkIndex());
+  $("#tp-scale").innerHTML = scale.map(s => "<span>" + esc(s.label) + "</span>").join("");
+  updateThinkFill();
+  pop.classList.add("open");
+}
+function closeThinkingPop() { const p = $("#think-pop"); if (p) p.classList.remove("open"); }
+// persistReasoning 把思考强度写到当前会话(新会话只存本地,创建时随消息带上)。
+async function persistReasoning() {
+  if (!state.current) return;
+  try {
+    await api("/api/sessions/" + state.current + "/reasoning", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thinking: state.thinking || "", reasoning_effort: state.reasoningEffort || "" }),
+    });
+    toast("思考强度已更新(下次任务生效)", "ok");
+  } catch (e) {
+    toast("更新思考强度失败:" + e.message, "err");
+  }
+}
+// syncReasoningToModel 在切换模型后校正思考覆盖:新 provider 不支持思考则清空,
+// 当前刻度对新 provider 不存在也回默认;已有会话同步到服务端。
+function syncReasoningToModel() {
+  const scale = thinkScale();
+  let changed = false;
+  if (!scale) {
+    if (state.thinking || state.reasoningEffort) { state.thinking = ""; state.reasoningEffort = ""; changed = true; }
+  } else if (!scale.some(s => s.thinking === (state.thinking || "") && s.effort === (state.reasoningEffort || ""))) {
+    state.thinking = ""; state.reasoningEffort = ""; changed = true;
+  }
+  paintReasoning();
+  if (changed && state.current) persistReasoning();
 }
 function toggleModelMenu() {
   const menu = $("#model-menu");
@@ -1253,6 +1409,7 @@ async function pickModel(name) {
   const prev = state.model;
   state.model = name;
   paintModel();
+  syncReasoningToModel();
   if (!state.current) {
     // 新会话:token 条的窗口跟着所选模型走
     const m = state.models.find(x => x.name === name);
@@ -1454,8 +1611,33 @@ async function loadStatus() {
 let modelDraft = []; // 设置弹窗里的模型草稿(编辑中,保存时才提交)
 function modelTemplate() {
   return { name: "", provider: "vllm", base_url: "", api_key: "", model_name: "",
-           max_tokens: 31072, context_window: 131072, temperature: 0.6, top_p: 0.9, reserve_tokens: 4096 };
+            max_tokens: 31072, context_window: 131072, temperature: 0.6, top_p: 0.9, reserve_tokens: 4096,
+            thinking: "", reasoning_effort: "" };
 }
+// DeepSeek 官方地址固定,UI 里选了 deepseek 就不用填 base_url。
+const DS_BASE_URL = "https://api.deepseek.com";
+// 支持思考强度的 provider。
+const THINKING_PROVIDERS = new Set(["deepseek", "sglang"]);
+// 统一的思考强度刻度:最左「默认」,之后 off / 低 / 中 / 高;滑到 off 即关闭思考。
+// 各 provider 底层取值不同:deepseek 用 reasoning_effort(off/low/high/max);
+// sglang(Qwen3 系)关闭思考靠 thinking=disabled,低/中/高对应 low/medium/xhigh。
+const THINK_SCALE = {
+  deepseek: [
+    { label: "默认", thinking: "",         effort: "" },
+    { label: "off",  thinking: "",         effort: "off" },
+    { label: "低",   thinking: "",         effort: "low" },
+    { label: "中",   thinking: "",         effort: "high" },
+    { label: "高",   thinking: "",         effort: "max" },
+  ],
+  sglang: [
+    { label: "默认", thinking: "",         effort: "" },
+    { label: "off",  thinking: "disabled", effort: "" },
+    { label: "低",   thinking: "",         effort: "low" },
+    { label: "中",   thinking: "",         effort: "medium" },
+    { label: "高",   thinking: "",         effort: "xhigh" },
+  ],
+};
+
 function renderModelCards() {
   const box = $("#model-list");
   box.innerHTML = "";
@@ -1465,13 +1647,26 @@ function renderModelCards() {
     const field = (k, label, ph, type) =>
       '<div class="frow"><label>' + label + '</label><input type="' + (type || "text") + '" data-k="' + k +
       '" placeholder="' + (ph || "") + '" value="' + esc(m[k] == null ? "" : m[k]) + '"></div>';
+    const selectField = (k, label, options) => {
+      const cur = String(m[k] == null ? "" : m[k]);
+      let opts = options;
+      if (cur && !options.some(o => o[0] === cur)) opts = opts.concat([[cur, cur + " (自定义)"]]);
+      const html = opts.map(o =>
+        '<option value="' + esc(o[0]) + '"' + (cur === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>').join("");
+      return '<div class="frow"><label>' + label + '</label><select data-k="' + k + '">' + html + '</select></div>';
+    };
     card.innerHTML =
       '<div class="mc-head"><b>模型 ' + (i + 1) + '</b><button class="mc-rm" title="删除该模型">✕</button></div>' +
       field("name", "显示名", "下拉框里显示的名字,唯一") +
-      field("provider", "Provider", "vllm / ollama") +
-      field("base_url", "Base URL") +
+      selectField("provider", "Provider", [
+        ["vllm", "vllm"], ["sglang", "sglang"], ["deepseek", "deepseek (官方)"], ["ollama", "ollama"],
+      ]) +
+      field("base_url", "Base URL", "sglang 直连带 /v1;走代理则按代理要求") +
       field("api_key", "API Key") +
-      field("model_name", "Model Name", "服务端模型名") +
+      '<div class="frow"><label>Model Name</label>' +
+        '<input type="text" data-k="model_name" list="models-list-' + i + '" placeholder="服务端模型名" value="' + esc(m.model_name || "") + '">' +
+        '<button class="mc-fetch" title="从服务端拉取模型列表">🔄</button></div>' +
+      '<datalist id="models-list-' + i + '"></datalist>' +
       field("max_tokens", "Max Tokens", "", "number") +
       field("context_window", "Context Window", "", "number") +
       field("temperature", "Temperature", "", "number") +
@@ -1480,13 +1675,81 @@ function renderModelCards() {
     card.querySelectorAll("input").forEach(inp => {
       inp.addEventListener("input", () => { m[inp.dataset.k] = inp.value; paintDefaultModelSelect(); });
     });
+    card.querySelectorAll("select").forEach(sel => {
+      sel.addEventListener("change", () => {
+        m[sel.dataset.k] = sel.value;
+        if (sel.dataset.k === "provider") syncProvider(card, m);
+        paintDefaultModelSelect();
+      });
+    });
     card.querySelector(".mc-rm").addEventListener("click", () => {
       modelDraft.splice(i, 1);
       renderModelCards();
     });
+    card.querySelector(".mc-fetch").addEventListener("click", () => fetchModels(card, i));
+    syncProvider(card, m); // 初始同步:deepseek 固定地址 / 思考控件显隐 / effort 选项
     box.appendChild(card);
   });
   paintDefaultModelSelect();
+}
+
+// syncProvider 按当前 provider 调整卡片:deepseek 的 base_url 固定为官方地址
+// 且不可编辑。思考模式(thinking / reasoning_effort)不再在设置里配置,而是由
+// 输入框旁的模型按钮双击调整(见 openThinkingPop);模型卡片仍保留配置里的
+// 默认值并原样回存。
+function syncProvider(card, m) {
+  const baseUrlInput = card.querySelector('input[data-k="base_url"]');
+  if (m.provider === "deepseek") {
+    baseUrlInput.value = DS_BASE_URL;
+    baseUrlInput.disabled = true;
+    m.base_url = DS_BASE_URL;
+  } else {
+    baseUrlInput.disabled = false;
+  }
+}
+
+// fetchModels 调用后端 /api/llm/models 拉取该 base_url 的模型列表,
+// 填充 Model Name 的 datalist;只有一个模型时直接填入。
+async function fetchModels(card, i) {
+  const m = modelDraft[i];
+  const baseUrl = (card.querySelector('input[data-k="base_url"]').value || "").trim();
+  const apiKey = (card.querySelector('input[data-k="api_key"]').value || "").trim();
+  const btn = card.querySelector(".mc-fetch");
+  const list = document.getElementById("models-list-" + i);
+  if (!baseUrl) { toast("请先填写 Base URL", "err"); return; }
+  btn.disabled = true; btn.textContent = "…";
+  try {
+    const r = await fetch("/api/llm/models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_url: baseUrl, api_key: apiKey }),
+    });
+    const d = await r.json();
+    if (!r.ok) { toast("获取模型失败: " + (d.error || r.status), "err"); return; }
+    const models = d.models || [];
+    list.innerHTML = "";
+    for (const name of models) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      list.appendChild(opt);
+    }
+    const nameInput = card.querySelector('input[data-k="model_name"]');
+    if (models.length === 1 && !(nameInput.value || "").trim()) {
+      // Only auto-fill an EMPTY model_name; never clobber a working one
+      // (e.g. a proxy may report "/model" while the real name is "Qwen3.8-27B-FP8").
+      nameInput.value = models[0];
+      m.model_name = models[0];
+      toast("已填入模型: " + models[0], "ok");
+    } else if (models.length === 0) {
+      toast("未找到模型", "err");
+    } else {
+      toast("已加载 " + models.length + " 个模型,点击 Model Name 输入框选择", "ok");
+    }
+  } catch (e) {
+    toast("获取模型失败: " + e.message, "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "🔄";
+  }
 }
 function paintDefaultModelSelect() {
   const sel = $("#c-default-model");
@@ -1528,6 +1791,8 @@ async function saveSettings() {
     temperature: num(m.temperature),
     top_p: num(m.top_p),
     reserve_tokens: num(m.reserve_tokens),
+    thinking: (m.thinking || "").trim(),
+    reasoning_effort: (m.reasoning_effort || "").trim(),
   }));
   for (const m of models) {
     if (!m.name || !m.provider || !m.base_url || !m.model_name) {
@@ -1601,6 +1866,24 @@ function paintTokens(used) {
     (cap ? " · " + Math.min(999, Math.round((used || 0) * 100 / cap)) + "%" : "");
   el.classList.toggle("warn", cap > 0 && (used || 0) / cap >= 0.8);
 }
+// paintCacheHit renders the KV prefix-cache hit rate of the last LLM call.
+// cached/prompt is the input-only hit ratio (output excluded, matching how
+// providers bill cache). `reported` distinguishes "the provider reported a
+// genuine 0% hit" (show 0%) from "this deployment does not report cache hits
+// at all" (show n/a), so a real miss is no longer mislabeled as unknown.
+function paintCacheHit(prompt, cached, reported) {
+  const el = $("#cache-hit");
+  if (!el) return;
+  if (!prompt || prompt <= 0) { el.textContent = ""; el.className = "token-usage"; return; }
+  if (!reported) {
+    el.textContent = "缓存 n/a";
+    el.className = "token-usage nohit";
+    return;
+  }
+  const pct = Math.min(100, Math.round((cached || 0) * 100 / prompt));
+  el.textContent = "缓存 " + pct + "% (" + fmtK(cached || 0) + "/" + fmtK(prompt) + ")";
+  el.className = "token-usage";
+}
 async function updateTokenUsage() {
   if (!state.current) { paintTokens(0); return; }
   try {
@@ -1623,12 +1906,15 @@ function resetToNew() {
   state.mode = "full"; // 新会话默认完整模式
   state.model = state.defaultModel || ""; // 新会话默认模型
   state.contextReminders = true; // 新会话默认开启上下文提醒
+  state.thinking = ""; // 新会话:思考模式用模型默认
+  state.reasoningEffort = "";
   state.ctxWindow = state.defaultCtxWindow;
   state.children = [];
   paintMode();
   paintModel();
   paintContextReminders();
   paintTokens(0);
+  paintCacheHit(0, 0, false);
   paintBackBtn("");
   closeTasksPanel();
   renderTasksPanel();
@@ -1648,6 +1934,9 @@ async function selectSession(id) {
     paintMode();
     // 模型:以服务端为准(空 = 默认模型);token 条窗口跟着会话模型走
     state.model = s.model || state.defaultModel || "";
+    // 思考模式:以服务端为准(空 = 模型默认)
+    state.thinking = s.thinking || "";
+    state.reasoningEffort = s.reasoning_effort || "";
     if (data.context_window) state.ctxWindow = data.context_window;
     paintModel();
     // 上下文提醒开关:以服务端为准(缺省 = 开)
@@ -1663,6 +1952,7 @@ async function selectSession(id) {
       addStatus("⏳ 任务正在执行中 — 刷新前产生的输出不再回显,后续输出将实时显示");
     }
     paintTokens(data.tokens);
+    paintCacheHit(0, 0, false); // 切会话:清掉上一个会话的缓存命中显示
     saveSession(id);
   } catch (e) {
     toast("打开会话失败:" + e.message, "err");
@@ -1863,8 +2153,34 @@ function fsInsert(i) {
   // 权限模式 / 上下文提醒 / 子任务 / 审批
   $("#btn-mode").addEventListener("click", toggleMode);
   $("#ctx-reminders").addEventListener("change", toggleContextReminders);
-  // 模型切换(composer 输入行内下拉)
-  $("#btn-model").addEventListener("click", toggleModelMenu);
+  // 模型按钮(composer 输入行内):单击切换模型,双击调整思考模式(参考 codex)。
+  // 用定时器区分单击/双击:双击在 230ms 内到齐则取消单击动作。
+  let modelClickTimer = null;
+  $("#btn-model").addEventListener("click", () => {
+    if (modelClickTimer) {
+      clearTimeout(modelClickTimer);
+      modelClickTimer = null;
+      openThinkingPop();
+      return;
+    }
+    modelClickTimer = setTimeout(() => {
+      modelClickTimer = null;
+      toggleModelMenu();
+    }, 230);
+  });
+  // 思考强度滑块:拖动实时预览,松手(change)才提交。
+  $("#tp-effort").addEventListener("input", () => {
+    const scale = thinkScale();
+    if (!scale) return;
+    let idx = parseInt($("#tp-effort").value, 10);
+    if (isNaN(idx) || idx < 0) idx = 0;
+    if (idx >= scale.length) idx = scale.length - 1;
+    state.thinking = scale[idx].thinking;
+    state.reasoningEffort = scale[idx].effort;
+    paintReasoning();
+    updateThinkFill();
+  });
+  $("#tp-effort").addEventListener("change", () => persistReasoning());
   // 设置弹窗:添加模型卡片
   $("#btn-add-model").addEventListener("click", () => {
     modelDraft.push(modelTemplate());
@@ -1887,9 +2203,12 @@ function fsInsert(i) {
   document.addEventListener("click", (e) => {
     const p = $("#tasks-panel");
     if (p.classList.contains("open") && !p.contains(e.target) && e.target.id !== "btn-tasks") closeTasksPanel();
-    // 点模型按钮/菜单之外时收起模型下拉
+    // 点模型按钮/菜单之外时收起模型下拉和思考浮层
     const wrap = $("#model-menu").closest(".model-menu-wrap");
-    if ($("#model-menu").classList.contains("open") && !wrap.contains(e.target)) closeModelMenu();
+    if (wrap && !wrap.contains(e.target)) {
+      if ($("#model-menu").classList.contains("open")) closeModelMenu();
+      if ($("#think-pop").classList.contains("open")) closeThinkingPop();
+    }
   });
   $("#btn-approval-badge").addEventListener("click", () => {
     const ids = Object.keys(state.approvals);

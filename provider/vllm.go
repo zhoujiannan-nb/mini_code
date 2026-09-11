@@ -40,3 +40,13 @@ func (p *VLLMProvider) BuildHeaders() map[string]string {
 func (p *VLLMProvider) GetContextWindow() int { return p.ContextWindow }
 func (p *VLLMProvider) GetMaxTokens() int     { return p.MaxTokens }
 func (p *VLLMProvider) GetMaxInput() int      { return p.ContextWindow - p.MaxTokens - 2048 }
+
+// ConfigureRequest adds the OpenAI-compatible fields vLLM honors: top_p (when
+// set) and stream_options.include_usage so the final streaming chunk carries
+// the usage block (including prompt_tokens_details.cached_tokens).
+func (p *VLLMProvider) ConfigureRequest(req *chatRequest) {
+	if p.TopP > 0 {
+		req.TopP = p.TopP
+	}
+	req.StreamOptions = &streamOptions{IncludeUsage: true}
+}

@@ -84,6 +84,27 @@ func (c *AppConfig) Validate() error {
 		if m.MaxTokens < 0 || m.ContextWindow < 0 {
 			return fmt.Errorf("models[%d] (%s): token limits must be >= 0", i, m.Name)
 		}
+		if m.Thinking != "" && m.Thinking != "enabled" && m.Thinking != "disabled" {
+			return fmt.Errorf("models[%d] (%s): thinking must be \"enabled\" or \"disabled\"", i, m.Name)
+		}
+		if m.ReasoningEffort != "" {
+			// Valid reasoning_effort values differ per provider:
+			//   deepseek: off / low / high / max
+			//   sglang (Qwen3-style): xhigh / medium / low
+			// Other providers ignore the field, so no restriction there.
+			var ok bool
+			switch m.Provider {
+			case "deepseek":
+				ok = m.ReasoningEffort == "off" || m.ReasoningEffort == "low" || m.ReasoningEffort == "high" || m.ReasoningEffort == "max"
+			case "sglang":
+				ok = m.ReasoningEffort == "xhigh" || m.ReasoningEffort == "medium" || m.ReasoningEffort == "low"
+			default:
+				ok = true
+			}
+			if !ok {
+				return fmt.Errorf("models[%d] (%s): invalid reasoning_effort %q for provider %s", i, m.Name, m.ReasoningEffort, m.Provider)
+			}
+		}
 	}
 	if c.DefaultModel != "" && !seen[c.DefaultModel] {
 		return fmt.Errorf("default_model %q not found in models", c.DefaultModel)
@@ -125,6 +146,12 @@ type ModelConfig struct {
 	Temperature     float64 `json:"temperature"`
 	TopP            float64 `json:"top_p"`
 	ReserveTokens   int     `json:"reserve_tokens"`
+
+	// Thinking and ReasoningEffort control the model's thinking depth. DeepSeek
+	// and SGLang (Qwen3-style) both honor them; other providers ignore them.
+	// Empty = provider default (DeepSeek: thinking on, effort high).
+	Thinking        string `json:"thinking,omitempty"`         // "" | "enabled" | "disabled"
+	ReasoningEffort string `json:"reasoning_effort,omitempty"` // deepseek: off/low/high/max; sglang: xhigh/medium/low
 
 	// CompactionEnabled is the legacy per-model compaction toggle. It is
 	// migrated to the global AppConfig.CompactionEnabled on load and no

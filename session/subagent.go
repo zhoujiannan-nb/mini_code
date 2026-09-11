@@ -109,6 +109,12 @@ func (s *SubagentService) prepare(parentID, role, goal string, fork bool) (*Sess
 			slog.Warn("snapshot child model failed", "child", child.ID(), "model", mk, "err", err)
 		}
 	}
+	// Thinking-depth inheritance: the child snapshots the parent's per-session
+	// override so sub-agent work thinks at the same depth (empty = model
+	// default, nothing to set).
+	if thinking, effort := parent.ReasoningOverride(); thinking != "" || effort != "" {
+		child.SetReasoningOverride(thinking, effort)
+	}
 	if fork {
 		hist := s.mgr.CopyMessages(parentID)
 		if len(hist) > 0 && hist[0].Role == "system" {

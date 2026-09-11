@@ -20,6 +20,7 @@ import (
 	"github.com/user/mini_code/approval"
 	"github.com/user/mini_code/channels"
 	"github.com/user/mini_code/config"
+	"github.com/user/mini_code/provider"
 	"github.com/user/mini_code/session"
 	"github.com/user/mini_code/util"
 )
@@ -95,6 +96,7 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/mode", s.handleSetMode)
 	mux.HandleFunc("POST /api/sessions/{id}/context-reminders", s.handleSetContextReminders)
 	mux.HandleFunc("POST /api/sessions/{id}/model", s.handleSetModel)
+	mux.HandleFunc("POST /api/sessions/{id}/reasoning", s.handleSetReasoning)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleRenameSession)
 	mux.HandleFunc("GET /api/sessions/{id}/children", s.handleListChildren)
 	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
@@ -102,6 +104,7 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)
+	mux.HandleFunc("POST /api/llm/models", s.handleListModels)
 	mux.HandleFunc("GET /api/fs/search", s.handleFsSearch)
 	mux.HandleFunc("GET /api/approvals", s.handleListApprovals)
 	mux.HandleFunc("POST /api/approvals/{id}/decision", s.handleApprovalDecision)
@@ -178,9 +181,14 @@ type SessionSummary struct {
 	UpdatedAt        string `json:"updated_at"`
 	MessageCount     int    `json:"message_count"`
 	ContextReminders bool   `json:"context_reminders"` // experimental context-usage notices (session-level, default on)
+	// Thinking / ReasoningEffort are the per-session thinking-depth override
+	// (composer control); empty = the model's configured default.
+	Thinking        string `json:"thinking,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 func (s *server) summarize(r *session.SessionRecord) SessionSummary {
+	thinking, effort := reasoningOf(r)
 	return SessionSummary{
 		SessionID:        r.SessionID,
 		ParentID:         r.ParentID,
@@ -196,6 +204,8 @@ func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 		UpdatedAt:        r.UpdatedAt,
 		MessageCount:     len(r.Messages),
 		ContextReminders: contextRemindersOf(r),
+		Thinking:         thinking,
+		ReasoningEffort:  effort,
 	}
 }
 
@@ -272,6 +282,17 @@ func contextRemindersOf(r *session.SessionRecord) bool {
 	}
 	b, _ := v.(bool)
 	return b
+}
+
+// reasoningOf reads the per-session thinking-depth override from a session
+// record's metadata (empty = the model's configured default).
+func reasoningOf(r *session.SessionRecord) (thinking, effort string) {
+	if r.Metadata == nil {
+		return "", ""
+	}
+	thinking, _ = r.Metadata["thinking"].(string)
+	effort, _ = r.Metadata["reasoning_effort"].(string)
+	return thinking, effort
 }
 
 func (s *server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
@@ -382,6 +403,55 @@ func (s *server) handleSetModel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// validReasoningEffort reports whether effort is one of the values the
+// DeepSeek / SGLang providers accept.
+func validReasoningEffort(v string) bool {
+	switch v {
+	case "off", "low", "high", "max", "xhigh", "medium":
+		return true
+	}
+	return false
+}
+
+// handleSetReasoning sets a session's per-session thinking-depth override
+// (thinking switch + reasoning_effort); empty values clear it and fall back to
+// the model's configured default. It takes effect from the session's next
+// task on.
+func (s *server) handleSetReasoning(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if sess, err := s.be.Mgr().Get(id); err != nil || sess == nil {
+		writeErr(w, http.StatusNotFound, "session not found: "+id)
+		return
+	}
+	var req struct {
+		Thinking        string `json:"thinking"`
+		ReasoningEffort string `json:"reasoning_effort"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Thinking = strings.TrimSpace(req.Thinking)
+	req.ReasoningEffort = strings.TrimSpace(req.ReasoningEffort)
+	if req.Thinking != "" && req.Thinking != "enabled" && req.Thinking != "disabled" {
+		writeErr(w, http.StatusBadRequest, `thinking must be "enabled", "disabled" or empty`)
+		return
+	}
+	if req.ReasoningEffort != "" && !validReasoningEffort(req.ReasoningEffort) {
+		writeErr(w, http.StatusBadRequest, "invalid reasoning_effort: "+req.ReasoningEffort)
+		return
+	}
+	if err := s.be.Mgr().SetReasoning(id, req.Thinking, req.ReasoningEffort); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"session_id":       id,
+		"thinking":         req.Thinking,
+		"reasoning_effort": req.ReasoningEffort,
+	})
+}
+
 // handleRenameSession renames a session (the sidebar title). It is valid
 // while a task is running; the UI picks up the new title from the response
 // (and the next list poll).
@@ -438,6 +508,8 @@ type SendMessageRequest struct {
 	Mode             string   `json:"mode,omitempty"`   // permission mode for a NEW session (full / cautious)
 	Model            string   `json:"model,omitempty"`  // model name for a NEW session (config key); ignored for existing sessions
 	ContextReminders *bool    `json:"context_reminders,omitempty"` // new-session preference; nil = default (on)
+	Thinking         string   `json:"thinking,omitempty"`          // thinking switch for a NEW session; ignored for existing sessions
+	ReasoningEffort  string   `json:"reasoning_effort,omitempty"`  // thinking depth for a NEW session; ignored for existing sessions
 }
 
 const (
@@ -487,6 +559,8 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	msg.Mode = req.Mode
 	msg.Model = req.Model
 	msg.ContextReminders = req.ContextReminders
+	msg.Thinking = strings.TrimSpace(req.Thinking)
+	msg.ReasoningEffort = strings.TrimSpace(req.ReasoningEffort)
 	s.be.Hub().Submit(msg)
 
 	resp := map[string]string{"task_id": msg.ID}
@@ -618,6 +692,31 @@ func (s *server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// handleListModels proxies the provider's OpenAI-compatible /models endpoint so
+// the web UI's "fetch models" button can populate the model picker. The caller
+// supplies the base_url and api_key to probe (not necessarily a saved model).
+func (s *server) handleListModels(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		BaseURL string `json:"base_url"`
+		APIKey  string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.BaseURL = strings.TrimSpace(req.BaseURL)
+	if req.BaseURL == "" {
+		writeErr(w, http.StatusBadRequest, "base_url is required")
+		return
+	}
+	models, err := provider.ListModels(req.BaseURL, req.APIKey)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"models": models})
 }
 
 // --- folder search (the "@" picker in the composer) ---

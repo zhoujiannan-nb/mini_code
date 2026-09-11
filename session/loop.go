@@ -40,6 +40,7 @@ type AgentLoop struct {
 	onAssistantReply func(content string, reasoning string)
 	onTurn           func(turn int, messages []provider.Message)
 	onContextUsage   func(tokens int)
+	onUsage          func(promptTokens, cachedTokens, completionTokens int, cacheReported bool) // real per-call usage (cache-hit visibility)
 	gate             ToolGate // runtime permission gate (nil = no gate)
 
 	// Per-path locks serialize batched tool calls that touch the same file
@@ -123,6 +124,16 @@ func (l *AgentLoop) SetContextRemindersOn(on bool) { l.contextRemindersOn = on }
 // the compaction check. The count reflects the context about to be sent to
 // the model; the web UI uses it to keep the token bar fresh during long tasks.
 func (l *AgentLoop) SetOnContextUsage(fn func(tokens int)) { l.onContextUsage = fn }
+
+// SetOnUsage installs the callback fired after each successful LLM call with
+// the provider-reported usage (prompt / cached / completion tokens) and whether
+// the provider reported cache-hit information at all. It is the source of the
+// cache-hit indicator: cachedTokens is the number of prompt tokens served from
+// the provider's KV prefix cache, and cacheReported distinguishes "0% hits"
+// from "this deployment does not report cache hits".
+func (l *AgentLoop) SetOnUsage(fn func(promptTokens, cachedTokens, completionTokens int, cacheReported bool)) {
+	l.onUsage = fn
+}
 
 // buildUserMessage builds the initial user message: plain text, or a
 // multimodal message (text part + image parts) when images are attached.
@@ -465,6 +476,19 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		}
 		if resp.Error != "" {
 			return &LoopResult{Success: false, Messages: messages, Turns: turn, Error: resp.Error}, nil
+		}
+
+		// Report the provider's real usage (cache-hit visibility). cachedTokens
+		// is the prompt tokens served from the KV prefix cache; 0 means the
+		// provider did not report cache hits (e.g. SGLang without
+		// --enable-cache-report), which we surface as "unknown", not a miss.
+		if u := resp.Usage; u != nil {
+			cached := u.CachedTokens()
+			reported := u.CacheReported()
+			slog.Info("llm usage", "turn", turn, "prompt_tokens", u.PromptTokens, "cached_tokens", cached, "cache_reported", reported, "completion_tokens", u.CompletionTokens, "reasoning_tokens", u.ReasoningTokens)
+			if l.onUsage != nil {
+				l.onUsage(u.PromptTokens, cached, u.CompletionTokens, reported)
+			}
 		}
 
 		// parse response

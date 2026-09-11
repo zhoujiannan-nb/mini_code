@@ -85,21 +85,34 @@ func (mc *ModelClient) ChatStream(ctx context.Context, messages []Message, tools
 		o.Temperature = p.Temperature
 		o.MaxTokens = p.MaxTokens
 	}
+	if p, ok := mc.provider.(*SGLangProvider); ok && p.MaxTokens > 0 {
+		// Respect the configured output budget; sampling defaults are
+		// applied by SGLangProvider.ConfigureRequest.
+		o.MaxTokens = p.MaxTokens
+	}
+	if p, ok := mc.provider.(*DeepSeekProvider); ok && p.MaxTokens > 0 {
+		// Respect the configured output budget (previously the hardcoded
+		// 8192 default was sent regardless of config).
+		o.MaxTokens = p.MaxTokens
+	}
 	for _, opt := range opts {
 		opt(&o)
 	}
 
+	temp := o.Temperature
 	req := chatRequest{
-		Model:       mc.modelName(),
-		Messages:    messages,
-		Temperature: o.Temperature,
-		MaxTokens:   o.MaxTokens,
-		Stream:      true,
+		Model:               mc.modelName(),
+		Messages:            messages,
+		Temperature:         &temp,
+		MaxTokens:           o.MaxTokens,
+		Stream:              true,
+		temperatureExplicit: o.TemperatureExplicit,
 	}
 	if len(tools) > 0 {
 		req.Tools = tools
 		req.ToolChoice = "auto"
 	}
+	mc.provider.ConfigureRequest(&req)
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -129,6 +142,10 @@ func (mc *ModelClient) ChatStream(ctx context.Context, messages []Message, tools
 			resp.Body.Close()
 			errText := string(respBody)
 			if mc.isTokenError(errText) {
+				return &ChatResponse{Error: fmt.Sprintf("API error: %d - %s", resp.StatusCode, errText)}, nil
+			}
+			// Auth / balance / parameter errors fail fast (see isNonRetryableStatus).
+			if isNonRetryableStatus(resp.StatusCode) {
 				return &ChatResponse{Error: fmt.Sprintf("API error: %d - %s", resp.StatusCode, errText)}, nil
 			}
 			if ctx.Err() != nil {

@@ -39,6 +39,7 @@ const (
 	KindToolStart       = "tool_start"        // a tool call is starting
 	KindToolEnd         = "tool_end"          // a tool call has finished
 	KindContextUsage    = "context_usage"     // per-turn context token count for the UI token bar
+	KindUsage           = "usage"             // real per-call provider usage (prompt/cached/completion tokens) for the cache-hit indicator
 	KindStatus          = "status"            // lifecycle notice (see Status* constants)
 	KindError           = "error"             // task failed
 	KindReasoning       = "reasoning_delta"   // live (cumulative) reasoning_content of the model
@@ -76,6 +77,11 @@ type Message struct {
 	// a NEW session (web UI toggle). nil = keep the default (on); non-nil = set.
 	// Ignored when the message continues an existing session.
 	ContextReminders *bool `json:"context_reminders,omitempty"`
+	// Thinking / ReasoningEffort are the per-session thinking-depth override for
+	// a NEW session (web UI composer). Empty = the model's configured default.
+	// Ignored when the message continues an existing session.
+	Thinking        string `json:"thinking,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	Content    string    `json:"content"`
 	Images     []string  `json:"images,omitempty"` // data URLs (data:image/...;base64,...) attached to a user message; the model sees them on the first turn
 	Reasoning  string    `json:"reasoning,omitempty"` // on assistant messages: model reasoning_content; on KindReasoning: cumulative live reasoning
@@ -83,6 +89,14 @@ type Message struct {
 	ToolArgs   string    `json:"tool_args,omitempty"`
 	ToolResult string    `json:"tool_result,omitempty"`
 	Tokens     int       `json:"tokens,omitempty"` // on KindContextUsage: context tokens in use
+	// On KindUsage: the provider-reported usage of the last LLM call.
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CachedTokens     int `json:"cached_tokens,omitempty"`     // prompt tokens served from the KV prefix cache
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	// CacheReported tells whether the provider actually included cache-hit
+	// information (even a genuine 0), so the UI can tell "0% hits" apart from
+	// "this deployment does not report cache hits".
+	CacheReported bool `json:"cache_reported,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -150,6 +164,14 @@ func NewToolEndMessage(sessionID, sessionKey, name string, params map[string]int
 // token bar. Tokens reflects the context about to be sent to the model.
 func NewContextUsageMessage(sessionID, sessionKey string, tokens int) Message {
 	return Message{ID: util.RandomHex(12), Kind: KindContextUsage, SessionID: sessionID, SessionKey: sessionKey, Tokens: tokens, CreatedAt: time.Now()}
+}
+
+// NewUsageMessage builds a real-usage update for the UI cache-hit indicator.
+// promptTokens/cachedTokens/completionTokens come from the provider's usage
+// block of the last LLM call; cachedTokens is 0 when the provider does not
+// report cache hits.
+func NewUsageMessage(sessionID, sessionKey string, promptTokens, cachedTokens, completionTokens int, cacheReported bool) Message {
+	return Message{ID: util.RandomHex(12), Kind: KindUsage, SessionID: sessionID, SessionKey: sessionKey, PromptTokens: promptTokens, CachedTokens: cachedTokens, CompletionTokens: completionTokens, CacheReported: cacheReported, CreatedAt: time.Now()}
 }
 
 // ApprovalRequestPayload is the JSON carried in a KindApprovalRequest
@@ -264,6 +286,13 @@ func (h *Hub) Attach(mgr *session.SessionManager) {
 			},
 			OnContextUsage: func(tokens int) {
 				h.emit(NewContextUsageMessage(sessionID, h.channelKeyFor(sessionID), tokens))
+			},
+			OnUsage: func(promptTokens, cachedTokens, completionTokens int, cacheReported bool) {
+				// Only emit when the provider reported a usable prompt count, so
+				// providers that never send usage don't spam empty indicators.
+				if promptTokens > 0 {
+					h.emit(NewUsageMessage(sessionID, h.channelKeyFor(sessionID), promptTokens, cachedTokens, completionTokens, cacheReported))
+				}
 			},
 			OnReply: func(content string, reasoning string) {
 				// Stream reasoning and text live so the UI can show the
@@ -616,6 +645,11 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 		if err := h.mgr.SetModel(created.ID(), m.Model); err != nil {
 			slog.Warn("set new session model failed", "session", created.ID(), "model", m.Model, "err", err)
 		}
+	}
+	// Thinking depth for the new session (web UI composer). Empty = the
+	// model's configured default.
+	if m.Thinking != "" || m.ReasoningEffort != "" {
+		created.SetReasoningOverride(m.Thinking, m.ReasoningEffort)
 	}
 	// Experimental context-usage notices for the new session (web UI toggle).
 	// nil = keep the default (on); non-nil = set to the given value.

@@ -40,6 +40,7 @@ type Session struct {
 	onToolCallEnd    func(name string, params map[string]interface{}, result string)
 	onAssistantReply func(content string, reasoning string)
 	onContextUsage   func(tokens int)
+	onUsage          func(promptTokens, cachedTokens, completionTokens int, cacheReported bool)
 
 	// mu guards record.Messages against concurrent writers (the loop's
 	// per-turn persistence, settlement-notice appends, manual compaction)
@@ -77,6 +78,39 @@ func (s *Session) ContextRemindersEnabled() bool {
 func (s *Session) SetContextRemindersEnabled(on bool) {
 	s.mu.Lock()
 	s.record.Metadata["context_reminders"] = on
+	s.store.Update(s.record)
+	s.mu.Unlock()
+}
+
+// ReasoningOverride returns the session's per-session thinking depth override
+// (empty = use the model's configured default). It backs the composer's
+// thinking control: the same model can think at different depths per
+// conversation without editing the model config.
+func (s *Session) ReasoningOverride() (thinking, effort string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	thinking, _ = s.record.Metadata["thinking"].(string)
+	effort, _ = s.record.Metadata["reasoning_effort"].(string)
+	return
+}
+
+// SetReasoningOverride sets the per-session thinking depth and persists it.
+// Empty values clear that part of the override (fall back to the model's
+// configured default). It applies from the session's next task on.
+func (s *Session) SetReasoningOverride(thinking, effort string) {
+	s.mu.Lock()
+	if s.record.Metadata == nil {
+		s.record.Metadata = map[string]interface{}{}
+	}
+	setOrClear := func(k, v string) {
+		if v == "" {
+			delete(s.record.Metadata, k)
+		} else {
+			s.record.Metadata[k] = v
+		}
+	}
+	setOrClear("thinking", thinking)
+	setOrClear("reasoning_effort", effort)
 	s.store.Update(s.record)
 	s.mu.Unlock()
 }
@@ -144,10 +178,16 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 
 	// Snapshot the session's client under the session lock: a concurrent
 	// SetModel may swap it, and this task must run to completion on the
-	// client it started with.
+	// client it started with. Apply the per-session thinking override (the
+	// composer's control) on top of the model's configured default.
 	s.mu.Lock()
 	client := s.client
+	thinking, _ := s.record.Metadata["thinking"].(string)
+	effort, _ := s.record.Metadata["reasoning_effort"].(string)
 	s.mu.Unlock()
+	if client != nil && (thinking != "" || effort != "") {
+		client = client.WithReasoning(thinking, effort)
+	}
 	loop := NewAgentLoop(client, maxTurns, pb.Tools, defs, s.onToolCallStart, s.onToolCallEnd, s.onAssistantReply, turnHook)
 	if s.manager != nil {
 		loop.compactionOn = s.manager.CompactionEnabled()
@@ -164,6 +204,7 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	loop.SetContextState(ctxState)
 	loop.SetContextRemindersOn(s.ContextRemindersEnabled())
 	loop.SetOnContextUsage(s.onContextUsage)
+	loop.SetOnUsage(s.onUsage)
 
 	slog.Info("session prompt", "id", s.ID(), "goal", goal[:min(80, len(goal))])
 	s.mu.Lock()
@@ -271,6 +312,7 @@ type SessionCallbacks struct {
 	OnToolEnd      func(name string, params map[string]interface{}, result string)
 	OnReply        func(content string, reasoning string)
 	OnContextUsage func(tokens int) // per-turn context token count (UI token bar)
+	OnUsage        func(promptTokens, cachedTokens, completionTokens int, cacheReported bool) // real per-call usage (cache-hit indicator)
 }
 
 type SessionManager struct {
@@ -479,6 +521,20 @@ func (m *SessionManager) SetModel(sessionID, name string) error {
 	return nil
 }
 
+// SetReasoning sets a session's per-session thinking depth override (thinking
+// switch + reasoning_effort); empty values clear it and fall back to the
+// model's configured default. It applies from the session's next task on — a
+// task that is currently running keeps the client it started with.
+func (m *SessionManager) SetReasoning(sessionID, thinking, effort string) error {
+	s, err := m.Get(sessionID)
+	if err != nil || s == nil {
+		return fmt.Errorf("会话不存在: %s", sessionID)
+	}
+	s.SetReasoningOverride(thinking, effort)
+	slog.Info("session reasoning changed", "session", sessionID, "thinking", thinking, "effort", effort)
+	return nil
+}
+
 // --- session title ---
 
 // MaxTitleLen caps the length of a user-chosen session title (in runes).
@@ -670,6 +726,7 @@ func (m *SessionManager) newSession(record *SessionRecord) *Session {
 		s.onToolCallEnd = cbs.OnToolEnd
 		s.onAssistantReply = cbs.OnReply
 		s.onContextUsage = cbs.OnContextUsage
+		s.onUsage = cbs.OnUsage
 	}
 	// Register the session's mode so the runtime gate can read it without
 	// touching the (concurrently mutated) record.
