@@ -39,6 +39,7 @@ type Session struct {
 	onToolCallStart  func(name string, params map[string]interface{})
 	onToolCallEnd    func(name string, params map[string]interface{}, result string)
 	onAssistantReply func(content string, reasoning string)
+	onContextUsage   func(tokens int)
 
 	// mu guards record.Messages against concurrent writers (the loop's
 	// per-turn persistence, settlement-notice appends, manual compaction)
@@ -162,6 +163,7 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	// context-usage notices toggle (session-level, default on).
 	loop.SetContextState(ctxState)
 	loop.SetContextRemindersOn(s.ContextRemindersEnabled())
+	loop.SetOnContextUsage(s.onContextUsage)
 
 	slog.Info("session prompt", "id", s.ID(), "goal", goal[:min(80, len(goal))])
 	s.mu.Lock()
@@ -265,9 +267,10 @@ func (m *SessionManager) CompactSession(ctx context.Context, sessionID string) (
 // produces one set of callbacks per session ID lets a message hub route each
 // session's tool events into the bus, including sub-agent sessions.
 type SessionCallbacks struct {
-	OnToolStart func(name string, params map[string]interface{})
-	OnToolEnd   func(name string, params map[string]interface{}, result string)
-	OnReply     func(content string, reasoning string)
+	OnToolStart    func(name string, params map[string]interface{})
+	OnToolEnd      func(name string, params map[string]interface{}, result string)
+	OnReply        func(content string, reasoning string)
+	OnContextUsage func(tokens int) // per-turn context token count (UI token bar)
 }
 
 type SessionManager struct {
@@ -666,6 +669,7 @@ func (m *SessionManager) newSession(record *SessionRecord) *Session {
 		s.onToolCallStart = cbs.OnToolStart
 		s.onToolCallEnd = cbs.OnToolEnd
 		s.onAssistantReply = cbs.OnReply
+		s.onContextUsage = cbs.OnContextUsage
 	}
 	// Register the session's mode so the runtime gate can read it without
 	// touching the (concurrently mutated) record.

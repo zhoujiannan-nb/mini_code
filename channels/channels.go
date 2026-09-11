@@ -38,6 +38,7 @@ const (
 	KindAssistant       = "assistant"         // final assistant reply for a task
 	KindToolStart       = "tool_start"        // a tool call is starting
 	KindToolEnd         = "tool_end"          // a tool call has finished
+	KindContextUsage    = "context_usage"     // per-turn context token count for the UI token bar
 	KindStatus          = "status"            // lifecycle notice (see Status* constants)
 	KindError           = "error"             // task failed
 	KindReasoning       = "reasoning_delta"   // live (cumulative) reasoning_content of the model
@@ -81,6 +82,7 @@ type Message struct {
 	ToolName   string    `json:"tool_name,omitempty"`
 	ToolArgs   string    `json:"tool_args,omitempty"`
 	ToolResult string    `json:"tool_result,omitempty"`
+	Tokens     int       `json:"tokens,omitempty"` // on KindContextUsage: context tokens in use
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -142,6 +144,12 @@ func NewToolEndMessage(sessionID, sessionKey, name string, params map[string]int
 		args = string(b)
 	}
 	return Message{ID: util.RandomHex(12), Kind: KindToolEnd, SessionID: sessionID, SessionKey: sessionKey, ToolName: name, ToolArgs: args, ToolResult: result, CreatedAt: time.Now()}
+}
+
+// NewContextUsageMessage builds a per-turn context-usage update for the UI
+// token bar. Tokens reflects the context about to be sent to the model.
+func NewContextUsageMessage(sessionID, sessionKey string, tokens int) Message {
+	return Message{ID: util.RandomHex(12), Kind: KindContextUsage, SessionID: sessionID, SessionKey: sessionKey, Tokens: tokens, CreatedAt: time.Now()}
 }
 
 // ApprovalRequestPayload is the JSON carried in a KindApprovalRequest
@@ -253,6 +261,9 @@ func (h *Hub) Attach(mgr *session.SessionManager) {
 			},
 			OnToolEnd: func(name string, params map[string]interface{}, result string) {
 				h.emit(NewToolEndMessage(sessionID, h.channelKeyFor(sessionID), name, params, result))
+			},
+			OnContextUsage: func(tokens int) {
+				h.emit(NewContextUsageMessage(sessionID, h.channelKeyFor(sessionID), tokens))
 			},
 			OnReply: func(content string, reasoning string) {
 				// Stream reasoning and text live so the UI can show the

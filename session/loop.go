@@ -39,6 +39,7 @@ type AgentLoop struct {
 	onToolCallEnd    func(name string, params map[string]interface{}, result string)
 	onAssistantReply func(content string, reasoning string)
 	onTurn           func(turn int, messages []provider.Message)
+	onContextUsage   func(tokens int)
 	gate             ToolGate // runtime permission gate (nil = no gate)
 
 	// Per-path locks serialize batched tool calls that touch the same file
@@ -117,6 +118,11 @@ func (l *AgentLoop) SetContextState(state *tools.ContextState) { l.ctxState = st
 // SetContextRemindersOn toggles the experimental context-usage notices
 // (injected at 50% / 70% of the budget). Must be called before Run.
 func (l *AgentLoop) SetContextRemindersOn(on bool) { l.contextRemindersOn = on }
+
+// SetOnContextUsage installs the per-turn context-usage callback fired after
+// the compaction check. The count reflects the context about to be sent to
+// the model; the web UI uses it to keep the token bar fresh during long tasks.
+func (l *AgentLoop) SetOnContextUsage(fn func(tokens int)) { l.onContextUsage = fn }
 
 // buildUserMessage builds the initial user message: plain text, or a
 // multimodal message (text part + image parts) when images are attached.
@@ -416,10 +422,16 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
 			}
 		}
-		// Publish the current context usage to the context tools (context_usage
-		// reads it; it reflects the context about to be sent to the model).
-		if l.ctxState != nil {
-			l.ctxState.SetUsage(util.CountMessagesTokens(messages), l.client.GetMaxInput())
+		// Publish the current context usage (reflects the context about to be
+		// sent to the model) to the context tools and to the UI token bar.
+		if l.ctxState != nil || l.onContextUsage != nil {
+			tokens := util.CountMessagesTokens(messages)
+			if l.ctxState != nil {
+				l.ctxState.SetUsage(tokens, l.client.GetMaxInput())
+			}
+			if l.onContextUsage != nil {
+				l.onContextUsage(tokens)
+			}
 		}
 		// Context usage notices (experimental, gated by the session toggle): when
 		// the context crosses 50% / 70% of the budget, append a system notice to

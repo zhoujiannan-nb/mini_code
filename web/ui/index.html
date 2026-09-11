@@ -1122,6 +1122,10 @@ function onEvent(m) {
     case "tool_end":
       markToolPendingDone(m.tool_result);
       break;
+    case "context_usage":
+      // 每轮 loop 开头(压缩检查后)后端推送的上下文 token 数,直接画,不走 HTTP
+      paintTokens(m.tokens);
+      break;
     case "assistant":
       pendingRemove();
       liveRemove();
