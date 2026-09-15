@@ -24,6 +24,7 @@ var basePermissions = map[string]interface{}{
 	"exec":         "allow",
 	"skills":       "allow",
 	"readimg":      "allow",
+	"group_chat":   "allow", // read/send on the group channel (only registered for group members)
 }
 
 func mergePermissions(overrides ...map[string]interface{}) PermissionConfig {

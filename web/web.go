@@ -9,10 +9,12 @@ package web
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +33,7 @@ import (
 type Backend interface {
 	Hub() *channels.Hub
 	Mgr() *session.SessionManager
+	Groups() *session.GroupService
 	Approvals() *approval.Service
 	Status() StatusInfo
 	GetConfig() *config.AppConfig
@@ -85,9 +88,12 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /index.html", s.handleIndex)
 	mux.HandleFunc("GET /favicon.ico", s.handleFavicon)
+	mux.HandleFunc("GET /avatars/{name}", s.handleAvatar)
 
 	// --- API ---
 	mux.HandleFunc("GET /api/healthz", s.handleHealthz)
+	mux.HandleFunc("GET /api/avatar", s.handleUserAvatarGet)
+	mux.HandleFunc("POST /api/avatar", s.handleUserAvatarSet)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
@@ -101,6 +107,17 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/children", s.handleListChildren)
 	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
+	mux.HandleFunc("GET /api/groups", s.handleGroupsList)
+	mux.HandleFunc("POST /api/groups", s.handleGroupsCreate)
+	mux.HandleFunc("GET /api/groups/{id}", s.handleGroupsDetail)
+	mux.HandleFunc("POST /api/groups/{id}/background", s.handleGroupsSetBackground)
+	mux.HandleFunc("POST /api/groups/{id}/rename", s.handleGroupsRename)
+	mux.HandleFunc("DELETE /api/groups/{id}", s.handleGroupsDelete)
+	mux.HandleFunc("POST /api/groups/{id}/join", s.handleGroupsJoin)
+	mux.HandleFunc("DELETE /api/groups/{id}/members/{sid}", s.handleGroupsLeave)
+	mux.HandleFunc("POST /api/groups/{id}/members/{sid}/rename", s.handleGroupsMemberRename)
+	mux.HandleFunc("POST /api/groups/{id}/members/{sid}/avatar", s.handleGroupsMemberAvatar)
+	mux.HandleFunc("POST /api/groups/{id}/messages", s.handleGroupsSend)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)
@@ -148,6 +165,83 @@ func (s *server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/x-icon")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.Write(b)
+}
+
+// avatarNameRe whitelists the built-in group avatar file names.
+var avatarNameRe = regexp.MustCompile(`^a[0-9]{3}\.svg$`)
+
+// handleAvatar serves one embedded group avatar (web/ui/avatars/aNNN.svg).
+func (s *server) handleAvatar(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !avatarNameRe.MatchString(name) {
+		http.NotFound(w, r)
+		return
+	}
+	b, err := uiFS.ReadFile("ui/avatars/" + name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Write(b)
+}
+
+// --- user avatar (the human user, global; stored in the config so it
+// survives restarts) ---
+
+// userAvatarPrefixes are the accepted data-URL prefixes for an uploaded
+// avatar (the UI canvas-compresses to 256x256 JPEG before sending).
+var userAvatarPrefixes = []string{
+	"data:image/jpeg;base64,",
+	"data:image/png;base64,",
+	"data:image/webp;base64,",
+}
+
+func (s *server) handleUserAvatarGet(w http.ResponseWriter, r *http.Request) {
+	cfg := s.be.GetConfig()
+	writeJSON(w, http.StatusOK, map[string]string{"avatar": cfg.UserAvatar})
+}
+
+func (s *server) handleUserAvatarSet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Avatar string `json:"avatar"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Avatar = strings.TrimSpace(req.Avatar)
+	if req.Avatar != "" {
+		rest, ok := "", false
+		for _, p := range userAvatarPrefixes {
+			if strings.HasPrefix(req.Avatar, p) {
+				rest, ok = req.Avatar[len(p):], true
+				break
+			}
+		}
+		if !ok {
+			writeErr(w, http.StatusBadRequest, "avatar must be a data URL (data:image/jpeg|png|webp;base64,...)")
+			return
+		}
+		raw, err := base64.StdEncoding.DecodeString(rest)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "avatar base64 is invalid: "+err.Error())
+			return
+		}
+		if len(raw) > 4*1024*1024 {
+			writeErr(w, http.StatusBadRequest, "avatar too large (max 4MB after decode)")
+			return
+		}
+	}
+	cfg := s.be.GetConfig()
+	cfg.UserAvatar = req.Avatar
+	if _, err := s.be.SaveConfig(cfg); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	slog.Info("user avatar updated", "bytes", len(req.Avatar))
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "avatar": req.Avatar})
 }
 
 // --- health & status ---

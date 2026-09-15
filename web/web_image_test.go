@@ -31,6 +31,7 @@ type fakeBackend struct {
 
 func (f *fakeBackend) Hub() *channels.Hub            { return f.hub }
 func (f *fakeBackend) Mgr() *session.SessionManager   { return f.mgr }
+func (f *fakeBackend) Groups() *session.GroupService  { return nil }
 func (f *fakeBackend) Approvals() *approval.Service   { return f.ap }
 func (f *fakeBackend) Status() StatusInfo          { return StatusInfo{} }
 func (f *fakeBackend) GetConfig() *config.AppConfig {

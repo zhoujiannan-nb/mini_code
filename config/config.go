@@ -27,6 +27,10 @@ type AppConfig struct {
 	CompactionEnabled *bool      `json:"compaction_enabled,omitempty"`
 	WebPort           int        `json:"web_port"`
 	DingTalk          DingTalkConfig `json:"dingtalk"`
+	// UserAvatar is the web user's avatar: a data URL
+	// (data:image/jpeg|png|webp;base64,...) uploaded from the UI.
+	// Empty = the UI renders the first-character + hash-color fallback.
+	UserAvatar string `json:"user_avatar,omitempty"`
 }
 
 // Compaction reports whether automatic context compression is on.

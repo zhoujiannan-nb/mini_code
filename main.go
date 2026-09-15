@@ -139,6 +139,7 @@ type runtime struct {
 	mgr       *session.SessionManager
 	hub       *channels.Hub
 	subagents *session.SubagentService
+	groups    *session.GroupService
 	approvals *approval.Service
 	dt        *dtController
 }
@@ -227,12 +228,37 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 	approvals := approval.NewService(hub, mgr)
 	mgr.SetApprover(approvals)
 
+	// Group chats: public channel + group_chat tool (see session.GroupService).
+	groupStore, err := session.NewDefaultGroupStore()
+	if err != nil {
+		mgr.Close()
+		for _, c := range allClients {
+			c.Close()
+		}
+		return nil, fmt.Errorf("init group store: %w", err)
+	}
+	groups := session.NewGroupService(groupStore, mgr)
+	// Delivering a group message to an IDLE member session starts a task via
+	// the hub (a running member queues it for its next loop turn instead).
+	mgr.SetDeliverHook(func(sessionID, text string) {
+		msg := channels.NewUserMessage(channels.ChannelWeb, text)
+		msg.SessionID = sessionID
+		hub.Submit(msg)
+	})
+	// Authoritative live-task check: the hub's in-memory registry. Keeps
+	// group delivery / status UIs from trusting a persisted "running"
+	// status that is stale after a restart (such a session has no live
+	// loop, so queued messages would sit there forever).
+	mgr.SetActiveTaskCheck(func(sid string) bool { return hub.ActiveTask(sid) })
+	mgr.SetGroups(groups)
+
 	return &runtime{
 		cfg:       cfg,
 		clients:   allClients,
 		mgr:       mgr,
 		hub:       hub,
 		subagents: subagents,
+		groups:    groups,
 		approvals: approvals,
 		dt:        newDTController(hub),
 	}, nil
@@ -276,6 +302,7 @@ func main() {
 
 func (rt *runtime) Hub() *channels.Hub            { return rt.hub }
 func (rt *runtime) Mgr() *session.SessionManager   { return rt.mgr }
+func (rt *runtime) Groups() *session.GroupService  { return rt.groups }
 func (rt *runtime) Approvals() *approval.Service   { return rt.approvals }
 
 func (rt *runtime) liveConfig() *config.AppConfig {
@@ -338,7 +365,8 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 	newDTJSON, _ := json.Marshal(cfg.DingTalk)
 	dtChanged := string(oldDTJSON) != string(newDTJSON)
 
-	if !modelsChanged && !dtChanged && old.WebPort == cfg.WebPort && old.Compaction() == cfg.Compaction() {
+	if !modelsChanged && !dtChanged && old.WebPort == cfg.WebPort && old.Compaction() == cfg.Compaction() &&
+		old.UserAvatar == cfg.UserAvatar {
 		return &web.SaveResult{Message: "配置没有变化"}, nil
 	}
 
@@ -420,6 +448,7 @@ func runWeb(args []string) {
 	}
 	defer rt.closeClients()
 	defer rt.mgr.Close()
+	defer rt.groups.Close()
 	if port == 0 {
 		port = rt.liveConfig().WebPort
 	}
@@ -454,6 +483,7 @@ func runInteractive(args []string) {
 	}
 	defer rt.closeClients()
 	defer rt.mgr.Close()
+	defer rt.groups.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -567,6 +597,7 @@ func runDingTalk(args []string) {
 	}
 	defer rt.closeClients()
 	defer rt.mgr.Close()
+	defer rt.groups.Close()
 
 	dt := rt.liveConfig().DingTalk
 	if !dt.Enabled || dt.AppKey == "" || dt.AppSecret == "" {

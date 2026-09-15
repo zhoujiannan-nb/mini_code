@@ -99,11 +99,23 @@ type AgentLoop struct {
 	// before Run; the loop instance is created per task, so the state is
 	// never shared between tasks.
 	userImages []string
+
+	// injections returns user messages queued while this task was running
+	// (e.g. group-chat messages delivered to a running session). The loop
+	// drains it at the start of each turn and appends them as plain user
+	// messages, so they reach the model on the next turn without starting a
+	// new prompt. Set via SetInjections before Run.
+	injections func() []string
 }
 
 // SetUserImages attaches image data URLs to the initial user message (the
 // model sees them on the first turn). Must be called before Run.
 func (l *AgentLoop) SetUserImages(images []string) { l.userImages = images }
+
+// SetInjections installs the mid-task user-message drain. Messages queued
+// while the task runs are appended to the conversation at the start of the
+// next turn (and persisted with it). Must be called before Run.
+func (l *AgentLoop) SetInjections(fn func() []string) { l.injections = fn }
 
 // SetGate installs the runtime permission gate consulted before every tool
 // call (role permissions + cautious-mode approval). Must be called before
@@ -407,6 +419,20 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		if ctx.Err() != nil {
 			slog.Info("agent loop interrupted", "turn", turn, "collected_messages", len(messages))
 			return &LoopResult{Interrupted: true, Messages: messages, Turns: turn - 1}, nil
+		}
+
+		// Mid-task user injections: messages queued while this task is
+		// running (e.g. group-chat messages for a busy member) reach the
+		// model on this turn. Appended as plain user messages at the tail
+		// and persisted by persistTurn below.
+		if l.injections != nil {
+			for _, t := range l.injections() {
+				if strings.TrimSpace(t) == "" {
+					continue
+				}
+				messages = append(messages, provider.Message{Role: "user", Content: t})
+				slog.Info("injected queued user message", "turn", turn, "chars", len(t))
+			}
 		}
 
 		// Active compaction requested by the model via the compact_context tool:

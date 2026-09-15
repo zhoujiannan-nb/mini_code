@@ -147,6 +147,16 @@ func (pb *PromptBuilder) EnableContextTools(state *tools.ContextState) {
 	pb.Tools.Register(tools.NewCompactContextTool(state))
 }
 
+// EnableGroupTool registers the group_chat tool for a group-member session.
+// api is the per-session backend (group info/log + delivery); it is read
+// live on every call, so mid-task membership changes are reflected.
+func (pb *PromptBuilder) EnableGroupTool(sessionID string, api tools.GroupChatDispatcher) {
+	t := tools.NewGroupChatTool()
+	t.SetContext(api)
+	pb.Tools.Register(t)
+	slog.Debug("GroupChatTool enabled", "session", sessionID)
+}
+
 func (pb *PromptBuilder) GetFilteredDefinitions(cfg *agent.AgentConfig) []provider.ToolSchema {
 	defs := pb.Tools.GetDefinitions(false)
 	if cfg == nil || len(cfg.Permissions.Tools) == 0 {

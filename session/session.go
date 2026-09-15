@@ -47,6 +47,11 @@ type Session struct {
 	// and readers (web API, fork snapshots). The store.Update call is kept
 	// inside the critical section because it marshals the messages.
 	mu sync.Mutex
+
+	// pendingInjects holds user messages queued while a task is running
+	// (e.g. group-chat messages for a busy member); the agent loop drains
+	// them at the start of each turn (AgentLoop.SetInjections). Guarded by mu.
+	pendingInjects []string
 }
 
 func (s *Session) ID() string             { return s.record.SessionID }
@@ -115,6 +120,48 @@ func (s *Session) SetReasoningOverride(thinking, effort string) {
 	s.mu.Unlock()
 }
 
+// QueueUserMessage appends a user message to be injected into the running
+// agent loop at its next turn (e.g. a group-chat message arriving while the
+// session is busy). For an idle session use SessionManager.DeliverToSession,
+// which starts a task instead.
+func (s *Session) QueueUserMessage(text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pendingInjects = append(s.pendingInjects, text)
+}
+
+// DrainUserMessages returns and clears all queued user messages (called by
+// the agent loop at the start of each turn, and once more when a task
+// settles).
+func (s *Session) DrainUserMessages() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.pendingInjects
+	s.pendingInjects = nil
+	return out
+}
+
+// SetGroupMembership records (or clears, when groupID == "") the group this
+// session belongs to in its metadata. The group_chat tool registration and
+// the shared group background are derived from that metadata on each task.
+// The session's parent_id is intentionally left untouched — group
+// membership is metadata, not the session tree.
+func (s *Session) SetGroupMembership(groupID, name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.record.Metadata == nil {
+		s.record.Metadata = map[string]interface{}{}
+	}
+	if groupID == "" {
+		delete(s.record.Metadata, "group_id")
+		delete(s.record.Metadata, "group_name")
+	} else {
+		s.record.Metadata["group_id"] = groupID
+		s.record.Metadata["group_name"] = name
+	}
+	s.store.Update(s.record)
+}
+
 // Prompt runs one agent task and returns the final reply text together with
 // the reasoning_content the model produced for it (may be empty).
 //
@@ -160,7 +207,27 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	ctxState := tools.NewContextState()
 	pb.EnableContextTools(ctxState)
 
-	systemPrompt := pb.BuildSystemPrompt(s.record.WorkDir, "")
+	// Group member: register the group_chat tool and append the shared
+	// group background to the system prompt. Non-group sessions are
+	// completely unchanged. The background is stable per group (it changes
+	// only when the user edits it), so the per-session prompt prefix stays
+	// cache-friendly.
+	var groupBackground string
+	if s.manager != nil {
+		if gsvc := s.manager.Groups(); gsvc != nil {
+			s.mu.Lock()
+			gid, _ := s.record.Metadata["group_id"].(string)
+			s.mu.Unlock()
+			if gid != "" {
+				pb.EnableGroupTool(s.ID(), gsvc.ToolAPIFor(s.ID()))
+				if rec, err := gsvc.Get(gid); err == nil && rec != nil {
+					groupBackground = rec.Background
+				}
+			}
+		}
+	}
+
+	systemPrompt := pb.BuildSystemPrompt(s.record.WorkDir, groupBackground)
 	defs := pb.GetFilteredDefinitions(cfg)
 
 	// Persist the accumulated conversation to the database after every
@@ -199,6 +266,9 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	if len(images) > 0 {
 		loop.SetUserImages(images)
 	}
+	// Mid-task user messages (group-chat messages for a running session) are
+	// drained from the session at the start of every turn.
+	loop.SetInjections(s.DrainUserMessages)
 	// Wire the shared context state (context tools) and the experimental
 	// context-usage notices toggle (session-level, default on).
 	loop.SetContextState(ctxState)
@@ -237,6 +307,17 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	if result.Success {
 		s.updateStatus("completed")
 		slog.Info("session done", "id", s.ID(), "turns", result.Turns, "success", true)
+		// Messages queued between the final turn's drain and task completion
+		// would otherwise wait for the next manual task; dispatch them now as
+		// a fresh task. (Not done after an interrupt: the user may have
+		// cancelled the whole line of work.)
+		if s.manager != nil {
+			if texts := s.DrainUserMessages(); len(texts) > 0 {
+				for _, t := range texts {
+					s.manager.deliverIdle(s.ID(), t)
+				}
+			}
+		}
 		return result.Content, reasoning, nil
 	}
 
@@ -264,7 +345,7 @@ func (m *SessionManager) CompactSession(ctx context.Context, sessionID string) (
 	if err != nil || s == nil {
 		return 0, 0, fmt.Errorf("会话不存在: %s", sessionID)
 	}
-	if s.Status() == "running" {
+	if m.TaskRunning(sessionID) {
 		return 0, 0, fmt.Errorf("会话正在运行中,请等待任务结束后再压缩")
 	}
 	s.mu.Lock()
@@ -293,7 +374,7 @@ func (m *SessionManager) CompactSession(ctx context.Context, sessionID string) (
 	}
 	// Re-check: if a task started while the LLM summary was in flight, do
 	// not clobber its working set.
-	if s.Status() == "running" {
+	if m.TaskRunning(sessionID) {
 		return before, after, fmt.Errorf("压缩完成时会话已开始新任务,未应用(下次压缩生效)")
 	}
 	s.mu.Lock()
@@ -343,11 +424,28 @@ type SessionManager struct {
 	subagentsMu sync.RWMutex
 	subagents   *SubagentService
 
+	// groups is the group-chat service (wired at startup; nil = groups off).
+	groupsMu sync.RWMutex
+	groups   *GroupService
+
+	// deliverHook delivers a user message to an IDLE session (i.e. starts a
+	// task); the runtime wires it to the message hub.
+	deliverMu   sync.RWMutex
+	deliverHook func(sessionID, text string)
+
+	// activeTaskCheck is the authoritative "a task is running in THIS
+	// process right now" check (the runtime wires it to the hub's
+	// in-memory task registry). The persisted status "running" can be
+	// stale after a restart/crash, which would otherwise make deliveries
+	// queue forever into a session that has no live loop.
+	activeCheckMu   sync.RWMutex
+	activeTaskCheck func(sessionID string) bool
+
 	// injections queues settlement notifications for sessions whose task
 	// is still running (a running loop owns its message list; the queued
 	// text is appended once the task settles, see FlushInjections).
-	injMu       sync.Mutex
-	injections  map[string][]string
+	injMu      sync.Mutex
+	injections map[string][]string
 }
 
 // clientFor resolves the model client for a session's model key. Empty or
@@ -600,6 +698,87 @@ func (m *SessionManager) Subagents() *SubagentService {
 	return m.subagents
 }
 
+// --- group chat ---
+
+// SetGroups wires the group-chat service.
+func (m *SessionManager) SetGroups(g *GroupService) {
+	m.groupsMu.Lock()
+	m.groups = g
+	m.groupsMu.Unlock()
+}
+
+// Groups returns the wired group-chat service (nil before wiring).
+func (m *SessionManager) Groups() *GroupService {
+	m.groupsMu.RLock()
+	defer m.groupsMu.RUnlock()
+	return m.groups
+}
+
+// --- mid-task user message delivery ---
+
+// SetDeliverHook installs the hook used to deliver user messages to idle
+// sessions (i.e. start a task); the runtime wires it to the message hub.
+func (m *SessionManager) SetDeliverHook(fn func(sessionID, text string)) {
+	m.deliverMu.Lock()
+	m.deliverHook = fn
+	m.deliverMu.Unlock()
+}
+
+// SetActiveTaskCheck installs the live-task check used to decide whether a
+// session has a running agent loop in this process. The runtime wires it to
+// the hub's task registry; without it the persisted status is the fallback.
+func (m *SessionManager) SetActiveTaskCheck(fn func(sessionID string) bool) {
+	m.activeCheckMu.Lock()
+	m.activeTaskCheck = fn
+	m.activeCheckMu.Unlock()
+}
+
+// TaskRunning reports whether the session has a live task loop in this
+// process. It prefers the wired live check (never stale) and falls back to
+// the persisted status only when no check is wired (tests, non-web runs).
+func (m *SessionManager) TaskRunning(sessionID string) bool {
+	m.activeCheckMu.RLock()
+	fn := m.activeTaskCheck
+	m.activeCheckMu.RUnlock()
+	if fn != nil {
+		return fn(sessionID)
+	}
+	if s, err := m.Get(sessionID); err == nil && s != nil {
+		return s.Status() == "running"
+	}
+	return false
+}
+
+func (m *SessionManager) deliverIdle(sessionID, text string) {
+	m.deliverMu.RLock()
+	fn := m.deliverHook
+	m.deliverMu.RUnlock()
+	if fn == nil {
+		slog.Warn("deliver: no hook wired; message dropped", "session", sessionID)
+		return
+	}
+	fn(sessionID, text)
+}
+
+// DeliverToSession delivers a user message to a session: when the session has
+// a live task loop the message is queued and injected at the agent loop's
+// next turn; otherwise it is dispatched as a normal task via the deliver
+// hook. TaskRunning (not the persisted status) is the queue-vs-start signal,
+// so a stale "running" row after a restart cannot swallow the message.
+func (m *SessionManager) DeliverToSession(sessionID, text string) error {
+	s, err := m.Get(sessionID)
+	if err != nil || s == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	if m.TaskRunning(sessionID) {
+		s.QueueUserMessage(text)
+		slog.Info("user message queued for the next loop turn (session running)", "session", sessionID)
+		return nil
+	}
+	m.deliverIdle(sessionID, text)
+	return nil
+}
+
 // --- settlement notifications ---
 
 // InjectMessage appends a system-generated user message (e.g. a background
@@ -613,7 +792,7 @@ func (m *SessionManager) InjectMessage(sessionID, text string) error {
 	if err != nil || s == nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
-	if s.Status() == "running" {
+	if m.TaskRunning(sessionID) {
 		m.injMu.Lock()
 		m.injections[sessionID] = append(m.injections[sessionID], text)
 		m.injMu.Unlock()
