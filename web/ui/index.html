@@ -169,6 +169,8 @@ details.m-think[open] summary { margin-bottom: 6px; }
 }
 
 /* 工具调用 */
+/* 与 agent 气泡左缘对齐:.msg.ai 行是 32px 头像 + 10px 间距,工具卡同样内缩 */
+.msg.tool { margin-left: calc(var(--msg-avatar) + var(--msg-gap)); }
 .msg.tool .m-card { background: #f8fafc; padding: 8px 12px; font-family: Consolas, monospace; font-size: 12px; }
 .t-name { font-weight: 700; color: #334155; }
 .t-args { color: var(--text3); word-break: break-all; }
@@ -2258,7 +2260,9 @@ async function selectSession(id) {
     // (刷新页面不会中断服务端的任务)。setRunning 已同步按钮/侧边栏/压缩键。
     setRunning(!!s.active);
     if (s.active) {
-      addStatus("⏳ 任务正在执行中 — 刷新前产生的输出不再回显,后续输出将实时显示");
+      // 刷新不中断服务端任务:历史中已持久化的输出(含工具执行前已完成的回复)
+      // 已由 renderHistory 回显;流式中的输出为累积下发,重连后自动补齐。
+      addStatus("⏳ 任务正在执行中 — 刷新前的已完成输出已回显,后续输出将实时显示");
     }
     paintTokens(data.tokens);
     paintCacheHit(0, 0, false); // 切会话:清掉上一个会话的缓存命中显示

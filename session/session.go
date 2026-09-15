@@ -124,10 +124,20 @@ func (s *Session) SetReasoningOverride(thinking, effort string) {
 // agent loop at its next turn (e.g. a group-chat message arriving while the
 // session is busy). For an idle session use SessionManager.DeliverToSession,
 // which starts a task instead.
+//
+// The message is ALSO persisted immediately (write-ahead): a web refresh
+// re-renders only persisted history (SnapshotMessages), so without this a
+// queued message would vanish from the view until the next turn drained it.
+// No duplication: the loop's next persist overwrites the record with its own
+// conversation (task-start snapshot + drained injections, the message once);
+// the settle-drain path likewise appends it once via deliverIdle after the
+// final save.
 func (s *Session) QueueUserMessage(text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pendingInjects = append(s.pendingInjects, text)
+	s.record.Messages = append(s.record.Messages, provider.Message{Role: "user", Content: text})
+	s.store.Update(s.record)
 }
 
 // DrainUserMessages returns and clears all queued user messages (called by

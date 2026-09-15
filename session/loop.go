@@ -570,6 +570,10 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				ReasoningContent: resp.ReasoningContent,
 				ToolCalls:        parsed.toolCalls,
 			})
+			// Persist the reply BEFORE tool execution: a long tool call used
+			// to leave this message unpersisted, so a web refresh mid-tool
+			// lost it from the view (history only re-renders the store).
+			l.persistTurn(turn, messages)
 			messages = l.handleToolCalls(ctx, messages, parsed.toolCalls)
 			// Stall detection: if the model keeps repeating the exact same
 			// tool call, inject a corrective nudge so it changes strategy

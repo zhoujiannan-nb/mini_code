@@ -327,6 +327,38 @@ func TestDeliverStaleRunningStatus(t *testing.T) {
 	}
 }
 
+// TestQueueUserMessagePersistsImmediately: a message queued while the session
+// is running must be visible in persisted history at queue time, so a web
+// refresh (which re-renders only SnapshotMessages) does not lose it.
+func TestQueueUserMessagePersistsImmediately(t *testing.T) {
+	mgr, _, _ := newTestGroupEnv(t)
+	s := mustSession(t, mgr, "worker")
+	mgr.SetActiveTaskCheck(func(string) bool { return true }) // simulate a live task
+
+	if err := mgr.DeliverToSession(s.ID(), "排队消息"); err != nil {
+		t.Fatalf("DeliverToSession: %v", err)
+	}
+	msgs := s.SnapshotMessages()
+	if len(msgs) != 1 || msgs[0].Role != "user" || msgs[0].Content != "排队消息" {
+		t.Fatalf("queued message not persisted at queue time: %+v", msgs)
+	}
+	// Still in the queue for the loop's next-turn drain (exactly one copy).
+	if got := s.DrainUserMessages(); len(got) != 1 || got[0] != "排队消息" {
+		t.Fatalf("drained = %q", got)
+	}
+	// A second queued message must also persist without duplication.
+	if err := mgr.DeliverToSession(s.ID(), "第二条"); err != nil {
+		t.Fatalf("DeliverToSession: %v", err)
+	}
+	msgs = s.SnapshotMessages()
+	if len(msgs) != 2 || msgs[1].Content != "第二条" {
+		t.Fatalf("history = %+v, want the queued message appended once", msgs)
+	}
+	if got := s.DrainUserMessages(); len(got) != 1 || got[0] != "第二条" {
+		t.Fatalf("drained = %q", got)
+	}
+}
+
 // TestGroupToolAPIScope covers the tool API surface: info/members reflect
 // live group data, and everything degrades gracefully after the group is
 // deleted mid-task.
