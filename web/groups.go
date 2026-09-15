@@ -192,6 +192,27 @@ func (s *server) handleGroupsDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"group_id": id, "status": "deleted"})
 }
 
+// handleGroupsClearMessages wipes a group's message log (群设置 → 清空群记录).
+// The group, its members and the shared background remain.
+func (s *server) handleGroupsClearMessages(w http.ResponseWriter, r *http.Request) {
+	gsvc := s.groupService()
+	if gsvc == nil {
+		writeErr(w, http.StatusServiceUnavailable, "群聊功能未启用")
+		return
+	}
+	id := r.PathValue("id")
+	n, err := gsvc.ClearMessages(id)
+	if err != nil {
+		st := http.StatusBadRequest
+		if strings.Contains(err.Error(), "不存在") {
+			st = http.StatusNotFound
+		}
+		writeErr(w, st, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"group_id": id, "cleared": n})
+}
+
 func (s *server) handleGroupsJoin(w http.ResponseWriter, r *http.Request) {
 	gsvc := s.groupService()
 	if gsvc == nil {

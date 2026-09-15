@@ -151,6 +151,17 @@ func (s *GroupStore) DeleteGroup(groupID string) error {
 	return err
 }
 
+// ClearMessages wipes the group's message log (the group record and its
+// members stay untouched). Returns the number of deleted log entries.
+func (s *GroupStore) ClearMessages(groupID string) (int, error) {
+	res, err := s.db.Execute("DELETE FROM group_messages WHERE group_id = ?", groupID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // AppendLog appends one entry to the group channel (append-only).
 func (s *GroupStore) AppendLog(m GroupMessage) error {
 	if m.CreatedAt == "" {

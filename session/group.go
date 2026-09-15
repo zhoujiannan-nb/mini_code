@@ -324,6 +324,27 @@ func (g *GroupService) DeleteGroup(groupID string) error {
 	return g.store.DeleteGroup(groupID)
 }
 
+// ClearMessages is the "delete group records" action from group settings:
+// the group's message log is wiped, a system note marks the clear point, and
+// the group itself (title/background/members) is kept. Running member tasks
+// are unaffected — they simply see a fresh channel afterwards. Member private
+// session histories are not touched (each agent keeps what it saw). Returns
+// the number of deleted entries.
+func (g *GroupService) ClearMessages(groupID string) (int, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if _, err := g.store.GetGroup(groupID); err != nil {
+		return 0, err
+	}
+	n, err := g.store.ClearMessages(groupID)
+	if err != nil {
+		return 0, err
+	}
+	g.store.AppendLog(GroupMessage{GroupID: groupID, Sender: "system",
+		Content: "群记录已清空(成员私聊会话历史不受影响)"})
+	return n, nil
+}
+
 // mentionedMembers returns the members @-mentioned in content: an occurrence
 // of "@" directly followed by a member's in-group name, anywhere in the text.
 // Order follows the member list; each member appears at most once.

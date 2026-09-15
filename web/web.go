@@ -113,6 +113,7 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("POST /api/groups/{id}/background", s.handleGroupsSetBackground)
 	mux.HandleFunc("POST /api/groups/{id}/rename", s.handleGroupsRename)
 	mux.HandleFunc("DELETE /api/groups/{id}", s.handleGroupsDelete)
+	mux.HandleFunc("DELETE /api/groups/{id}/messages", s.handleGroupsClearMessages)
 	mux.HandleFunc("POST /api/groups/{id}/join", s.handleGroupsJoin)
 	mux.HandleFunc("DELETE /api/groups/{id}/members/{sid}", s.handleGroupsLeave)
 	mux.HandleFunc("POST /api/groups/{id}/members/{sid}/rename", s.handleGroupsMemberRename)

@@ -466,3 +466,72 @@ func TestGroupMemberAvatar(t *testing.T) {
 		t.Fatal("SetMemberAvatar accepted non-member")
 	}
 }
+
+// TestClearMessages covers the "delete group records" action (群设置 → 清空群记录):
+// the log is wiped and a system note marks the clear point, while the group
+// record, its members and the shared background are kept. A second clear
+// reports the reduced count, and an unknown group is rejected.
+func TestClearMessages(t *testing.T) {
+	mgr, svc, _ := newTestGroupEnv(t)
+	a := mustSession(t, mgr, "coder")
+	b := mustSession(t, mgr, "reviewer")
+
+	grp, err := svc.Create("清空测试群", "背景: 验证清空功能")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := svc.Join(grp.GroupID, a.ID(), "coder"); err != nil {
+		t.Fatalf("Join a: %v", err)
+	}
+	if _, err := svc.Join(grp.GroupID, b.ID(), "reviewer"); err != nil {
+		t.Fatalf("Join b: %v", err)
+	}
+	if n, err := svc.UserMessage(grp.GroupID, "一条普通消息", ""); err != nil || n != 2 {
+		t.Fatalf("UserMessage: n=%d err=%v", n, err)
+	}
+
+	// There must be some log entries to clear (2 joins + 1 user message).
+	before, err := svc.store.QueryLog(grp.GroupID, 50)
+	if err != nil {
+		t.Fatalf("QueryLog before: %v", err)
+	}
+	if len(before) < 3 {
+		t.Fatalf("expected >=3 log entries before clear, got %d", len(before))
+	}
+
+	n, err := svc.ClearMessages(grp.GroupID)
+	if err != nil {
+		t.Fatalf("ClearMessages: %v", err)
+	}
+	if n != len(before) {
+		t.Fatalf("expected %d cleared, got %d", len(before), n)
+	}
+
+	// After the clear: exactly one entry remains — the system clear note.
+	after, err := svc.store.QueryLog(grp.GroupID, 50)
+	if err != nil {
+		t.Fatalf("QueryLog after: %v", err)
+	}
+	if len(after) != 1 || after[0].Sender != "system" || !strings.Contains(after[0].Content, "已清空") {
+		t.Fatalf("expected a single system clear note, got %+v", after)
+	}
+
+	// The group itself, its members and the background survive the clear.
+	rec, err := svc.store.GetGroup(grp.GroupID)
+	if err != nil {
+		t.Fatalf("GetGroup after clear: %v", err)
+	}
+	if len(rec.Members) != 2 || rec.Background != "背景: 验证清空功能" {
+		t.Fatalf("group record was altered by clear: %+v", rec)
+	}
+
+	// A second clear removes only the leftover clear note.
+	if n2, err := svc.ClearMessages(grp.GroupID); err != nil || n2 != 1 {
+		t.Fatalf("second clear: n=%d err=%v (want 1, nil)", n2, err)
+	}
+
+	// Unknown group is rejected.
+	if _, err := svc.ClearMessages("no-such-group"); err == nil {
+		t.Fatal("ClearMessages accepted an unknown group id")
+	}
+}

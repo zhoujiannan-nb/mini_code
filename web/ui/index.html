@@ -793,6 +793,7 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
     <div style="display:flex;gap:10px;margin-top:16px">
       <button class="send-btn" id="gm-save">创建</button>
       <button class="mode-btn" id="gm-close">取消</button>
+      <button class="g-danger" id="gm-clear" style="margin:0 auto 0" title="只清空群内聊天记录;群、成员、背景都保留,成员私聊会话历史不受影响">清空群记录</button>
       <button class="g-danger" id="gm-delete" style="margin:0 auto 0">删除此群</button>
     </div>
   </div>
@@ -2708,6 +2709,7 @@ function openCreateGroupModal() {
   $("#gm-background").value = "";
   $("#gm-save").textContent = "创建";
   $("#gm-delete").style.display = "none";
+  $("#gm-clear").style.display = "none";
   $("#group-mask").classList.add("open");
   $("#gm-name").focus();
 }
@@ -2721,6 +2723,7 @@ function openGroupSettings(gid) {
     ? state.groupData.group.background : "";
   $("#gm-save").textContent = "保存(改名+背景)";
   $("#gm-delete").style.display = "";
+  $("#gm-clear").style.display = "";
   $("#group-mask").classList.add("open");
 }
 let gmGid = "";
@@ -2737,6 +2740,17 @@ $("#gm-delete").addEventListener("click", async () => {
     if (state.currentGroup === gmGid) exitGroupView();
     await loadGroups(); toast("群已删除", "ok");
   } catch (e) { toast("删除失败:" + e.message, "err"); }
+});
+$("#gm-clear").addEventListener("click", async () => {
+  if (!gmGid) return;
+  if (!confirm("确定清空该群的全部聊天记录?\n群本身、成员和群背景保留,成员的私聊会话历史不受影响。")) return;
+  try {
+    const r = await api("/api/groups/" + gmGid + "/messages", { method: "DELETE" });
+    $("#group-mask").classList.remove("open");
+    await loadGroups();
+    if (state.currentGroup === gmGid) refreshGroupView();
+    toast("已清空群记录(删除 " + (r.cleared || 0) + " 条)", "ok");
+  } catch (e) { toast("清空失败:" + e.message, "err"); }
 });
 $("#gm-save").addEventListener("click", async () => {
   const title = $("#gm-name").value.trim();
