@@ -50,14 +50,20 @@ Usage:
   mini_code              web UI + API (POST /goal, /api/...) — default
   mini_code cmd          interactive CLI channel
   mini_code dingtalk     DingTalk stream channel only (no web)
+  mini_code desktop      web UI in a native desktop window (Windows only)
 
 Flags:
   -agent string     agent role for new sessions (default "build")
-  -p int            listen port, web mode only (default: web_port from config)
+  -p int            listen port, web/desktop mode only (default: web_port from config)
 
 The DingTalk channel starts automatically in any mode when it is
 configured (dingtalk.enabled + app_key + app_secret in ~/.mini_code/config.json),
 and can be started/stopped live from the web settings page.
+
+Desktop mode (Windows): opens the same UI in an embedded WebView2 window
+(no browser needed). Closing the window hides it to the system tray; use
+the tray menu to re-open or fully quit. The page stays reachable at
+http://127.0.0.1:<web_port> for browsers.
 `
 
 // dtController manages the DingTalk channel's lifecycle so it can be
@@ -285,11 +291,19 @@ func main() {
 
 	switch mode {
 	case "", "web", "server":
+		// The desktop build (built with -tags desktop_default) opens the
+		// native window when launched without arguments (double-click).
+		if mode == "" && desktopDefault {
+			runDesktop(rest)
+			return
+		}
 		runWeb(rest)
 	case "cmd", "cli", "interactive", "chat":
 		runInteractive(rest)
 	case "dingtalk":
 		runDingTalk(rest)
+	case "desktop", "gui":
+		runDesktop(rest)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 	default:

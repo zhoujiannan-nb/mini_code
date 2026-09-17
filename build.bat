@@ -23,6 +23,12 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 echo     Success: build\windows\%APP_NAME%.exe
+go build -tags desktop_default -ldflags="-H windowsgui -s -w" -o "build\windows\%APP_NAME%_desktop.exe" .
+if %errorlevel% neq 0 (
+    echo [ERROR] Build %APP_NAME%_desktop.exe failed.
+    exit /b 1
+)
+echo     Success: build\windows\%APP_NAME%_desktop.exe (double-click desktop app)
 
 REM ---------------- linux/amd64 ----------------
 echo [2/3] Building %APP_NAME% (linux/amd64)...
@@ -50,11 +56,10 @@ echo     Success: build\darwin-arm64\%APP_NAME%
 
 echo.
 echo Build completed successfully!
-echo   build\windows\%APP_NAME%.exe
-echo   build\linux\%APP_NAME%
-echo   build\darwin-arm64\%APP_NAME%
-echo.
-echo Run: double-click %APP_NAME%.exe (or ./%APP_NAME% on linux) and open http://127.0.0.1:7500
+echo   build\windows\%APP_NAME%.exe           (web/CLI/DingTalk; open http://127.0.0.1:7500 in browser)
+echo   build\windows\%APP_NAME%_desktop.exe   (desktop app: double-click, native window, no browser)
+echo   build\linux\%APP_NAME%                 (web only)
+echo   build\darwin-arm64\%APP_NAME%          (web only)
 goto :end
 
 :build_windows
@@ -68,6 +73,12 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 echo     Success: build\windows\%APP_NAME%.exe
+go build -tags desktop_default -ldflags="-H windowsgui -s -w" -o "build\windows\%APP_NAME%_desktop.exe" .
+if %errorlevel% neq 0 (
+    echo [ERROR] Build %APP_NAME%_desktop.exe failed.
+    exit /b 1
+)
+echo     Success: build\windows\%APP_NAME%_desktop.exe (double-click desktop app)
 goto :end
 
 :build_linux
