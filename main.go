@@ -47,10 +47,12 @@ import (
 const usage = `Mini Code Agent
 
 Usage:
-  mini_code              web UI + API (POST /goal, /api/...) — default
-  mini_code cmd          interactive CLI channel
-  mini_code dingtalk     DingTalk stream channel only (no web)
-  mini_code desktop      web UI in a native desktop window (Windows only)
+   mini_code              Windows: desktop shell (native window, double-click);
+                          other platforms: web UI + API (default)
+   mini_code web          web UI + API (POST /goal, /api/...) in a browser
+   mini_code cmd          interactive CLI channel
+   mini_code dingtalk     DingTalk stream channel only (no web)
+   mini_code desktop      web UI in a native desktop window (Windows only)
 
 Flags:
   -agent string     agent role for new sessions (default "build")
