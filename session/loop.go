@@ -106,6 +106,14 @@ type AgentLoop struct {
 	// messages, so they reach the model on the next turn without starting a
 	// new prompt. Set via SetInjections before Run.
 	injections func() []string
+
+	// calib overrides the shared token calibrator (token_calib.go) when set
+	// (tests); nil = look up the calibrator for this loop's model + toolset.
+	calib *tokenCalibrator
+	// estBefore is the raw local estimate of the context just sent to the
+	// model; the provider's usage report for that call folds it into the
+	// calibration.
+	estBefore int
 }
 
 // SetUserImages attaches image data URLs to the initial user message (the
@@ -116,6 +124,27 @@ func (l *AgentLoop) SetUserImages(images []string) { l.userImages = images }
 // while the task runs are appended to the conversation at the start of the
 // next turn (and persisted with it). Must be called before Run.
 func (l *AgentLoop) SetInjections(fn func() []string) { l.injections = fn }
+
+// SetTokenCalibrator overrides the shared token calibrator (mainly for
+// tests). Must be called before Run; nil restores the shared per-model
+// calibrator.
+func (l *AgentLoop) SetTokenCalibrator(c *tokenCalibrator) { l.calib = c }
+
+func (l *AgentLoop) calibrator() *tokenCalibrator {
+	if l.calib != nil {
+		return l.calib
+	}
+	return calibratorFor(l.client.ModelName(), l.toolDefinitions)
+}
+
+// calibratedCount estimates the local token count of messages and maps it to
+// the provider's token scale via the calibrator. It also remembers the raw
+// estimate (estBefore) so the usage report of the LLM call this count
+// precedes can fold it into the fit.
+func (l *AgentLoop) calibratedCount(messages []provider.Message) int {
+	l.estBefore = util.CountMessagesTokens(messages)
+	return l.calibrator().apply(l.estBefore)
+}
 
 // SetGate installs the runtime permission gate consulted before every tool
 // call (role permissions + cautious-mode approval). Must be called before
@@ -352,13 +381,13 @@ func scanUsageNoticeMarkers(messages []provider.Message) (has70, has50 bool) {
 // has not been announced yet in the current context. It is cache-friendly: the
 // notice is only ever appended to the end (extending the prefix), never
 // inserted or removed from the middle, so the KV prefix cache is preserved.
-// Returns the (possibly extended) messages.
-func (l *AgentLoop) maybeInjectUsageReminder(messages []provider.Message) []provider.Message {
+// Returns the (possibly extended) messages. tokens is the calibrated
+// (provider-scale) estimate already computed by the caller.
+func (l *AgentLoop) maybeInjectUsageReminder(messages []provider.Message, tokens int) []provider.Message {
 	maxInput := l.client.GetMaxInput()
 	if maxInput <= 0 {
 		return messages
 	}
-	tokens := util.CountMessagesTokens(messages)
 	pct := float64(tokens) / float64(maxInput)
 	// Current stage: 2 (>=70%), 1 (>=50%), 0 (below 50%).
 	current := 0
@@ -447,12 +476,23 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				}
 			}
 		}
+		// Estimate the context about to be sent: first locally (raw cl100k
+		// proxy), then calibrated onto the provider's own token scale (see
+		// tokenCalibrator). The calibrated count drives the auto-compaction
+		// threshold and the usage notices; the raw estimate is remembered so
+		// the provider's usage report for this very call can refine the
+		// calibration afterwards.
+		tokens := l.calibratedCount(messages)
 		// Auto compaction (threshold-based), skipped entirely when the toggle is off.
 		if l.compactionOn {
 			var err error
-			messages, err = l.compactor.CheckAndCompress(ctx, messages, l.client.GetMaxInput())
+			var compacted bool
+			messages, compacted, err = l.compactor.CheckAndCompressCount(ctx, messages, l.client.GetMaxInput(), tokens)
 			if err != nil {
 				slog.Warn("compaction failed", "err", err)
+			}
+			if compacted {
+				tokens = l.calibratedCount(messages) // context was rewritten: re-estimate
 			}
 			if ctx.Err() != nil {
 				slog.Info("agent loop interrupted after compaction", "turn", turn)
@@ -462,7 +502,6 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		// Publish the current context usage (reflects the context about to be
 		// sent to the model) to the context tools and to the UI token bar.
 		if l.ctxState != nil || l.onContextUsage != nil {
-			tokens := util.CountMessagesTokens(messages)
 			if l.ctxState != nil {
 				l.ctxState.SetUsage(tokens, l.client.GetMaxInput())
 			}
@@ -475,7 +514,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		// the tail. Cache-friendly: it only extends the prefix, never edits the
 		// middle, so the KV prefix cache is preserved.
 		if l.contextRemindersOn {
-			messages = l.maybeInjectUsageReminder(messages)
+			messages = l.maybeInjectUsageReminder(messages, tokens)
 		}
 		l.persistTurn(turn, messages)
 
@@ -511,9 +550,15 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		if u := resp.Usage; u != nil {
 			cached := u.CachedTokens()
 			reported := u.CacheReported()
-			slog.Info("llm usage", "turn", turn, "prompt_tokens", u.PromptTokens, "cached_tokens", cached, "cache_reported", reported, "completion_tokens", u.CompletionTokens, "reasoning_tokens", u.ReasoningTokens)
+			slog.Info("llm usage", "turn", turn, "prompt_tokens", u.PromptTokens, "est_tokens", l.estBefore, "cached_tokens", cached, "cache_reported", reported, "completion_tokens", u.CompletionTokens, "reasoning_tokens", u.ReasoningTokens)
 			if l.onUsage != nil {
 				l.onUsage(u.PromptTokens, cached, u.CompletionTokens, reported)
+			}
+			// Fold this call's (estimate, reported prompt_tokens) pair into
+			// the calibration so the next turn's threshold decisions are
+			// judged on the provider's token scale.
+			if u.PromptTokens > 0 {
+				l.calibrator().update(l.estBefore, u.PromptTokens)
 			}
 		}
 

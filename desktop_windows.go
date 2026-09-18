@@ -34,6 +34,7 @@ import (
 	"github.com/getlantern/systray"
 	"github.com/jchv/go-webview2"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 
 	"github.com/user/mini_code/config"
 	"github.com/user/mini_code/web"
@@ -48,14 +49,15 @@ const (
 )
 
 var (
-	user32               = windows.NewLazySystemDLL("user32.dll")
-	procMessageBoxW      = user32.NewProc("MessageBoxW")
-	procShowWindow       = user32.NewProc("ShowWindow")
-	procSetForegroundWin = user32.NewProc("SetForegroundWindow")
-	procIsIconic         = user32.NewProc("IsIconic")
-	procCreateMutexW     = windows.NewLazySystemDLL("kernel32.dll").NewProc("CreateMutexW")
-	procLoadImageW       = user32.NewProc("LoadImageW")
-	procSetClassLongPtrW = user32.NewProc("SetClassLongPtrW")
+	user32                  = windows.NewLazySystemDLL("user32.dll")
+	procMessageBoxW         = user32.NewProc("MessageBoxW")
+	procShowWindow          = user32.NewProc("ShowWindow")
+	procSetForegroundWin    = user32.NewProc("SetForegroundWindow")
+	procIsIconic            = user32.NewProc("IsIconic")
+	procCreateMutexW        = windows.NewLazySystemDLL("kernel32.dll").NewProc("CreateMutexW")
+	procLoadImageW          = user32.NewProc("LoadImageW")
+	procSetClassLongPtrW    = user32.NewProc("SetClassLongPtrW")
+	procDwmSetWindowAttr    = windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
 )
 
 const (
@@ -64,6 +66,8 @@ const (
 	swRestore    = 9
 	gclpHIcon    = -14
 	gclpHIconSm  = -34
+	dwmwaDark20  = 20 // DWMWA_USE_IMMERSIVE_DARK_MODE: Win10 1809+ / Win11
+	dwmwaDark19  = 19 // 早期 Win10 构建的旧属性号
 )
 
 // desktopFatal reports a startup problem to the user. Console builds also
@@ -216,6 +220,37 @@ func applyWindowIcon(hwnd uintptr) uintptr {
 	procSetClassLongPtrW.Call(hwnd, uintptr(big), icon)
 	procSetClassLongPtrW.Call(hwnd, uintptr(small), icon)
 	return icon
+}
+
+// setDarkTitleBar 用 DWM 沉浸式深色模式把原生标题栏切到深色/浅色,
+// 与页面内主题(浅色/深色/随系统)保持一致,避免深色界面顶着白条标题栏。
+func setDarkTitleBar(hwnd uintptr, dark bool) {
+	if hwnd == 0 {
+		return
+	}
+	v := uintptr(0)
+	if dark {
+		v = 1
+	}
+	if r, _, _ := procDwmSetWindowAttr.Call(hwnd, dwmwaDark20, uintptr(unsafe.Pointer(&v)), 4); r != 0 {
+		_, _, _ = procDwmSetWindowAttr.Call(hwnd, dwmwaDark19, uintptr(unsafe.Pointer(&v)), 4)
+	}
+}
+
+// osPrefersDark 读 Windows"个人化 → 选择模式"(应用深色),
+// 用于窗口刚创建、页面还没加载时的标题栏初始颜色(页面加载后 JS 会再校正)。
+func osPrefersDark() bool {
+	k, err := registry.OpenKey(
+		registry.CURRENT_USER,
+		`Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`,
+		registry.QUERY_VALUE,
+	)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	v, _, err := k.GetIntegerValue("AppsUseLightTheme")
+	return err == nil && v == 0
 }
 
 // desktopApp owns the desktop-mode window lifecycle.
@@ -443,6 +478,12 @@ func runDesktop(args []string) {
 		app.setCurrent(wv)
 		hwnd := wvPtr(wv)
 		slog.Info("desktop: window opened", "hwnd", hwnd, "class_icon", applyWindowIcon(hwnd))
+		// 标题栏初始颜色按系统深浅色给,页面加载后 JS 会按实际主题再校正
+		setDarkTitleBar(hwnd, osPrefersDark())
+		// 页面切换主题(浅色/深色/随系统)时回调,同步标题栏;浏览器端无此函数
+		_ = wv.Bind("mcSetDarkTitleBar", func(dark bool) {
+			wv.Dispatch(func() { setDarkTitleBar(wvPtr(wv), dark) })
+		})
 		wv.Navigate(app.url)
 		wv.Run() // returns when the user closes the window
 		app.setCurrent(nil)

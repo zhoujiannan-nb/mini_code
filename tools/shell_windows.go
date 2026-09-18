@@ -34,6 +34,13 @@ func applyRawCmdLine(cmd *exec.Cmd, command string) {
 		prog = "cmd"
 	}
 	cmd.SysProcAttr.CmdLine = prog + " /C " + command
+	// HideWindow (CREATE_NO_WINDOW): the desktop build (-H windowsgui) has
+	// no console of its own, so without this flag Windows allocates a fresh
+	// VISIBLE console for every cmd.exe the exec tool starts — a black
+	// window that pops up on the screen for the command's whole lifetime
+	// (most noticeable on long commands like web searches). Output is
+	// captured through pipes, so nothing is lost by hiding the window.
+	cmd.SysProcAttr.HideWindow = true
 }
 
 // attachProcessTree places the started process (and every descendant it

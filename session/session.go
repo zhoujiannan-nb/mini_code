@@ -243,12 +243,20 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	// Persist the accumulated conversation to the database after every
 	// completed turn, so an interrupted task can be resumed from the last
 	// good state (interrupt recovery).
+	//
+	// The slice is COPIED before storing: the loop keeps appending to its
+	// working slice after this call returns, without holding s.mu. Aliasing
+	// it into the record would let the loop's next append race with
+	// QueueUserMessage's append (both writing the same backing slot) and
+	// with the json.Marshal inside store.Update — torn DB rows, clobbered
+	// queued messages, and a restored history that no longer matches what
+	// was actually requested (cold prefix cache).
 	turnHook := func(turn int, messages []provider.Message) {
 		if len(messages) == 0 {
 			return
 		}
 		s.mu.Lock()
-		s.record.Messages = messages
+		s.record.Messages = append([]provider.Message(nil), messages...)
 		s.store.Update(s.record)
 		s.mu.Unlock()
 	}
@@ -296,10 +304,12 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		return "", "", err
 	}
 
-	// Always save accumulated messages, even on interrupt.
+	// Always save accumulated messages, even on interrupt. Copy for the
+	// same reason as the turn hook above: the record must never alias a
+	// slice owned by (a possibly still-running) loop.
 	if len(result.Messages) > 0 {
 		s.mu.Lock()
-		s.record.Messages = result.Messages
+		s.record.Messages = append([]provider.Message(nil), result.Messages...)
 		s.store.Update(s.record)
 		s.mu.Unlock()
 	}

@@ -298,6 +298,11 @@ func (mc *ModelClient) modelName() string {
 	return ""
 }
 
+// ModelName returns the provider's model identifier. The token scale
+// (tokenizer + template/schema overhead) is model-specific, so the token
+// calibrator keys on it.
+func (mc *ModelClient) ModelName() string { return mc.modelName() }
+
 // isNonRetryableStatus reports whether an HTTP status is a deterministic
 // failure that retrying cannot fix: bad credentials (401), insufficient
 // balance (402), or a malformed request (422). These fail fast so we do not

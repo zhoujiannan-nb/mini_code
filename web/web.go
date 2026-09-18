@@ -153,6 +153,9 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// UI 是内嵌的单文件:升级 exe 后必须拿到新页面,
+	// 否则 WebView2/浏览器可能继续用本地缓存的旧 UI(桌面端缓存是持久化的)
+	w.Header().Set("Cache-Control", "no-cache")
 	w.Write([]byte(page))
 }
 

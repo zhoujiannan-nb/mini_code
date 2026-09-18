@@ -72,18 +72,27 @@ func (c *ContextCompactor) ShouldCompact(currentTokens, maxInput int) bool {
 }
 
 func (c *ContextCompactor) CheckAndCompress(ctx context.Context, messages []provider.Message, maxInput int) ([]provider.Message, error) {
-	currentTokens := util.CountMessagesTokens(messages)
+	msgs, _, err := c.CheckAndCompressCount(ctx, messages, maxInput, util.CountMessagesTokens(messages))
+	return msgs, err
+}
+
+// CheckAndCompressCount is CheckAndCompress with a caller-supplied token
+// count for the threshold decision. The loop passes its calibrated estimate
+// (see tokenCalibrator) so the auto-compaction threshold is judged on the
+// provider's token scale instead of the raw cl100k proxy. compacted reports
+// whether the context was actually rewritten (the caller re-estimates then).
+func (c *ContextCompactor) CheckAndCompressCount(ctx context.Context, messages []provider.Message, maxInput, currentTokens int) ([]provider.Message, bool, error) {
 	if !c.ShouldCompact(currentTokens, maxInput) {
-		return messages, nil
+		return messages, false, nil
 	}
 	slog.Info("triggering context compaction", "tokens", currentTokens, "max", maxInput)
 	newMessages, err := c.Compact(ctx, messages)
 	if err != nil {
-		return messages, nil
+		return messages, false, err
 	}
 	newTokens := util.CountMessagesTokens(newMessages)
 	slog.Info("compaction complete", "before", currentTokens, "after", newTokens)
-	return newMessages, nil
+	return newMessages, true, nil
 }
 
 func (c *ContextCompactor) Compact(ctx context.Context, messages []provider.Message) ([]provider.Message, error) {
