@@ -1124,7 +1124,8 @@ const state = {
   running: false,     // 当前会话是否有活动任务(以服务端为准)
    pendingTask: null,  // 等待 session_created 的 task_id
     recentCreated: [], // 最近收到的 session_created 事件队列(竞态兜底:事件比 POST 响应早到时,响应回来按 task_id 精确匹配接管)
-  sending: false,     // 消息已发出、会话还没创建完(此期间不要用轮询重置 running)
+  sending: false,     // 消息已发出、task_started 还没回来(此期间不要用轮询重置 running)
+  sendingTimer: null, // sending 的兜底超时(SSE 断连漏掉 task_started 时靠它收敛)
   live: null,         // 当前流式输出块(DOM)
   pending: null,      // 等待模型首 token 的转圈块(DOM)
   ctxWindow: 0,       // 当前会话模型的上下文窗口(token)
@@ -1594,6 +1595,10 @@ function scheduleListRefresh(delay) {
 // - 页面刷新 / SSE 漏掉终结事件后,停止按钮与运行指示都能自动恢复或收敛;
 // - 会话刚发出消息、session_created 还没回来时(sending),不做降级。
 function syncRunning() {
+  // 刚发送、task_started 还没回来:保持 running,防止在途的旧会话列表
+  // (active 尚未置位)把 running 误降级——否则停止按钮会闪灭、
+  // 状态迟迟变不成"运行中"。
+  if (state.sending && state.running) return;
   if (!state.current) {
     // 消息刚发出、会话还没创建完:保持 running,等 session_created 接管
     if (!state.sending && !state.pendingTask) setRunning(false);
@@ -1871,6 +1876,10 @@ function liveRemove() {
  }
 
 /* ---------------- 发送 / 停止 ---------------- */
+function clearSending() {
+  state.sending = false;
+  clearTimeout(state.sendingTimer);
+}
 function setRunning(on) {
   state.running = on;
   // btn-stop is hidden by CSS (display:none), so showing it requires an
@@ -1902,7 +1911,11 @@ async function send() {
   renderImgPreviews();
   pendingStart(); // 等待模型首 token 的转圈提示(vllm 吞长上下文时可见)
   setRunning(true);
-  state.sending = true; // 新会话场景:session_created 回来前,轮询不得重置 running
+  // sending 保持到该任务的 task_started/error 事件回来:期间在途的旧列表
+  // (active 尚未置位)不得把 running 降级。SSE 断连时靠 8s 兜底超时收敛。
+  state.sending = true;
+  clearTimeout(state.sendingTimer);
+  state.sendingTimer = setTimeout(() => { state.sending = false; }, 8000);
   try {
     const body = { content: text };
     if (images.length) body.images = images;
@@ -1931,9 +1944,8 @@ async function send() {
     }
   } catch (e) {
     addError("发送失败:" + e.message);
+    clearSending();
     setRunning(false);
-  } finally {
-    state.sending = false;
   }
 }
 async function stop() {
@@ -1961,14 +1973,13 @@ async function stop() {
    paintTokens(0);
    compactBtnState();
    paintMode();
-   paintModel(); // 会话已创建:按钮提示从"新会话"切到"当前会话模型"
-   paintBackBtn("");
-   loadChildren();
-   // hub 在 session_created 之后才登记任务(注册 + 写 status=running 都是
-   // 立即的),稍等再拉一次列表,侧边栏就能尽快显示"执行中"。
-   // 不立即拉:此刻 active 可能还没置位,会误闪一下停止按钮。
-   setTimeout(loadSessions, 1000);
- }
+    paintModel(); // 会话已创建:按钮提示从"新会话"切到"当前会话模型"
+    paintBackBtn("");
+    loadChildren();
+    // hub 在 session_created 之后登记任务,登记完成会推 task_started 事件;
+    // onEvent 的 status 分支收到后立刻 loadSessions,侧边栏"执行中"随即
+    // 点亮——不再靠猜 1s 延迟(那段时间里 active 还没置位,立即拉会误闪)。
+  }
  function onEvent(m) {
   // 审批事件跨会话(子代理/其他会话的危险操作也要用户拍板),先于会话过滤处理
   if (m.kind === "approval_request") {
@@ -2044,11 +2055,19 @@ async function stop() {
       pendingRemove();
       liveRemove();
       addError(m.content);
+      clearSending(); // 任务没起来:结束 sending 保护期,允许降级
       setRunning(false);
       updateTokenUsage();
       loadSessions();
       break;
     case "status":
+      if (m.status === "task_started") {
+        // 服务端已把任务登记进活动表(ActiveTask=true):立即拉列表,
+        // 侧边栏"执行中"即时点亮,不再等 30s 轮询;同时结束 sending 保护期。
+        clearSending();
+        loadSessions();
+        break;
+      }
       if (m.status === "interrupted") {
         pendingRemove();
         liveRemove();
@@ -2755,6 +2774,7 @@ async function updateTokenUsage() {
   function resetToNew() {
     state.current = null;
     state.pendingTask = null;
+    clearSending();
     saveSession(null);
   // setRunning(false) 已负责按钮与侧边栏刷新,这里不再重复渲染
   setRunning(false); // 新会话没有运行中的任务;旧会话仍在跑的,点回它可恢复

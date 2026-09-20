@@ -150,6 +150,13 @@ func (a *appState) shutdown() {
 	})
 }
 
+// isClosed reports whether the shutdown sequence has started.
+func (a *appState) isClosed() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.closed
+}
+
 func (a *appState) handleShow() {
 	a.mu.Lock()
 	w := a.current
@@ -301,6 +308,10 @@ func Run(args []string, d Deps) {
 
 	// --- window loop: create -> run; close hides, open re-creates ---
 	for {
+		// 退出优先:退出流程一旦开始,迟到的"打开窗口"请求不再复活窗口。
+		if app.isClosed() {
+			break
+		}
 		w, err := platform.NewWindow(WindowOptions{Title: "Mini Code", Width: 1280, Height: 800})
 		if err != nil {
 			platform.Fatal(err.Error())
@@ -316,15 +327,19 @@ func Run(args []string, d Deps) {
 		w.Navigate(app.url)
 		w.Run() // returns when the user closes the window
 		app.setCurrent(nil)
-		if app.closed {
+		// 退出优先:shutdown 会 Destroy 当前窗口使 Run 返回,此处必须结束循环。
+		if app.isClosed() {
 			break
 		}
 		slog.Info("desktop: window closed, continuing in tray")
 		select {
 		case <-app.openCh:
+			// 打开窗口:回循环顶部重建窗口(顶部有退出检查)
 			continue
 		case <-app.closeCh:
-			break
+			// 退出:回循环顶部由 isClosed 检查结束循环。
+			// (Go 的 break 只跳出 select 不跳出 for——直接 break 会掉回
+			//  NewWindow 把窗口再开一次,表现为"点退出反而打开了窗口")
 		}
 	}
 

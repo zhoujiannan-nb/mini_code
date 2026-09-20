@@ -266,6 +266,121 @@ func withKey(m Message, key string) Message {
 	return m
 }
 
+// TestHubTaskStartedEvent verifies the lifecycle event the web UI relies on
+// to light up the "running" indicator right after a send (instead of waiting
+// for its 30s poll):
+//  1. task_started is emitted only AFTER the task is registered — at the
+//     moment the event is observed ActiveTask must already be true, so the
+//     UI's immediate list refresh sees the session as active;
+//  2. messages of one session are serialized: a second message's
+//     task_started arrives only after the first task has finished
+//     (task_done in between), never while the first task still runs.
+func TestHubTaskStartedEvent(t *testing.T) {
+	// Buffered so the non-blocking send below can never race or leak.
+	release := make(chan struct{}, 1)
+	env := newTestEnv(t, func(n int64, _ []byte) (string, *mockToolCall) {
+		switch n {
+		case 1: // bootstrap task (creates the session we continue below)
+			return "created", nil
+		case 2: // first task of the scenario: hold the LLM call open
+			<-release
+			return "first done", nil
+		default:
+			return "second done", nil
+		}
+	})
+	out := env.hub.Subscribe("task-started-check")
+	defer env.hub.Unsubscribe("task-started-check")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, id, err := env.hub.RunOnce(ctx, NewUserMessage("test", "bootstrap"))
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+
+	first := NewUserMessage("test", "first")
+	first.SessionID = id
+	env.hub.Submit(first)
+
+	// 1) task_started for the first task must be observed while the task is
+	//    already registered (ActiveTask=true).
+	deadline := time.After(10 * time.Second)
+	for started := false; !started; {
+		select {
+		case m := <-out:
+			if m.Kind == KindStatus && m.Status == StatusTaskStarted && m.TaskID == first.ID {
+				if !env.hub.ActiveTask(id) {
+					t.Fatal("task_started observed but ActiveTask is already false")
+				}
+				started = true
+			}
+		case <-deadline:
+			t.Fatal("no task_started observed for the first task")
+		}
+	}
+
+	// 2) Second message to the same session while the first task is still
+	//    running: its task_started must not arrive yet (per-session lock).
+	second := NewUserMessage("test", "second")
+	second.SessionID = id
+	env.hub.Submit(second)
+
+	quiet := time.After(300 * time.Millisecond)
+drain:
+	for {
+		select {
+		case m := <-out:
+			if m.Kind == KindStatus && m.Status == StatusTaskStarted && m.TaskID == second.ID {
+				t.Fatal("second task started before the first one finished")
+			}
+		case <-quiet:
+			break drain
+		}
+	}
+
+	// Release the first LLM call: expect task_done(first) BEFORE
+	// task_started(second).
+	select {
+	case release <- struct{}{}:
+	default:
+	}
+	sawDone := false
+	deadline = time.After(15 * time.Second)
+	for secondStarted := false; !secondStarted; {
+		select {
+		case m := <-out:
+			switch {
+			case m.Kind == KindStatus && m.Status == StatusTaskDone && m.TaskID == first.ID:
+				sawDone = true
+			case m.Kind == KindStatus && m.Status == StatusTaskStarted && m.TaskID == second.ID:
+				if !sawDone {
+					t.Fatal("second task_started arrived before the first task_done")
+				}
+				if !env.hub.ActiveTask(id) {
+					t.Fatal("second task_started observed but ActiveTask is false")
+				}
+				secondStarted = true
+			}
+		case <-deadline:
+			t.Fatal("no task_started for the second task after the first finished")
+		}
+	}
+
+	// Let the second task settle so the environment tears down cleanly.
+	deadline = time.After(15 * time.Second)
+	for {
+		select {
+		case m := <-out:
+			if m.Kind == KindStatus && m.Status == StatusTaskDone && m.TaskID == second.ID {
+				return
+			}
+		case <-deadline:
+			t.Fatal("second task did not finish")
+		}
+	}
+}
+
 // TestHubActiveTaskAndCancel verifies the live task registry that the web
 // UI relies on after a page refresh: a running task is reported active,
 // CancelTask reports it and interrupts it, and both queries come back

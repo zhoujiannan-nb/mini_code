@@ -51,6 +51,7 @@ const (
 // Status payloads for Kind == KindStatus (carried in Status).
 const (
 	StatusSessionCreated = "session_created"
+	StatusTaskStarted    = "task_started"
 	StatusTaskDone       = "task_done"
 	StatusInterrupted    = "interrupted"
 )
@@ -575,6 +576,12 @@ func (h *Hub) process(m Message) {
 	// unregister bracket the only running task of this session.
 	h.registerTask(sess.ID(), cancel)
 	defer h.unregisterTask(sess.ID())
+	// The task is now in the registry (ActiveTask=true). Emit a lifecycle
+	// event so the web UI refreshes the session list right away and lights
+	// up the "running" indicator, instead of waiting for its periodic poll.
+	// Ordered after session_created (FIFO per subscriber channel), so the
+	// UI can adopt the new session first and then see it active.
+	h.emit(NewStatusMessage(taskID, sess.ID(), m.Channel, StatusTaskStarted, sess.ChannelKey()))
 
 	slog.Info("task started", "task", taskID, "session", sess.ID(), "channel", m.Channel)
 	content, reasoning, err := sess.Prompt(taskCtx, m.Content, m.Images, h.maxTurns)
