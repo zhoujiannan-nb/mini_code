@@ -496,21 +496,30 @@ func (h *Hub) RunOnce(ctx context.Context, m Message) (string, string, error) {
 	}
 }
 
-// emit fans a produced message out to every subscriber (non-blocking; slow
-// consumers get dropped messages plus a warning).
+// emit fans a produced message out to every subscriber (non-blocking).
+// A subscriber whose queue is full is stalled (its SSE writer is blocked);
+// dropping single messages would lose the terminal events the UI needs to
+// converge, so the slow subscriber is unsubscribed instead: its connection
+// closes, the client's EventSource reconnects, and a fresh stream is
+// established (streaming deltas are cumulative, so the view self-heals).
 func (h *Hub) emit(m Message) {
 	m.ensureID()
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = time.Now()
 	}
+	var slow []string
 	h.subsMu.RLock()
-	defer h.subsMu.RUnlock()
 	for name, ch := range h.subs {
 		select {
 		case ch <- m:
 		default:
-			slog.Warn("subscriber queue full, message dropped", "subscriber", name, "kind", m.Kind)
+			slow = append(slow, name)
 		}
+	}
+	h.subsMu.RUnlock()
+	for _, name := range slow {
+		slog.Warn("subscriber queue full, dropping slow client", "subscriber", name, "kind", m.Kind)
+		h.Unsubscribe(name)
 	}
 }
 

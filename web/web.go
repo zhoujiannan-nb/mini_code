@@ -752,7 +752,10 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-keepalive.C:
-			fmt.Fprint(w, ": ping\n\n")
+			// 心跳用真实 SSE 事件(而非注释行):前端 EventSource 能收到,
+			// 据此做存活检测——TCP 半开(收不到任何数据)时 UI 会在
+			// 75s 内主动重连,而不是让转圈一直挂着
+			fmt.Fprint(w, "event: ping\ndata: heartbeat\n\n")
 			fl.Flush()
 		case m, ok := <-out:
 			if !ok {

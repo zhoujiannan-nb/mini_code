@@ -223,7 +223,26 @@ aside {
   font-size: 13px; color: var(--text3);
 }
 .chat-head .title { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.messages { flex: 1; overflow-y: auto; padding: 20px 24px; scroll-behavior: smooth; }
+.messages-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.messages { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; scroll-behavior: smooth; }
+/* 回到底部按钮:用户上滚回看历史时出现,点一下回到最新 */
+.jump-bottom {
+  position: absolute; right: 28px; bottom: 14px; z-index: 5;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 2px 10px var(--sh1); color: var(--text2);
+  cursor: pointer; font-size: 15px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .15s, color .15s, border-color .15s;
+}
+.jump-bottom:hover { transform: translateY(-2px); color: var(--green-t); border-color: var(--green); }
+/* 历史懒加载:消息区顶部的"加载更早消息"按钮 */
+.load-older { display: flex; justify-content: center; margin: 0 0 14px; }
+.load-older button {
+  background: transparent; border: 1px dashed var(--border2); color: var(--text3);
+  border-radius: 999px; padding: 5px 16px; font-size: 12px; cursor: pointer;
+}
+.load-older button:hover { color: var(--text); border-color: var(--text3); }
 
 /* 消息:统一的纵向卡片排布 */
 .msg { margin-bottom: 12px; }
@@ -892,11 +911,14 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
       <div class="tasks-panel" id="tasks-panel"></div>
       <div class="tasks-panel" id="group-panel"></div>
     </div>
-    <div class="messages" id="messages">
-      <div class="placeholder" id="placeholder">
-        <div class="big">💬</div>
-        <p>发送消息开始对话,新会话将自动创建</p>
+    <div class="messages-wrap">
+      <div class="messages" id="messages">
+        <div class="placeholder" id="placeholder">
+          <div class="big">💬</div>
+          <p>发送消息开始对话,新会话将自动创建</p>
+        </div>
       </div>
+      <button class="jump-bottom" id="jump-bottom" title="回到底部" hidden>⬇</button>
     </div>
     <div class="composer">
       <div class="fs-picker" id="fs-picker" hidden>
@@ -1607,6 +1629,9 @@ function syncRunning() {
   const s = state.sessions.find(x => x.session_id === state.current);
   if (!s) return;
   setRunning(!!s.active);
+  // 兜底:SSE 漏掉终结事件(assistant/task_done)时,服务端已收敛为空闲、
+  // 本地也没有流式块——把残留的"等待模型响应"转圈清掉(最多等一次 30s 轮询)
+  if (!s.active && !state.sending && !state.live) pendingRemove();
 }
 function renderSessions() {
   const list = $("#sess-list");
@@ -1687,9 +1712,44 @@ async function renameSession(id, currentTitle) {
 
 /* ---------------- 消息区 ---------------- */
 function messagesEl() { return $("#messages"); }
-function scrollBottom() {
+/* 智能滚动:用户手动上滚优先于自动输出——只有用户当前"在底部附近"才跟随新内容,
+   上滚回看历史时不抢视角(配合右下角"回到底部"按钮手动回底)。
+   force = 忽略检查强制跳转(切会话/初始视图);
+   stick = 追加内容"前"是否在底部的快照(追加后内容高度已变,再测不准)。 */
+function nearBottom(threshold) {
   const m = messagesEl();
-  m.scrollTop = m.scrollHeight;
+  return m.scrollHeight - m.scrollTop - m.clientHeight < (threshold == null ? 90 : threshold);
+}
+function scrollBottom(force, stick) {
+  const m = messagesEl();
+  if (!force && !(stick === undefined ? nearBottom() : stick)) return;
+  if (force) {
+    // 瞬时跳转:旧的 scroll-behavior:smooth 下打开会话会从顶部"动画"一路拉到底
+    const prev = m.style.scrollBehavior;
+    m.style.scrollBehavior = "auto";
+    m.scrollTop = m.scrollHeight;
+    m.style.scrollBehavior = prev;
+  } else {
+    m.scrollTop = m.scrollHeight;
+  }
+  updateJumpBtn();
+}
+/* 历史懒加载:打开会话只渲染最近 HIST_PAGE 条(避免全量渲染卡顿),
+   更早的缓存到 histFull,用户上滚点"加载更早"时按批补齐。 */
+const HIST_PAGE = 10;
+let histFull = [];        // 当前会话完整消息列表(已滤掉 system)
+let histStart = 0;        // 已渲染第一条在 histFull 中的下标
+let histRendering = false; // 批量渲染历史期间,addCard 不触发智能滚动
+/* 回到底部按钮:不在底部且内容溢出时显示 */
+let jbRaf = 0;
+function updateJumpBtn() {
+  if (jbRaf) return;
+  jbRaf = requestAnimationFrame(() => {
+    jbRaf = 0;
+    const m = messagesEl(), jb = $("#jump-bottom");
+    if (!m || !jb) return;
+    jb.hidden = nearBottom(90) || (m.scrollHeight - m.clientHeight <= 40);
+  });
 }
 function hidePlaceholder() {
   const p = $("#placeholder");
@@ -1703,12 +1763,14 @@ function showPlaceholder() {
 }
 function addCard(cls, inner) {
   hidePlaceholder();
+  const stick = !histRendering && nearBottom(); // 追加内容前快照(追加后高度已变)
   const m = messagesEl();
   const div = document.createElement("div");
   div.className = "msg " + cls;
   div.innerHTML = "<div class=\"m-card\">" + inner + "</div>";
   m.appendChild(div);
-  scrollBottom();
+  if (stick) scrollBottom(false, true);
+  else updateJumpBtn();
   return div;
 }
 function addUser(text, images) {
@@ -1761,33 +1823,76 @@ function markToolPendingDone(result) {
   const cards = messagesEl().querySelectorAll(".msg.tool .m-card");
   if (cards.length === 0) return;
   const last = cards[cards.length - 1];
+  const stick = nearBottom();
   const ind = last.querySelector(".live-ind");
   if (ind) ind.remove();
   last.insertAdjacentHTML("beforeend", '<div class="t-res">✓ ' + esc(String(result).slice(0, 300)) + "</div>");
-  scrollBottom();
+  scrollBottom(false, stick);
 }
 function renderHistory(messages) {
   const m = messagesEl();
   m.innerHTML = "";
-  for (const msg of messages || []) {
-    if (msg.role === "system") continue;
-    if (msg.role === "user") {
-      // 多模态用户消息:文字取 text part(不再显示"📷 [图片]"占位),图片单独渲染
-      const imgs = contentImages(msg);
-      const txt = Array.isArray(msg.content)
-        ? msg.content.filter(p => p.type === "text").map(p => p.text || "").join("\n")
-        : contentText(msg);
-      addUser(txt, imgs);
-    } else if (msg.role === "assistant") {
-      addAssistant(contentText(msg), msg.reasoning_content);
-      for (const tc of msg.tool_calls || []) {
-        addToolLine(tc.function && tc.function.name, tc.function && tc.function.arguments, "(历史)");
-      }
-    } else if (msg.role === "tool") {
-      addToolLine(msg.name || "tool", "", contentText(msg));
-    }
+  histFull = (messages || []).filter(msg => msg.role !== "system");
+  // 只渲染最近 HIST_PAGE 条,更早的由 loadOlder 按需补齐
+  histStart = Math.max(0, histFull.length - HIST_PAGE);
+  if (histFull.length === 0) { showPlaceholder(); updateJumpBtn(); return; }
+  if (histStart > 0) {
+    // "加载更早消息"按钮放在最近消息的上方,点击按批补更早内容
+    const box = document.createElement("div");
+    box.className = "load-older";
+    box.innerHTML = '<button>⬆ 加载更早 ' + histStart + ' 条消息</button>';
+    box.querySelector("button").addEventListener("click", loadOlder);
+    m.appendChild(box);
   }
-  if ((messages || []).length === 0) showPlaceholder();
+  histRendering = true;
+  try {
+    for (let i = histStart; i < histFull.length; i++) appendHistoryMsg(histFull[i]);
+  } finally { histRendering = false; }
+  scrollBottom(true); // 初始视图直接落在最新一条,不做平滑动画
+}
+function appendHistoryMsg(msg) {
+  if (msg.role === "user") {
+    // 多模态用户消息:文字取 text part(不再显示"📷 [图片]"占位),图片单独渲染
+    const imgs = contentImages(msg);
+    const txt = Array.isArray(msg.content)
+      ? msg.content.filter(p => p.type === "text").map(p => p.text || "").join("\n")
+      : contentText(msg);
+    addUser(txt, imgs);
+  } else if (msg.role === "assistant") {
+    addAssistant(contentText(msg), msg.reasoning_content);
+    for (const tc of msg.tool_calls || []) {
+      addToolLine(tc.function && tc.function.name, tc.function && tc.function.arguments, "(历史)");
+    }
+  } else if (msg.role === "tool") {
+    addToolLine(msg.name || "tool", "", contentText(msg));
+  }
+}
+// 按批补更早消息:先追加到容器尾部,再整体移到"加载更早"按钮之后/首批已渲染卡片之前(保时序),
+// 最后恢复滚动位置——视口保持用户原来看到的地方,不会跳到最上面
+function loadOlder() {
+  const m = messagesEl();
+  const box = m.querySelector(".load-older");
+  if (!box || histStart === 0) return;
+  const anchor = box.nextSibling; // 当前已渲染的第一条卡片,新批次要插到它前面
+  const next = Math.max(0, histStart - HIST_PAGE);
+  const count = histStart - next;
+  const prevH = m.scrollHeight, prevTop = m.scrollTop;
+  histRendering = true;
+  try {
+    for (let i = next; i < histStart; i++) appendHistoryMsg(histFull[i]);
+  } finally { histRendering = false; }
+  // 刚追加的 count 条卡片在容器尾部,整体移到 anchor 之前
+  const nodes = [];
+  for (let n = m.lastChild, k = 0; n && k < count; n = n.previousSibling, k++) nodes.unshift(n);
+  for (const n of nodes) m.insertBefore(n, anchor);
+  histStart = next;
+  if (next === 0) box.remove();
+  else box.querySelector("button").textContent = "⬆ 加载更早 " + next + " 条消息";
+  const prev = m.style.scrollBehavior;
+  m.style.scrollBehavior = "auto";
+  m.scrollTop = m.scrollHeight - prevH + prevTop;
+  m.style.scrollBehavior = prev;
+  updateJumpBtn();
 }
 
 /* ---------------- 等待首 token(转圈) ---------------- */
@@ -1803,13 +1908,14 @@ function pendingStart() {
     '<span>等待模型响应…(大上下文首次推理可能较慢)</span>' +
     '<span class="pending-sec"></span>' +
     "</div>";
+  const stick = nearBottom();
   messagesEl().appendChild(div);
   div._timer = setInterval(() => {
     const el = div.querySelector(".pending-sec");
     if (el) el.textContent = Math.floor((Date.now() - t0) / 1000) + "s";
   }, 1000);
   state.pending = div;
-  scrollBottom();
+  scrollBottom(false, stick);
 }
 function pendingRemove() {
   if (state.pending) {
@@ -1821,6 +1927,10 @@ function pendingRemove() {
 
 /* ---------------- 流式输出块 ---------------- */
 function liveStart() {
+  // 自愈:state.live 指向的节点若已被移除(容器重建/切视图没清引用),
+  // 按不存在处理——否则此后每个 delta 都会在这里早退,转圈永不消除、
+  // 流式块不再出现(模型在输出但聊天区一直"等待模型响应")。
+  if (state.live && !state.live.isConnected) state.live = null;
   if (state.live) return;
   pendingRemove(); // 收到首个 token,撤掉转圈
   hidePlaceholder();
@@ -1834,12 +1944,14 @@ function liveStart() {
     '<div class="m-text" style="display:none"></div>' +
     "</div>";
   div.insertAdjacentHTML("afterbegin", agentAvatarBox("c-avatar"));
+  const stick = nearBottom();
   m.appendChild(div);
   state.live = div;
-  scrollBottom();
+  scrollBottom(false, stick);
 }
- function liveUpdate(kind, text) {
-   if (!state.live) return;
+  function liveUpdate(kind, text) {
+    if (!state.live) return;
+    const stick = nearBottom(); // 用户在底部才跟随;上滚回看时不打扰(每帧只测一次)
    if (kind === "reasoning") {
      const t = state.live.querySelector(".m-think-live");
      t._raw = text;
@@ -1855,10 +1967,10 @@ function liveStart() {
      b.style.display = "block";
      // 正文开始后,指示器从"思考中"切到"生成中"
      const ind = state.live.querySelector(".live-ind");
-     if (ind && !b._labelled) { ind.lastChild.textContent = "生成中…"; b._labelled = true; }
-   }
-   scrollBottom();
- }
+      if (ind && !b._labelled) { ind.lastChild.textContent = "生成中…"; b._labelled = true; }
+    }
+    scrollBottom(false, stick);
+  }
 function liveRemove() {
   if (state.live) { state.live.remove(); state.live = null; }
 }
@@ -2083,12 +2195,29 @@ async function stop() {
       break;
   }
 }
+let esRef = null;           // 当前 EventSource(看门狗重连时先关旧连接)
+let sseAliveAt = 0;         // 最近一次收到服务端数据/心跳的时间
+let sseWatchdog = null;
 function connectEvents() {
-  const es = new EventSource("/api/events");
+  if (esRef) { try { esRef.close(); } catch (e) {} esRef = null; }
+  const es = esRef = new EventSource("/api/events");
+  sseAliveAt = Date.now();
   es.onmessage = (e) => {
+    sseAliveAt = Date.now();
     try { onEvent(JSON.parse(e.data)); } catch (err) {}
   };
+  // 服务端每 30s 发一个 event:ping 心跳(真实 SSE 事件,不是注释):
+  // 即使 TCP 半开(收不到任何数据),看门狗也能在 75s 内发现并强制重连
+  es.addEventListener("ping", () => { sseAliveAt = Date.now(); });
   es.onerror = () => { /* EventSource 自动重连 */ };
+  if (!sseWatchdog) {
+    sseWatchdog = setInterval(() => {
+      if (Date.now() - sseAliveAt > 75000) {
+        toast("事件流无响应,已自动重连", "");
+        connectEvents();
+      }
+    }, 10000);
+  }
 }
 
 /* ---------------- 权限模式切换 ---------------- */
@@ -2781,6 +2910,7 @@ async function updateTokenUsage() {
   liveRemove();
   pendingRemove();
   messagesEl().innerHTML = "";
+  histFull = []; histStart = 0; // 懒加载状态随容器一起清空
   showPlaceholder();
   setChatTitle("新会话", "发送后自动创建会话");
   state.mode = "full"; // 新会话默认完整模式
@@ -2809,6 +2939,10 @@ async function selectSession(id) {
     if (state.current !== id) return; // 等待期间又切走了,丢弃过期响应
     const s = data.session;
     setChatTitle(s.title || "会话 " + id.slice(0, 8), (s.work_dir || "").slice(0, 60));
+    // await 期间该会话若在运行,delta 可能已建好流式块/转圈——renderHistory
+    // 会清空整个容器使引用悬空,重绘前再清一次(流式是累积下发,下个 delta 自动补齐)
+    liveRemove();
+    pendingRemove();
     renderHistory(data.messages);
     // 权限模式:以服务端为准(谨慎/完整)
     state.mode = s.mode === "cautious" ? "cautious" : "full";
@@ -3118,6 +3252,10 @@ async function openGroup(id) {
   // 群视图:恢复发送按钮
   $("#btn-send").style.display = "";
   $("#btn-stop").style.display = "none";
+  // 清空容器前先摘掉会话视图的流式块/转圈,否则 state.live/state.pending
+  // 悬空,回到会话后 delta 全部早退(转圈永不消除)
+  liveRemove();
+  pendingRemove();
   messagesEl().innerHTML = "";
   await refreshGroupView();
   clearInterval(state.groupTimer);
@@ -3155,6 +3293,7 @@ function renderGroupMessages(msgs) {
   if (key === groupMsgKey) return;
   groupMsgKey = key;
   const m = messagesEl();
+  const wasNear = nearBottom(); // 清空前快照(清空后 scrollTop=0,再测就没意义了)
   m.innerHTML = "";
   if (!msgs.length) {
     m.innerHTML = '<div class="placeholder"><div class="big">👥</div><p>群里还没有消息,发送一条开始协作<br>(成员完成任务/发消息都会出现在这里)</p></div>';
@@ -3190,7 +3329,9 @@ function renderGroupMessages(msgs) {
     }
     m.appendChild(div);
   }
-  scrollBottom();
+  // 群视图每次整体重画:用户重画前在底部才贴底,上滚回看时保持位置
+  scrollBottom(wasNear, wasNear);
+  updateJumpBtn();
 }
 
 // 成员面板:头像 + 运行状态 + 查看/换头像/改名/移出 + 添加成员
@@ -3584,6 +3725,10 @@ applySendMode();
   });
   $("#btn-send").addEventListener("click", send);
   $("#btn-stop").addEventListener("click", stop);
+  // 智能滚动:用户滚动时刷新"回到底部"按钮显隐;点按钮回到最新
+  messagesEl().addEventListener("scroll", updateJumpBtn);
+  $("#jump-bottom").addEventListener("click", () => scrollBottom(true));
+  updateJumpBtn();
   $("#input").addEventListener("keydown", (e) => {
     if (fsState.open) {
       if (e.key === "ArrowDown") { e.preventDefault(); fsMove(1); return; }
