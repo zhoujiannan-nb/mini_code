@@ -47,10 +47,12 @@ import (
 const usage = `Mini Code Agent
 
 Usage:
-  mini_code              web UI + API (POST /goal, /api/...) — default
-  mini_code cmd          interactive CLI channel
-  mini_code dingtalk     DingTalk stream channel only (no web)
-  mini_code desktop      web UI in a native desktop window (Windows only)
+   mini_code              Windows: desktop shell (native window, double-click);
+                          other platforms: web UI + API (default)
+   mini_code web          web UI + API (POST /goal, /api/...) in a browser
+   mini_code cmd          interactive CLI channel
+   mini_code dingtalk     DingTalk stream channel only (no web)
+   mini_code desktop      web UI in a native desktop window (Windows/macOS)
 
 Flags:
   -agent string     agent role for new sessions (default "build")
@@ -60,10 +62,10 @@ The DingTalk channel starts automatically in any mode when it is
 configured (dingtalk.enabled + app_key + app_secret in ~/.mini_code/config.json),
 and can be started/stopped live from the web settings page.
 
-Desktop mode (Windows): opens the same UI in an embedded WebView2 window
-(no browser needed). Closing the window hides it to the system tray; use
-the tray menu to re-open or fully quit. The page stays reachable at
-http://127.0.0.1:<web_port> for browsers.
+Desktop mode (Windows/macOS): opens the same UI in an embedded native window
+(WebView2 / WKWebView, no browser needed). Closing the window hides it to the
+system tray; use the tray menu to re-open or fully quit. The page stays
+reachable at http://127.0.0.1:<web_port> for browsers.
 `
 
 // dtController manages the DingTalk channel's lifecycle so it can be
