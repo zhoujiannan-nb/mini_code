@@ -40,7 +40,9 @@ if %errorlevel% neq 0 (
 echo     Success: build\linux\%APP_NAME%
 
 REM ---------------- darwin/arm64 (Apple Silicon) ----------------
-echo [3/3] Building %APP_NAME% (darwin/arm64)...
+REM Cross-built web-only binary (no cgo). The macOS desktop shell (WKWebView)
+REM must be built on a Mac:  sh build_darwin.sh
+echo [3/3] Building %APP_NAME% (darwin/arm64, web only)...
 set GOOS=darwin
 set GOARCH=arm64
 if not exist "build\darwin-arm64" mkdir "build\darwin-arm64"
@@ -55,7 +57,7 @@ echo.
 echo Build completed successfully!
 echo   build\windows\%APP_NAME%.exe           (desktop shell: double-click, native WebView2 window, no browser)
 echo   build\linux\%APP_NAME%                 (web only)
-echo   build\darwin-arm64\%APP_NAME%          (web only)
+echo   build\darwin-arm64\%APP_NAME%          (web only; mac desktop shell: sh build_darwin.sh ON a Mac)
 goto :end
 
 :build_windows
