@@ -1,14 +1,11 @@
 package config
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 )
 
 // ErrNoChange is returned by a config save when nothing changed.
@@ -169,18 +166,33 @@ func (m ModelConfig) Compaction() bool {
 	return m.CompactionEnabled == nil || *m.CompactionEnabled
 }
 
-// DefaultModelConfig returns sensible defaults for model configuration.
+// DefaultModelConfig returns the model configuration used for the
+// auto-generated first-run config (and as fallback defaults for fields
+// missing in existing configs). The api_key is a placeholder the user
+// must replace with a real key.
 func DefaultModelConfig() ModelConfig {
 	return ModelConfig{
-		Provider:      "vllm",
-		BaseURL:       "http://demo/proxy/model/qwen_code/",
-		APIKey:        "demo",
+		Name:          "Qwen3.8-27B-FP82",
+		Provider:      "sglang",
+		BaseURL:       "http://ubasic.yuanshi-sec.com:5708/proxy/model/qwen3.82",
+		APIKey:        "这里填你的key",
+		ModelName:     "Qwen3.8-27B-FP8",
 		MaxTokens:     31072,
-		ContextWindow: 131072,
-		Temperature:   0.6,
-		TopP:          0.9,
+		ContextWindow: 200000,
+		Temperature:   1,
+		TopP:          0.95,
 		ReserveTokens: 4096,
-		ModelName:     "qwen3.6-35b-fp8",
+	}
+}
+
+// DefaultAppConfig returns the config auto-generated on first run: the
+// default model (with a placeholder API key) and the standard web port.
+func DefaultAppConfig() *AppConfig {
+	m := DefaultModelConfig()
+	return &AppConfig{
+		Models:       []ModelConfig{m},
+		DefaultModel: m.Name,
+		WebPort:      7500,
 	}
 }
 
@@ -219,7 +231,9 @@ func SaveConfig(cfg *AppConfig, path string) error {
 }
 
 // LoadConfig loads the config from ~/.mini_code/config.json.
-// If the file does not exist, it triggers the first-run interactive setup.
+// If the file does not exist (first run), it generates a default config
+// automatically — no interactive setup. The user only needs to fill in
+// the API key afterwards (edit the file or use the web settings page).
 func LoadConfig() (*AppConfig, error) {
 	path, err := GetConfigPath()
 	if err != nil {
@@ -229,20 +243,13 @@ func LoadConfig() (*AppConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("Welcome to mini_code! This is your first run.")
-			fmt.Println("Let's set up your configuration.")
-			fmt.Println("Press Enter to accept the default value shown in [brackets].")
-			fmt.Println(strings.Repeat("-", 50))
-
-			cfg, err := FirstRunSetup()
-			if err != nil {
-				return nil, err
-			}
+			cfg := DefaultAppConfig()
 			if err := SaveConfig(cfg, path); err != nil {
 				return nil, err
 			}
-			fmt.Println(strings.Repeat("-", 50))
-			fmt.Printf("Config saved to %s\n", path)
+			fmt.Println("Welcome to mini_code! This is your first run.")
+			fmt.Printf("Generated a default config at %s\n", path)
+			fmt.Println("Next step: replace the placeholder api_key (\"这里填你的key\") with your own key.")
 			return cfg, nil
 		}
 		return nil, fmt.Errorf("cannot read config: %w", err)
@@ -324,109 +331,4 @@ func applyDefaults(cfg *AppConfig) {
 	}
 }
 
-// ask reads a line from stdin with a prompt, returning defaultValue if empty.
-func ask(reader *bufio.Reader, prompt string, defaultValue string) string {
-	fmt.Printf("%s [%s]: ", prompt, defaultValue)
-	line, _ := reader.ReadString('\n')
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return defaultValue
-	}
-	return line
-}
 
-// askInt reads an integer from stdin with a prompt, returning defaultValue if empty.
-func askInt(reader *bufio.Reader, prompt string, defaultValue int) (int, error) {
-	s := ask(reader, prompt, strconv.Itoa(defaultValue))
-	v, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, fmt.Errorf("invalid number for %s: %s", prompt, s)
-	}
-	return v, nil
-}
-
-// askFloat reads a float from stdin with a prompt, returning defaultValue if empty.
-func askFloat(reader *bufio.Reader, prompt string, defaultValue float64) (float64, error) {
-	s := ask(reader, prompt, strconv.FormatFloat(defaultValue, 'f', 1, 64))
-	v, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid number for %s: %s", prompt, s)
-	}
-	return v, nil
-}
-
-// FirstRunSetup interactively asks the user for each configuration field.
-func FirstRunSetup() (*AppConfig, error) {
-	reader := bufio.NewReader(os.Stdin)
-	d := DefaultModelConfig()
-	cfg := &AppConfig{}
-
-	// --- Model (first run configures a single model; more can be added
-	// later from the web settings page) ---
-	fmt.Println("\n--- Model Configuration ---")
-
-	m := ModelConfig{}
-	m.Provider = ask(reader, "  Provider (vllm/ollama/openai)", d.Provider)
-
-	m.BaseURL = ask(reader, "  Base URL", d.BaseURL)
-
-	m.APIKey = ask(reader, "  API Key", d.APIKey)
-
-	m.ModelName = ask(reader, "  Model Name", d.ModelName)
-
-	maxTokens, err := askInt(reader, "  Max Tokens", d.MaxTokens)
-	if err != nil {
-		return nil, err
-	}
-	m.MaxTokens = maxTokens
-
-	ctxWindow, err := askInt(reader, "  Context Window", d.ContextWindow)
-	if err != nil {
-		return nil, err
-	}
-	m.ContextWindow = ctxWindow
-
-	temp, err := askFloat(reader, "  Temperature", d.Temperature)
-	if err != nil {
-		return nil, err
-	}
-	m.Temperature = temp
-
-	topP, err := askFloat(reader, "  Top P", d.TopP)
-	if err != nil {
-		return nil, err
-	}
-	m.TopP = topP
-
-	reserveTokens, err := askInt(reader, "  Reserve Tokens", d.ReserveTokens)
-	if err != nil {
-		return nil, err
-	}
-	m.ReserveTokens = reserveTokens
-
-	m.Name = m.ModelName
-	cfg.Models = []ModelConfig{m}
-	cfg.DefaultModel = m.Name
-
-	// --- Web ---
-	fmt.Println("\n--- Web Configuration ---")
-	webPort, err := askInt(reader, "  Web Port", 7500)
-	if err != nil {
-		return nil, err
-	}
-	cfg.WebPort = webPort
-
-	// --- DingTalk (optional) ---
-	fmt.Println("\n--- DingTalk Channel (optional) ---")
-	enable := ask(reader, "  Enable DingTalk channel (y/n)", "n")
-	if strings.EqualFold(enable, "y") || strings.EqualFold(enable, "yes") {
-		cfg.DingTalk.Enabled = true
-		cfg.DingTalk.AppKey = ask(reader, "  AppKey (ClientID)", "")
-		cfg.DingTalk.AppSecret = ask(reader, "  AppSecret (ClientSecret)", "")
-		if cfg.DingTalk.AppKey == "" || cfg.DingTalk.AppSecret == "" {
-			return nil, fmt.Errorf("DingTalk channel enabled but AppKey/AppSecret is empty")
-		}
-	}
-
-	return cfg, nil
-}
