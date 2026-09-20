@@ -1814,6 +1814,84 @@ private:
             objc::msg_send<void>(invocation, "invoke"_sel);
           }),
           "v@:@@@@");
+      // JS alert(): WebKit's default (delegate-less) implementation does not
+      // show a panel reliably on recent macOS versions, so implement it.
+      class_addMethod(
+          cls,
+          "webView:runJavaScriptAlertPanelWithMessage:initializedByFrame:completionHandler:"_sel,
+          (IMP)(+[](id, SEL, id, id message, id, id completion_handler) {
+            auto alert = objc::msg_send<id>("NSAlert"_cls, "alert"_sel);
+            if (message)
+              objc::msg_send<void>(alert, "setMessageText:"_sel, message);
+            auto response =
+                objc::msg_send<NSModalResponse>(alert, "runModal"_sel);
+            auto result = (NSUInteger)response;
+            auto sig = objc::msg_send<id>(
+                "NSMethodSignature"_cls, "signatureWithObjCTypes:"_sel, "v@?I");
+            auto invocation = objc::msg_send<id>(
+                "NSInvocation"_cls, "invocationWithMethodSignature:"_sel, sig);
+            objc::msg_send<void>(invocation, "setTarget:"_sel,
+                                 completion_handler);
+            objc::msg_send<void>(invocation, "setArgument:atIndex:"_sel,
+                                 &result, 1);
+            objc::msg_send<void>(invocation, "invoke"_sel);
+          }),
+          "v@:@@@@");
+      class_addMethod(
+          cls,
+          "webView:runJavaScriptConfirmPanelWithMessage:initializedByFrame:completionHandler:"_sel,
+          (IMP)(+[](id, SEL, id, id message, id, id completion_handler) {
+            auto alert = objc::msg_send<id>("NSAlert"_cls, "alert"_sel);
+            if (message)
+              objc::msg_send<void>(alert, "setMessageText:"_sel, message);
+            objc::msg_send<void>(alert, "addButtonWithTitle:"_sel, "OK"_str);
+            objc::msg_send<void>(alert, "addButtonWithTitle:"_sel,
+                                 "Cancel"_str);
+            auto response =
+                objc::msg_send<NSModalResponse>(alert, "runModal"_sel);
+            auto result = (NSUInteger)(response == NSModalResponseOK ? 1000
+                                                                     : 1001);
+            auto sig = objc::msg_send<id>(
+                "NSMethodSignature"_cls, "signatureWithObjCTypes:"_sel, "v@?I");
+            auto invocation = objc::msg_send<id>(
+                "NSInvocation"_cls, "invocationWithMethodSignature:"_sel, sig);
+            objc::msg_send<void>(invocation, "setTarget:"_sel,
+                                 completion_handler);
+            objc::msg_send<void>(invocation, "setArgument:atIndex:"_sel,
+                                 &result, 1);
+            objc::msg_send<void>(invocation, "invoke"_sel);
+          }),
+          "v@:@@@@");
+      class_addMethod(
+          cls,
+          "webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initializedByFrame:completionHandler:"_sel,
+          (IMP)(+[](id, SEL, id, id prompt, id default_text, id,
+                    id completion_handler) {
+            auto alert = objc::msg_send<id>("NSAlert"_cls, "alert"_sel);
+            if (prompt)
+              objc::msg_send<void>(alert, "setMessageText:"_sel, prompt);
+            auto field = objc::msg_send<id>(
+                "NSTextField"_cls, "textFieldWithString:"_sel, default_text);
+            objc::msg_send<void>(alert, "setAccessoryView:"_sel, field);
+            objc::msg_send<void>(alert, "addButtonWithTitle:"_sel, "OK"_str);
+            objc::msg_send<void>(alert, "addButtonWithTitle:"_sel,
+                                 "Cancel"_str);
+            auto response =
+                objc::msg_send<NSModalResponse>(alert, "runModal"_sel);
+            id result = response == NSModalResponseOK
+                           ? objc::msg_send<id>(field, "stringValue"_sel)
+                           : nullptr;
+            auto sig = objc::msg_send<id>(
+                "NSMethodSignature"_cls, "signatureWithObjCTypes:"_sel, "v@?@");
+            auto invocation = objc::msg_send<id>(
+                "NSInvocation"_cls, "invocationWithMethodSignature:"_sel, sig);
+            objc::msg_send<void>(invocation, "setTarget:"_sel,
+                                 completion_handler);
+            objc::msg_send<void>(invocation, "setArgument:atIndex:"_sel,
+                                 &result, 1);
+            objc::msg_send<void>(invocation, "invoke"_sel);
+          }),
+          "v@:@@@@@");
       objc_registerClassPair(cls);
     }
     return objc::msg_send<id>((id)cls, "new"_sel);
@@ -1956,7 +2034,12 @@ private:
     objc::msg_send<id>(preferences, "setValue:forKey:"_sel, yes_value,
                        "DOMPasteAllowed"_str);
 
-    auto ui_delegate = objc::autoreleased(create_webkit_ui_delegate());
+    // NOTE: WKWebView's uiDelegate is a weak reference. The delegate must be
+    // kept alive for the process lifetime; an autoreleased delegate is
+    // released when the enclosing autorelease pool drains, leaving the
+    // webview without a UIDelegate (file pickers and JS alerts stop working).
+    auto ui_delegate =
+        objc::msg_send<id>(create_webkit_ui_delegate(), "retain"_sel);
     objc::msg_send<void>(m_webview, "initWithFrame:configuration:"_sel,
                          CGRectMake(0, 0, 0, 0), config);
     objc::msg_send<void>(m_webview, "setUIDelegate:"_sel, ui_delegate);

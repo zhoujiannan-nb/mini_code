@@ -204,6 +204,30 @@ func (s *SessionStore) ListChildren(parentID string) ([]SessionSummary, error) {
 	return out, nil
 }
 
+// ChildIDsByParent returns, in a single query, the sub-agent sessions of
+// every parent (parent_id -> child session IDs). The list API uses it to
+// aggregate sub-agent "running" state onto parent sessions: a sub-agent runs
+// in its own child session, so when the parent's own turn has finished but
+// background sub-agents are still alive, the parent must read as running.
+func (s *SessionStore) ChildIDsByParent() (map[string][]string, error) {
+	rows, err := s.db.FetchAll(
+		`SELECT parent_id, session_id FROM sessions
+		 WHERE parent_id IS NOT NULL AND parent_id != ''`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]string)
+	for _, row := range rows {
+		pid := fmt.Sprint(row["parent_id"])
+		if pid == "" || pid == "<nil>" {
+			continue
+		}
+		out[pid] = append(out[pid], fmt.Sprint(row["session_id"]))
+	}
+	return out, nil
+}
+
 func summaryFromRow(row map[string]interface{}) SessionSummary {
 	return SessionSummary{
 		SessionID:    fmt.Sprint(row["session_id"]),

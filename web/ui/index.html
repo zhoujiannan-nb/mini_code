@@ -225,24 +225,9 @@ aside {
 .chat-head .title { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .messages-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .messages { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; scroll-behavior: smooth; }
-/* 回到底部按钮:用户上滚回看历史时出现,点一下回到最新 */
-.jump-bottom {
-  position: absolute; right: 28px; bottom: 14px; z-index: 5;
-  width: 34px; height: 34px; border-radius: 50%;
-  background: var(--surface); border: 1px solid var(--border);
-  box-shadow: 0 2px 10px var(--sh1); color: var(--text2);
-  cursor: pointer; font-size: 15px; line-height: 1;
-  display: flex; align-items: center; justify-content: center;
-  transition: transform .15s, color .15s, border-color .15s;
-}
-.jump-bottom:hover { transform: translateY(-2px); color: var(--green-t); border-color: var(--green); }
-/* 历史懒加载:消息区顶部的"加载更早消息"按钮 */
-.load-older { display: flex; justify-content: center; margin: 0 0 14px; }
-.load-older button {
-  background: transparent; border: 1px dashed var(--border2); color: var(--text3);
-  border-radius: 999px; padding: 5px 16px; font-size: 12px; cursor: pointer;
-}
-.load-older button:hover { color: var(--text); border-color: var(--text3); }
+/* 历史懒加载:消息区顶部的隐形锚点——用户上滑接近顶部时自动按批补齐
+   更早消息(见 scroll 监听),无需手动点击 */
+.load-older { height: 0; margin: 0; }
 
 /* 消息:统一的纵向卡片排布 */
 .msg { margin-bottom: 12px; }
@@ -918,7 +903,6 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
           <p>发送消息开始对话,新会话将自动创建</p>
         </div>
       </div>
-      <button class="jump-bottom" id="jump-bottom" title="回到底部" hidden>⬇</button>
     </div>
     <div class="composer">
       <div class="fs-picker" id="fs-picker" hidden>
@@ -1713,7 +1697,7 @@ async function renameSession(id, currentTitle) {
 /* ---------------- 消息区 ---------------- */
 function messagesEl() { return $("#messages"); }
 /* 智能滚动:用户手动上滚优先于自动输出——只有用户当前"在底部附近"才跟随新内容,
-   上滚回看历史时不抢视角(配合右下角"回到底部"按钮手动回底)。
+   上滚回看历史时不抢视角(切换会话/初始视图时强制回底)。
    force = 忽略检查强制跳转(切会话/初始视图);
    stick = 追加内容"前"是否在底部的快照(追加后内容高度已变,再测不准)。 */
 function nearBottom(threshold) {
@@ -1732,25 +1716,13 @@ function scrollBottom(force, stick) {
   } else {
     m.scrollTop = m.scrollHeight;
   }
-  updateJumpBtn();
 }
 /* 历史懒加载:打开会话只渲染最近 HIST_PAGE 条(避免全量渲染卡顿),
-   更早的缓存到 histFull,用户上滚点"加载更早"时按批补齐。 */
+   更早的缓存到 histFull,用户上滑接近顶部时由 loadOlder 自动按批补齐。 */
 const HIST_PAGE = 10;
 let histFull = [];        // 当前会话完整消息列表(已滤掉 system)
 let histStart = 0;        // 已渲染第一条在 histFull 中的下标
 let histRendering = false; // 批量渲染历史期间,addCard 不触发智能滚动
-/* 回到底部按钮:不在底部且内容溢出时显示 */
-let jbRaf = 0;
-function updateJumpBtn() {
-  if (jbRaf) return;
-  jbRaf = requestAnimationFrame(() => {
-    jbRaf = 0;
-    const m = messagesEl(), jb = $("#jump-bottom");
-    if (!m || !jb) return;
-    jb.hidden = nearBottom(90) || (m.scrollHeight - m.clientHeight <= 40);
-  });
-}
 function hidePlaceholder() {
   const p = $("#placeholder");
   if (p) p.style.display = "none";
@@ -1770,7 +1742,6 @@ function addCard(cls, inner) {
   div.innerHTML = "<div class=\"m-card\">" + inner + "</div>";
   m.appendChild(div);
   if (stick) scrollBottom(false, true);
-  else updateJumpBtn();
   return div;
 }
 function addUser(text, images) {
@@ -1833,15 +1804,13 @@ function renderHistory(messages) {
   const m = messagesEl();
   m.innerHTML = "";
   histFull = (messages || []).filter(msg => msg.role !== "system");
-  // 只渲染最近 HIST_PAGE 条,更早的由 loadOlder 按需补齐
+  // 只渲染最近 HIST_PAGE 条,更早的缓存起来,上滑接近顶部时由 loadOlder 自动补齐
   histStart = Math.max(0, histFull.length - HIST_PAGE);
-  if (histFull.length === 0) { showPlaceholder(); updateJumpBtn(); return; }
+  if (histFull.length === 0) { showPlaceholder(); return; }
   if (histStart > 0) {
-    // "加载更早消息"按钮放在最近消息的上方,点击按批补更早内容
+    // 顶部隐形锚点:scroll 监听发现上滑接近顶部时自动按批补更早内容
     const box = document.createElement("div");
     box.className = "load-older";
-    box.innerHTML = '<button>⬆ 加载更早 ' + histStart + ' 条消息</button>';
-    box.querySelector("button").addEventListener("click", loadOlder);
     m.appendChild(box);
   }
   histRendering = true;
@@ -1867,8 +1836,10 @@ function appendHistoryMsg(msg) {
     addToolLine(msg.name || "tool", "", contentText(msg));
   }
 }
-// 按批补更早消息:先追加到容器尾部,再整体移到"加载更早"按钮之后/首批已渲染卡片之前(保时序),
-// 最后恢复滚动位置——视口保持用户原来看到的地方,不会跳到最上面
+// 按批补更早消息:先追加到容器尾部,再整体移到首批已渲染卡片之前(保时序),
+// 最后恢复滚动位置——视口保持用户原来看到的地方,不会跳到最上面。
+// 由 scroll 监听在用户上滑接近顶部时自动触发;若恢复位置后仍接近顶部且还有
+// 更早消息,后续 scroll 事件会继续补下一批,直到全部加载完。
 function loadOlder() {
   const m = messagesEl();
   const box = m.querySelector(".load-older");
@@ -1887,12 +1858,10 @@ function loadOlder() {
   for (const n of nodes) m.insertBefore(n, anchor);
   histStart = next;
   if (next === 0) box.remove();
-  else box.querySelector("button").textContent = "⬆ 加载更早 " + next + " 条消息";
   const prev = m.style.scrollBehavior;
   m.style.scrollBehavior = "auto";
   m.scrollTop = m.scrollHeight - prevH + prevTop;
   m.style.scrollBehavior = prev;
-  updateJumpBtn();
 }
 
 /* ---------------- 等待首 token(转圈) ---------------- */
@@ -3331,7 +3300,6 @@ function renderGroupMessages(msgs) {
   }
   // 群视图每次整体重画:用户重画前在底部才贴底,上滚回看时保持位置
   scrollBottom(wasNear, wasNear);
-  updateJumpBtn();
 }
 
 // 成员面板:头像 + 运行状态 + 查看/换头像/改名/移出 + 添加成员
@@ -3725,10 +3693,10 @@ applySendMode();
   });
   $("#btn-send").addEventListener("click", send);
   $("#btn-stop").addEventListener("click", stop);
-  // 智能滚动:用户滚动时刷新"回到底部"按钮显隐;点按钮回到最新
-  messagesEl().addEventListener("scroll", updateJumpBtn);
-  $("#jump-bottom").addEventListener("click", () => scrollBottom(true));
-  updateJumpBtn();
+  // 历史懒加载:上滑接近消息区顶部(120px 内)自动按批补齐更早消息
+  messagesEl().addEventListener("scroll", () => {
+    if (messagesEl().scrollTop < 120 && histStart > 0) loadOlder();
+  });
   $("#input").addEventListener("keydown", (e) => {
     if (fsState.open) {
       if (e.key === "ArrowDown") { e.preventDefault(); fsMove(1); return; }
@@ -3762,7 +3730,7 @@ applySendMode();
     }
     if (files.length) { e.preventDefault(); addImageFiles(files); }
   });
-  $("#btn-plus").addEventListener("click", () => $("#file-shot").click());
+  $("#btn-plus").addEventListener("click", () => { $("#file-shot").click(); });
   $("#file-shot").addEventListener("change", (e) => {
     addImageFiles(Array.from(e.target.files || []));
     e.target.value = "";

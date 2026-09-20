@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <objc/runtime.h>
 
 // Switch the whole app (and therefore the window title bar) between dark
 // and light appearance. Called from the UI thread via webview Dispatch.

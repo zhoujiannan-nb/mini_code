@@ -341,11 +341,41 @@ func (s *server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 子 agent 在独立子会话里跑:父会话自己的回合结束后,只要(孙)子会话
+	// 还有活动任务,父会话也要显示"运行中"(停止按钮行为一致:CancelTask
+	// 本来就会级联取消子任务)。查询失败时退回仅看父会话自身状态。
+	children, _ := s.be.Mgr().GetStore().ChildIDsByParent()
 	out := make([]SessionSummary, 0, len(records))
 	for _, r := range records {
-		out = append(out, s.summarizeSummary(r))
+		sum := s.summarizeSummary(r)
+		if !sum.Active && childrenRunning(s.be.Hub(), r.SessionID, children) {
+			sum.Active = true
+		}
+		out = append(out, sum)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// childrenRunning reports whether any descendant sub-agent session of the
+// given session (transitively) still has a live task in this process.
+func childrenRunning(hub *channels.Hub, id string, children map[string][]string) bool {
+	seen := map[string]bool{id: true}
+	stack := []string{id}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, c := range children[cur] {
+			if seen[c] {
+				continue
+			}
+			seen[c] = true
+			if hub.ActiveTask(c) {
+				return true
+			}
+			stack = append(stack, c)
+		}
+	}
+	return false
 }
 
 func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
@@ -357,8 +387,18 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 	rec := sess.Record()
 	msgs := sess.SnapshotMessages()
+	sum := s.summarize(rec)
+	if !sum.Active {
+		// 与列表一致:后台子 agent 还在跑时,主会话按"运行中"返回
+		// (前端据此恢复停止按钮;syncRunning 轮询也会随之收敛)。
+		if children, err := s.be.Mgr().GetStore().ChildIDsByParent(); err == nil {
+			if childrenRunning(s.be.Hub(), rec.SessionID, children) {
+				sum.Active = true
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"session":  s.summarize(rec),
+		"session":  sum,
 		"messages": msgs,
 		// Token estimate for the composer footer (xx/context_window).
 		"tokens": util.CountMessagesTokens(msgs),
