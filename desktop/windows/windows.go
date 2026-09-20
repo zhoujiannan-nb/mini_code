@@ -113,10 +113,7 @@ func (p *platform) NotifyExisting() error {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if lastErr != nil {
-		return fmt.Errorf("no reachable instance: %w", lastErr)
-	}
-	return fmt.Errorf("no reachable instance")
+	return fmt.Errorf("no reachable instance: %w", lastErr)
 }
 
 // StartShowListener listens for "show" commands from second launches.
