@@ -440,7 +440,8 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .token-usage.warn { color: var(--amber-t); font-weight: 600; }
 #cache-hit { color: var(--green-t); }
 #cache-hit.nohit { color: var(--text3); }
-.foot-hint { /* AAA: 不再用 opacity 降低小字对比度 */ }
+.foot-hint { /* AAA: 不再用 opacity 降低小字对比度 */ cursor: pointer; padding: 2px 6px; margin-left: -6px; border-radius: 4px; user-select: none; }
+.foot-hint:hover { color: var(--green-t); background: var(--green-xl); }
 .compact-btn {
   background: var(--surface); color: var(--text2); border: 1px solid var(--border2);
   border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer;
@@ -940,7 +941,7 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
           </label>
           <button class="mode-btn" id="btn-mode" title="权限模式">⚡ 完整模式</button>
           <button class="compact-btn" id="btn-compact" title="手动压缩当前会话上下文(立即调用模型总结旧对话)">⚡ 压缩</button>
-          <span class="foot-hint">Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴截图 · @ 选文件夹</span>
+          <span class="foot-hint" id="foot-hint" title="点击切换发送快捷键:Enter 发送 ↔ Shift+Enter 发送">Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴截图 · @ 选文件夹</span>
         </div>
       </div>
     </div>
@@ -3124,7 +3125,7 @@ function exitGroupView() {
   document.querySelector("main").classList.remove("group-mode");
   closeGroupPanel();
   resetToNew();
-  $("#input").placeholder = "输入任务,Enter 发送,Shift+Enter 换行,粘贴截图,@ 插入文件夹路径";
+  $("#input").placeholder = inputPlaceholder();
 }
 
 // 群日志渲染(增量:仅当日志变化时重画)。
@@ -3505,6 +3506,30 @@ async function groupSend() {
   }
 }
 
+/* ---------------- 回车发送模式(点击底部提示切换) ---------------- */
+// "enter"(默认)= Enter 发送, Shift+Enter 换行; "shift" = Shift+Enter 发送, Enter 换行。
+// 点一下底部快捷键提示即切换, 存 localStorage(浏览器与桌面 WebView2 均持久)。
+const LS_SEND_MODE_KEY = "mc-send-mode";
+let sendMode = "enter";
+try { if (localStorage.getItem(LS_SEND_MODE_KEY) === "shift") sendMode = "shift"; } catch (e) {}
+function inputPlaceholder() {
+  return (sendMode === "shift" ? "输入任务,Shift+Enter 发送,Enter 换行" : "输入任务,Enter 发送,Shift+Enter 换行")
+    + ",粘贴截图,@ 插入文件夹路径";
+}
+function applySendMode() {
+  const hint = $("#foot-hint");
+  if (hint) hint.textContent = (sendMode === "shift" ? "Shift+Enter 发送 · Enter 换行" : "Enter 发送 · Shift+Enter 换行")
+    + " · Ctrl+V 粘贴截图 · @ 选文件夹";
+  if (!state.currentGroup) $("#input").placeholder = inputPlaceholder();
+}
+function toggleSendMode() {
+  sendMode = sendMode === "shift" ? "enter" : "shift";
+  try { localStorage.setItem(LS_SEND_MODE_KEY, sendMode); } catch (e) {}
+  applySendMode();
+  toast(sendMode === "shift" ? "已切换: Shift+Enter 发送, Enter 换行" : "已切换: Enter 发送, Shift+Enter 换行", "ok");
+}
+applySendMode();
+
 /* ---------------- 初始化 ---------------- */
 (async function init() {
   // “＋ 新建会话”:高频操作一键直达(不再弹下拉)
@@ -3551,8 +3576,12 @@ async function groupSend() {
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+    // 发送键随回车模式(点底部提示切换): 默认 Enter 发送; 反向模式 Shift+Enter 发送, Enter 换行
+    const wantSend = sendMode === "shift" ? (e.key === "Enter" && e.shiftKey)
+                                          : (e.key === "Enter" && !e.shiftKey);
+    if (wantSend) { e.preventDefault(); send(); }
   });
+  $("#foot-hint").addEventListener("click", toggleSendMode);
   $("#input").addEventListener("input", () => { autoGrow(); fsCheckInput(); });
   $("#input").addEventListener("blur", fsClose);
   // 粘贴截图:输入框里 Ctrl+V 直接取剪贴板里的图片
