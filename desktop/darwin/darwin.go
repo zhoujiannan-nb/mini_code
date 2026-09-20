@@ -9,6 +9,7 @@ package desktopdarwin
 void mc_set_app_dark(int dark);
 void mc_center_window(void *w);
 void mc_show_window(void *w);
+void mc_setup_main_menu(void);
 */
 import "C"
 
@@ -137,6 +138,9 @@ func (p *platform) StartShowListener(onShow func()) {
 // NewWindow creates the WKWebView window. WKWebView is a system framework,
 // so no runtime installation is needed.
 func (p *platform) NewWindow(opts desktop.WindowOptions) (desktop.Window, error) {
+	// Install the standard main menu (edit shortcuts like Cmd+V paste)
+	// before the webview window is created.
+	C.mc_setup_main_menu()
 	// debug: F12 devtools, same as the Windows build
 	wv := webview.NewWindow(true, nil)
 	w := &window{wv: wv}
@@ -146,10 +150,12 @@ func (p *platform) NewWindow(opts desktop.WindowOptions) (desktop.Window, error)
 	return w, nil
 }
 
-// ShowWindow makes the (already open) window key and frontmost.
+// ShowWindow makes the (already open) window key and frontmost. It may be
+// called from any goroutine (e.g. the show-listener), so hop to the UI
+// thread via the webview's dispatch.
 func (p *platform) ShowWindow(w desktop.Window) {
 	if h := w.Handle(); h != nil {
-		C.mc_show_window(h)
+		w.Dispatch(func() { C.mc_show_window(h) })
 	}
 }
 
@@ -170,11 +176,15 @@ func (p *platform) PrefersDark() bool { return false }
 
 // RunTray starts the menu-bar tray item: 打开窗口 / 退出.
 //
-// NOTE: on macOS systray's event loop is [NSApp run], the same NSApp the
-// webview uses — verified pattern (getlantern/systray ships a webview
-// example), but real-machine testing is required before shipping.
+// Uses systray.Register (NOT systray.Run): the WKWebView's [NSApp run]
+// (started by Window.Run on the main thread) is the single event loop.
+// systray.Run would start a second [NSApp run] on a background goroutine;
+// the two loops race for the same event queue, one spins at 100% CPU and
+// the window never appears. Register must finish before the first
+// [NSApp run], so it is called synchronously here (desktop.Run calls
+// RunTray before the window loop).
 func (p *platform) RunTray(icon []byte, onOpen func(), onExit func()) {
-	go systray.Run(func() {
+	systray.Register(func() {
 		systray.SetIcon(icon)
 		systray.SetTooltip("Mini Code — 窗口已隐藏，任务继续运行")
 		openItem := systray.AddMenuItem("打开窗口", "显示 Mini Code 窗口")
@@ -191,7 +201,7 @@ func (p *platform) RunTray(icon []byte, onOpen func(), onExit func()) {
 				}
 			}
 		}()
-	}, nil)
+	}, onExit)
 }
 
 // window adapts a webview_go WebView to desktop.Window.

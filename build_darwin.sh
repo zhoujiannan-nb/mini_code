@@ -13,7 +13,7 @@ export CGO_ENABLED=1
 mkdir -p "$OUT"
 
 echo "Building $APP_NAME (darwin/$(uname -m), desktop shell)..."
-go build -tags desktop_darwin -ldflags="-s -w" -o "$OUT/$APP_NAME" .
+go build -tags desktop_darwin,desktop_default -ldflags="-s -w" -o "$OUT/$APP_NAME" .
 echo "  Success: $OUT/$APP_NAME"
 
 if [ "$1" = "app" ]; then
