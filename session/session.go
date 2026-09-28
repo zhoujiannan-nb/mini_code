@@ -981,7 +981,7 @@ func (m *SessionManager) Get(sessionID string) (*Session, error) {
 }
 
 // GetByChannelKey returns the most recently updated session bound to the given
-// channel key (e.g. a DingTalk conversation id). It returns nil when the key
+// channel key (an external conversation id). It returns nil when the key
 // is not bound to any session.
 func (m *SessionManager) GetByChannelKey(key string) (*Session, error) {
 	if key == "" {
@@ -999,7 +999,7 @@ func (m *SessionManager) GetByChannelKey(key string) (*Session, error) {
 	return session, nil
 }
 
-// SetChannelKey binds a stable external channel key (e.g. a DingTalk
+// SetChannelKey binds a stable external channel key (an external
 // conversation id) to a session, so future messages carrying that key are
 // routed to the same session.
 func (m *SessionManager) SetChannelKey(sessionID, key string) error {

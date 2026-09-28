@@ -12,7 +12,7 @@ import (
 )
 
 // TestBuildUserMessagePlain verifies that without images the initial user
-// message stays a plain text message (legacy behavior, e.g. DingTalk).
+// message stays a plain text message (legacy behavior).
 func TestBuildUserMessagePlain(t *testing.T) {
 	l := &AgentLoop{}
 	m := l.buildUserMessage("hello")

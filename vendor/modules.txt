@@ -32,9 +32,6 @@ github.com/go-stack/stack
 # github.com/google/uuid v1.6.0
 ## explicit
 github.com/google/uuid
-# github.com/gorilla/websocket v1.5.3
-## explicit; go 1.12
-github.com/gorilla/websocket
 # github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 ## explicit; go 1.16
 github.com/jchv/go-webview2

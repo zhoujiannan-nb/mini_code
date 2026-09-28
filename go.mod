@@ -4,7 +4,6 @@ go 1.25.0
 
 require (
 	github.com/getlantern/systray v1.2.2
-	github.com/gorilla/websocket v1.5.3
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6

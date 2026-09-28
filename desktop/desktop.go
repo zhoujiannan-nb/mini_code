@@ -11,9 +11,8 @@
 //     the window talks to it exactly like a browser would (fetch + SSE) and
 //     the web UI stays available in a regular browser as well.
 //   - Closing the window hides it; the process keeps running in the system
-//     tray (the DingTalk channel, if configured, keeps working). The window
-//     is re-opened from the tray menu or by launching the binary a second
-//     time.
+//     tray. The window is re-opened from the tray menu or by launching the
+//     binary a second time.
 //   - "退出" in the tray menu (or Ctrl+C in a terminal) stops everything.
 package desktop
 
@@ -44,10 +43,6 @@ type Runtime interface {
 	Handler() http.Handler
 	// StartHub runs the message hub until ctx is done.
 	StartHub(ctx context.Context)
-	// StartDingTalk applies the DingTalk channel config (if any).
-	StartDingTalk()
-	// StopDingTalk stops the DingTalk channel.
-	StopDingTalk()
 }
 
 // Window is a native window rendering the local web UI.
@@ -266,8 +261,6 @@ func Run(args []string, d Deps) {
 		ctx, cancel = signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
 		rt.StartHub(ctx)
-		rt.StartDingTalk()
-		defer rt.StopDingTalk()
 	}
 
 	app := &appState{
@@ -303,7 +296,7 @@ func Run(args []string, d Deps) {
 
 	slog.Info("starting desktop channel", "port", port, "url", app.url)
 
-	// --- tray (survives window close; DingTalk keeps running in background) ---
+	// --- tray (survives window close) ---
 	platform.RunTray(d.TrayIcon, app.handleShow, app.shutdown)
 
 	// --- window loop: create -> run; close hides, open re-creates ---

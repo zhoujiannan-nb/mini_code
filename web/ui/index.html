@@ -153,9 +153,6 @@ header {
   max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pill b { color: var(--text); font-weight: 600; }
-.pill .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
-.dot.on { background: var(--green-dot); }
-.dot.off { background: var(--border2); }
 .spacer { flex: 1; }
 .icon-btn {
   background: var(--surface); color: var(--text2); border: 1px solid var(--border2);
@@ -1048,14 +1045,6 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
       <div class="check-row" style="margin:0"><input type="checkbox" id="c-compaction"><label for="c-compaction" style="width:auto">接近上下文上限时自动压缩旧对话(全局)</label></div>
       <span class="hint">关闭后不再压缩,长任务更易撞上限</span>
     </div>
-
-    <h3>钉钉渠道</h3>
-    <div class="check-row"><input type="checkbox" id="d-enabled"><label for="d-enabled" style="width:auto">启用钉钉渠道(保存后立即生效)</label></div>
-    <div class="frow"><label>AppKey (ClientID)</label><input type="text" id="d-appkey"></div>
-    <div class="frow"><label>AppSecret</label><input type="text" id="d-appsecret"></div>
-    <div class="frow"><label>Robot Code</label><input type="text" id="d-robotcode" placeholder="可选,默认同 AppKey"></div>
-    <div class="frow"><label>白名单 (staffId)</label><input type="text" id="d-allow" placeholder="可选,逗号分隔;留空 = 所有人"></div>
-    <div class="frow"><label>进度推送间隔(秒)</label><input type="number" id="d-interval" placeholder="默认 10,负数 = 关闭"></div>
 
     <h3>Web</h3>
     <div class="frow"><label>Web 端口</label><input type="number" id="w-port"><span class="hint">修改需重启生效</span></div>
@@ -2085,7 +2074,7 @@ async function stop() {
       state.pendingTask = null;
       adoptNewSession(m.session_id);
     } else {
-      // 其他渠道(如钉钉)新建的会话,或本端事件早到还没响应:
+      // 其他渠道新建的会话,或本端事件早到还没响应:
       // 侧边栏立即可见,随后补齐真实状态
       renderSessions();
       scheduleListRefresh(1000);
@@ -2543,11 +2532,8 @@ function paintBackBtn(parentId) {
 async function loadStatus() {
   try {
     const s = await api("/api/status");
-    const dt = s.dingtalk_running
-      ? '<span class="dot on"></span>钉钉:已连接'
-      : (s.dingtalk_enabled ? '<span class="dot off"></span>钉钉:配置异常' : '<span class="dot off"></span>钉钉:未启用');
     const comp = s.compaction_enabled ? "" : " · 压缩已关闭";
-    $("#status-pill").innerHTML = "<b>" + esc(s.model_name || "未配置模型") + "</b> · " + dt + " · 端口 " + s.web_port + comp;
+    $("#status-pill").innerHTML = "<b>" + esc(s.model_name || "未配置模型") + "</b> · 端口 " + s.web_port + comp;
     // 模型列表 + 默认模型(下拉框数据源)
     state.models = s.models || [];
     state.defaultModel = s.default_model || (state.models[0] && state.models[0].name) || "";
@@ -2720,7 +2706,6 @@ async function openSettings() {
   try { cfg = await api("/api/config"); } catch (e) { toast("读取配置失败:" + e.message, "err"); return; }
   // 主题(纯客户端偏好,立即生效,不随"保存配置"提交)
   $("#c-theme").value = readThemeMode();
-  const D = cfg.dingtalk || {};
   // 用户头像以服务端配置为准(个人信息区同步显示)
   state.userAvatar = cfg.user_avatar || "";
   paintSettingsUserAvatar();
@@ -2731,12 +2716,6 @@ async function openSettings() {
   renderModelCards();
   $("#c-default-model").value = cfg.default_model || modelDraft[0].name || "";
   $("#c-compaction").checked = cfg.compaction_enabled !== false; // 缺省 = 开启
-  $("#d-enabled").checked = !!D.enabled;
-  $("#d-appkey").value = D.app_key || "";
-  $("#d-appsecret").value = D.app_secret || "";
-  $("#d-robotcode").value = D.robot_code || "";
-  $("#d-allow").value = (D.allow_staff || []).join(", ");
-  $("#d-interval").value = D.progress_interval || "";
   $("#w-port").value = cfg.web_port || "";
   $("#settings-mask").classList.add("open");
 }
@@ -2772,14 +2751,6 @@ async function saveSettings() {
     default_model: defModel,
     compaction_enabled: $("#c-compaction").checked,
     user_avatar: state.userAvatar, // 透传用户头像,避免整份配置保存时丢失
-    dingtalk: {
-      enabled: $("#d-enabled").checked,
-      app_key: $("#d-appkey").value.trim(),
-      app_secret: $("#d-appsecret").value.trim(),
-      robot_code: $("#d-robotcode").value.trim(),
-      allow_staff: $("#d-allow").value.split(",").map(s => s.trim()).filter(Boolean),
-      progress_interval: num($("#d-interval").value),
-    },
   };
   try {
     const r = await api("/api/config", {

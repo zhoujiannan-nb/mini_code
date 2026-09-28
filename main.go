@@ -1,6 +1,6 @@
 // Mini Code — single binary, channel-driven.
 //
-// One binary serves all channels: the web UI/API (default) and DingTalk.
+// One binary serves all channels: the web UI/API (default) and the CLI.
 // All message sources produce messages into the message hub (package
 // channels); the hub resolves the owning session of each message (creating
 // a new session when the message belongs to none, keyed on
@@ -10,13 +10,8 @@
 //
 // Usage:
 //
-//	mini_code           web UI + API on the configured port (default)
-//	mini_code cmd       interactive CLI channel
-//	mini_code dingtalk  DingTalk stream channel only (no web)
-//
-// The DingTalk channel runs automatically alongside whichever channel is
-// requested whenever it is configured; it can also be (re)started live from
-// the web settings page.
+//	mini_code       web UI + API on the configured port (default)
+//	mini_code cmd   interactive CLI channel
 package main
 
 import (
@@ -37,7 +32,6 @@ import (
 	"github.com/user/mini_code/approval"
 	"github.com/user/mini_code/channels"
 	"github.com/user/mini_code/config"
-	"github.com/user/mini_code/dingtalk"
 	"github.com/user/mini_code/provider"
 	"github.com/user/mini_code/session"
 	"github.com/user/mini_code/util"
@@ -51,93 +45,17 @@ Usage:
                           other platforms: web UI + API (default)
    mini_code web          web UI + API (POST /goal, /api/...) in a browser
    mini_code cmd          interactive CLI channel
-   mini_code dingtalk     DingTalk stream channel only (no web)
    mini_code desktop      web UI in a native desktop window (Windows/macOS)
 
 Flags:
   -agent string     agent role for new sessions (default "build")
   -p int            listen port, web/desktop mode only (default: web_port from config)
 
-The DingTalk channel starts automatically in any mode when it is
-configured (dingtalk.enabled + app_key + app_secret in ~/.mini_code/config.json),
-and can be started/stopped live from the web settings page.
-
 Desktop mode (Windows/macOS): opens the same UI in an embedded native window
 (WebView2 / WKWebView, no browser needed). Closing the window hides it to the
 system tray; use the tray menu to re-open or fully quit. The page stays
 reachable at http://127.0.0.1:<web_port> for browsers.
 `
-
-// dtController manages the DingTalk channel's lifecycle so it can be
-// started, stopped and restarted at runtime (e.g. from the web settings).
-type dtController struct {
-	mu      sync.Mutex
-	hub     *channels.Hub
-	cancel  context.CancelFunc
-	running bool
-}
-
-func newDTController(hub *channels.Hub) *dtController {
-	return &dtController{hub: hub}
-}
-
-// apply starts, stops or restarts the DingTalk channel to match cfg.
-// It returns a short human-readable outcome for the UI.
-func (d *dtController) apply(cfg config.DingTalkConfig) string {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if !cfg.Enabled || cfg.AppKey == "" || cfg.AppSecret == "" {
-		if d.running {
-			d.cancel()
-			d.running = false
-			slog.Info("dingtalk channel stopped")
-			return "已停止"
-		}
-		return "未启用"
-	}
-	if d.running {
-		d.cancel()
-		d.running = false
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	client := dingtalk.New(cfg, d.hub)
-	d.cancel = cancel
-	d.running = true
-	slog.Info("dingtalk channel starting", "app_key", cfg.AppKey[:min(4, len(cfg.AppKey))]+"***")
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("dingtalk channel panicked, contained", "panic", r)
-				d.mu.Lock()
-				d.running = false
-				d.mu.Unlock()
-			}
-		}()
-		if err := client.Start(ctx); err != nil && ctx.Err() == nil {
-			slog.Error("dingtalk channel stopped", "err", err)
-			d.mu.Lock()
-			d.running = false
-			d.mu.Unlock()
-		}
-	}()
-	return "已启动"
-}
-
-func (d *dtController) stop() {
-	d.mu.Lock()
-	if d.running {
-		d.cancel()
-		d.running = false
-	}
-	d.mu.Unlock()
-}
-
-func (d *dtController) isRunning() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.running
-}
 
 // runtime bundles everything a mode needs and implements web.Backend.
 type runtime struct {
@@ -149,7 +67,6 @@ type runtime struct {
 	subagents *session.SubagentService
 	groups    *session.GroupService
 	approvals *approval.Service
-	dt        *dtController
 }
 
 // buildModelClients creates a client for every configured model. It returns
@@ -268,7 +185,6 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 		subagents: subagents,
 		groups:    groups,
 		approvals: approvals,
-		dt:        newDTController(hub),
 	}, nil
 }
 
@@ -302,8 +218,6 @@ func main() {
 		runWeb(rest)
 	case "cmd", "cli", "interactive", "chat":
 		runInteractive(rest)
-	case "dingtalk":
-		runDingTalk(rest)
 	case "desktop", "gui":
 		runDesktop(rest)
 	case "help", "-h", "--help":
@@ -352,8 +266,6 @@ func (rt *runtime) Status() web.StatusInfo {
 		Models:        models,
 		DefaultModel:  cfg.DefaultModel,
 		Compaction:    cfg.Compaction(),
-		DTEnabled:     cfg.DingTalk.Enabled,
-		DTRunning:     rt.dt.isRunning(),
 	}
 }
 
@@ -362,8 +274,8 @@ func (rt *runtime) GetConfig() *config.AppConfig {
 }
 
 // SaveConfig persists cfg to disk and hot-applies the changed parts:
-// model config rebuilds the model registry, DingTalk config restarts the
-// channel. The web port takes effect on next start.
+// model config rebuilds the model registry. The web port takes effect on
+// next start.
 func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 	old := rt.liveConfig()
 
@@ -377,11 +289,7 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 	}{cfg.Models, cfg.DefaultModel})
 	modelsChanged := string(oldModelsJSON) != string(newModelsJSON)
 
-	oldDTJSON, _ := json.Marshal(old.DingTalk)
-	newDTJSON, _ := json.Marshal(cfg.DingTalk)
-	dtChanged := string(oldDTJSON) != string(newDTJSON)
-
-	if !modelsChanged && !dtChanged && old.WebPort == cfg.WebPort && old.Compaction() == cfg.Compaction() &&
+	if !modelsChanged && old.WebPort == cfg.WebPort && old.Compaction() == cfg.Compaction() &&
 		old.UserAvatar == cfg.UserAvatar {
 		return &web.SaveResult{Message: "配置没有变化"}, nil
 	}
@@ -420,11 +328,6 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 		notes = append(notes, "模型配置已立即生效(进行中的任务完成后切换)")
 		slog.Info("model registry rebuilt", "models", len(clients), "default", cfg.DefaultModel)
 	}
-	if dtChanged {
-		outcome := rt.dt.apply(cfg.DingTalk)
-		result.DingTalk = outcome
-		notes = append(notes, "钉钉渠道"+outcome)
-	}
 	if old.WebPort != cfg.WebPort {
 		notes = append(notes, "web 端口将在下次启动时生效")
 	}
@@ -436,7 +339,7 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 
 // --- channels ---
 
-// runWeb starts the web UI + API (and the DingTalk channel when configured).
+// runWeb starts the web UI + API.
 func runWeb(args []string) {
 	var port int
 	var rest []string
@@ -472,8 +375,6 @@ func runWeb(args []string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	go rt.hub.Run(ctx)
-	rt.dt.apply(rt.liveConfig().DingTalk)
-	defer rt.dt.stop()
 
 	addr := fmt.Sprintf(":%d", port)
 	slog.Info("starting web channel", "port", port)
@@ -504,8 +405,6 @@ func runInteractive(args []string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go rt.hub.Run(ctx)
-	rt.dt.apply(rt.liveConfig().DingTalk)
-	defer rt.dt.stop()
 
 	out := rt.hub.Subscribe(channels.ChannelCLI)
 	terminal := make(chan channels.Message, 8) // final assistant/error of a task
@@ -603,32 +502,4 @@ func runInteractive(args []string) {
 			}
 		}
 	}
-}
-
-// runDingTalk starts the DingTalk stream channel only (no web).
-func runDingTalk(args []string) {
-	rt, err := setup(args, 0)
-	if err != nil {
-		fatal(err)
-	}
-	defer rt.closeClients()
-	defer rt.mgr.Close()
-	defer rt.groups.Close()
-
-	dt := rt.liveConfig().DingTalk
-	if !dt.Enabled || dt.AppKey == "" || dt.AppSecret == "" {
-		fatal(fmt.Errorf("dingtalk channel not configured: set \"dingtalk\" (enabled, app_key, app_secret) in ~/.mini_code/config.json or via the web settings"))
-	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-	go rt.hub.Run(ctx)
-	defer rt.dt.stop()
-
-	outcome := rt.dt.apply(dt)
-	if outcome == "未启用" {
-		fatal(fmt.Errorf("dingtalk channel could not be started: check app_key/app_secret"))
-	}
-	fmt.Println("Mini Code DingTalk channel starting (Ctrl+C to stop)...")
-	<-ctx.Done()
 }

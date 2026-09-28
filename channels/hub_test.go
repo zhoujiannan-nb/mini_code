@@ -229,8 +229,8 @@ func TestHubExplicitSessionID(t *testing.T) {
 }
 
 // TestHubToolEventsCarrySessionKey verifies that tool events carry the
-// session's channel key, so channels (e.g. DingTalk progress pings) can
-// attribute them to a conversation.
+// session's channel key, so external channels can attribute them to a
+// conversation.
 func TestHubToolEventsCarrySessionKey(t *testing.T) {
 	env := newTestEnv(t, stepTwoTurns) // turn 1 calls list_dir
 	out := env.hub.Subscribe("key-check")

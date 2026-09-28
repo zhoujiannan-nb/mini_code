@@ -59,15 +59,12 @@ type StatusInfo struct {
 	Models        []ModelInfo `json:"models"`
 	DefaultModel  string      `json:"default_model"`
 	Compaction    bool        `json:"compaction_enabled"`
-	DTEnabled     bool        `json:"dingtalk_enabled"`
-	DTRunning     bool        `json:"dingtalk_running"`
 }
 
 // SaveResult reports what a config save changed at runtime.
 type SaveResult struct {
 	Message      string   `json:"message"`
 	ModelSwapped bool     `json:"model_swapped"`
-	DingTalk     string   `json:"dingtalk,omitempty"`
 	Notes        []string `json:"notes,omitempty"`
 }
 
@@ -883,7 +880,7 @@ func (s *server) handleFsSearch(w http.ResponseWriter, r *http.Request) {
 type GoalRequest struct {
 	Goal       string `json:"goal"`
 	SessionID  string `json:"session_id,omitempty"`  // continue this session
-	SessionKey string `json:"session_key,omitempty"` // external conversation key (e.g. DingTalk conversationId)
+	SessionKey string `json:"session_key,omitempty"` // external conversation key
 }
 
 type GoalResponse struct {

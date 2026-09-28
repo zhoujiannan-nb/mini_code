@@ -28,10 +28,6 @@ func (d desktopRT) Handler() http.Handler { return web.NewServer(d.rt) }
 
 func (d desktopRT) StartHub(ctx context.Context) { go d.rt.hub.Run(ctx) }
 
-func (d desktopRT) StartDingTalk() { d.rt.dt.apply(d.rt.liveConfig().DingTalk) }
-
-func (d desktopRT) StopDingTalk() { d.rt.dt.stop() }
-
 // runDesktop implements "mini_code desktop" (and the no-argument default of
 // desktop builds) on Windows / macOS.
 func runDesktop(args []string) {

@@ -21,9 +21,8 @@ type AppConfig struct {
 
 	// CompactionEnabled toggles automatic long-context compression
 	// globally. Nil (key absent) = enabled (legacy behavior).
-	CompactionEnabled *bool      `json:"compaction_enabled,omitempty"`
-	WebPort           int        `json:"web_port"`
-	DingTalk          DingTalkConfig `json:"dingtalk"`
+	CompactionEnabled *bool `json:"compaction_enabled,omitempty"`
+	WebPort           int   `json:"web_port"`
 	// UserAvatar is the web user's avatar: a data URL
 	// (data:image/jpeg|png|webp;base64,...) uploaded from the UI.
 	// Empty = the UI renders the first-character + hash-color fallback.
@@ -113,25 +112,7 @@ func (c *AppConfig) Validate() error {
 	if c.WebPort < 1 || c.WebPort > 65535 {
 		return fmt.Errorf("web_port must be between 1 and 65535")
 	}
-	if c.DingTalk.Enabled {
-		if c.DingTalk.AppKey == "" || c.DingTalk.AppSecret == "" {
-			return fmt.Errorf("dingtalk is enabled but app_key/app_secret is empty")
-		}
-	}
 	return nil
-}
-
-// DingTalkConfig configures the DingTalk channel (Stream mode).
-type DingTalkConfig struct {
-	Enabled    bool     `json:"enabled"`
-	AppKey     string   `json:"app_key"`     // DingTalk app ClientID
-	AppSecret  string   `json:"app_secret"`  // DingTalk app ClientSecret
-	RobotCode  string   `json:"robot_code"`  // optional robot code
-	AllowStaff []string `json:"allow_staff"` // optional sender whitelist (staffId); empty = allow all
-
-	// ProgressInterval: seconds between progress pings for a running task.
-	// 0 (unset) = default 10; negative = progress pings disabled.
-	ProgressInterval int `json:"progress_interval"`
 }
 
 type ModelConfig struct {
@@ -325,9 +306,6 @@ func applyDefaults(cfg *AppConfig) {
 	}
 	if cfg.WebPort == 0 {
 		cfg.WebPort = 7500
-	}
-	if cfg.DingTalk.ProgressInterval == 0 {
-		cfg.DingTalk.ProgressInterval = 10
 	}
 }
 

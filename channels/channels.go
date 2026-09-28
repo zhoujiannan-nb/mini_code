@@ -1,7 +1,7 @@
 // Package channels implements the unified message channel (message bus) of
 // mini_code.
 //
-// All message sources (CLI, HTTP server, DingTalk, ...) produce inbound
+// All message sources (CLI, HTTP server, ...) produce inbound
 // messages into the Hub. The Hub consumes them, resolves the owning session
 // for each message — creating a new session when the message does not belong
 // to any session — runs the agent loop, and produces outbound messages
@@ -10,7 +10,7 @@
 //
 // Session routing is keyed on session_id: an inbound message carries either
 // an explicit session_id (continue that conversation), a stable session_key
-// (e.g. a DingTalk conversationId — the first message of a conversation
+// (an external conversation id — the first message of a conversation
 // creates and binds a new session), or neither (a new session is created).
 //
 // Every completed agent turn persists the conversation to the database (see
@@ -58,9 +58,8 @@ const (
 
 // Channel names used across the project.
 const (
-	ChannelCLI      = "cli"
-	ChannelWeb      = "web"
-	ChannelDingTalk = "dingtalk"
+	ChannelCLI = "cli"
+	ChannelWeb = "web"
 )
 
 // Message is the unified envelope flowing through the hub.
@@ -71,7 +70,7 @@ type Message struct {
 	TaskID     string    `json:"task_id,omitempty"` // on terminal messages: inbound message ID that triggered the task
 	Status     string    `json:"status,omitempty"`  // on KindStatus messages: one of the Status* constants
 	SessionID  string    `json:"session_id,omitempty"`
-	SessionKey string    `json:"session_key,omitempty"` // stable external conversation key (e.g. DingTalk conversationId)
+	SessionKey string    `json:"session_key,omitempty"` // stable external conversation key
 	Mode       string    `json:"mode,omitempty"`        // permission mode for a NEW session (full / cautious); ignored when the message continues an existing session
 	Model      string    `json:"model,omitempty"`       // model name for a NEW session (config key); ignored when the message continues an existing session
 	// ContextReminders is the experimental context-usage notices preference for
@@ -257,8 +256,8 @@ func NewHub(mgr *session.SessionManager, agentRole, workDir string, maxTurns int
 
 // WorkDirFor returns the working directory a session key is bound to: the
 // existing session's workdir, or the shared workDir a new session would get.
-// The directory is created when it does not exist yet, so callers (e.g. the
-// DingTalk file downloader) can write into it before the session is created.
+// The directory is created when it does not exist yet, so callers (e.g. an
+// external file downloader) can write into it before the session is created.
 func (h *Hub) WorkDirFor(sessionKey string) string {
 	if sessionKey != "" {
 		if s, err := h.mgr.GetByChannelKey(sessionKey); err == nil && s != nil {
@@ -649,14 +648,14 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 		return nil, err
 	}
 	// Permission mode for the new session (web UI chip). Channels that do
-	// not set it (DingTalk, CLI) get the default: full.
+	// not set it (CLI) get the default: full.
 	if m.Mode != "" {
 		if err := h.mgr.SetMode(created.ID(), m.Mode); err != nil {
 			slog.Warn("set new session mode failed", "session", created.ID(), "mode", m.Mode, "err", err)
 		}
 	}
 	// Model for the new session (web UI dropdown). Channels that do not
-	// set it (DingTalk, CLI) get the default model.
+	// set it (CLI) get the default model.
 	if m.Model != "" {
 		if err := h.mgr.SetModel(created.ID(), m.Model); err != nil {
 			slog.Warn("set new session model failed", "session", created.ID(), "model", m.Model, "err", err)
