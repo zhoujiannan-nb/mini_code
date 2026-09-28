@@ -838,15 +838,27 @@ func (t *ListDirTool) Execute(ctx context.Context, params map[string]interface{}
 			if currentDepth > depthLimit {
 				return filepath.SkipDir
 			}
-			parts := strings.Split(p, string(os.PathSeparator))
-			for _, part := range parts {
+			// Noise entries are matched by the components RELATIVE to the
+			// walked root only — matching the absolute path's components
+			// would empty the listing whenever the workspace itself lives
+			// under a directory named e.g. "build" or "dist" (glob.go and
+			// search.go match entry names the same way). A noise directory
+			// prunes its whole subtree; a noise file (".coverage") is
+			// skipped alone.
+			rel, rerr := filepath.Rel(dp, p)
+			if rerr != nil {
+				return nil
+			}
+			for _, part := range strings.Split(rel, string(os.PathSeparator)) {
 				if ignoreDirs[part] {
-					return filepath.SkipDir
+					if info.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
 				}
 			}
 			total++
 			if total <= cap {
-				rel, _ := filepath.Rel(dp, p)
 				if info.IsDir() {
 					items = append(items, rel+"/")
 				} else {

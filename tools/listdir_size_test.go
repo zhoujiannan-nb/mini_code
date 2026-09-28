@@ -81,3 +81,40 @@ func TestListDirRecursiveShowsFileSizes(t *testing.T) {
 		t.Errorf("expected 'deep.log (10 B)' in recursive listing, got:\n%s", out)
 	}
 }
+
+// TestListDirRecursiveUnderNoiseAncestorDir guards the ignoreDirs matching
+// scope: noise names (build/dist/venv/...) must prune only entries RELATIVE
+// to the walked root, never ancestors of the workspace itself. Before the
+// fix, a workspace under any directory literally named "build" listed as
+// empty because every absolute path component was matched.
+func TestListDirRecursiveUnderNoiseAncestorDir(t *testing.T) {
+	// Workspace whose ANCESTOR is named "build" (like this repo's
+	// build\windows output directory).
+	ws := filepath.Join(t.TempDir(), "build")
+	if err := os.MkdirAll(ws, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "notes.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// A child noise directory must still be pruned.
+	if err := os.MkdirAll(filepath.Join(ws, "node_modules"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "node_modules", "dep.js"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewListDirTool(ws)
+	res, err := tool.Execute(context.Background(), map[string]interface{}{"path": ".", "recursive": true})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	out := res.Text
+	if !strings.Contains(out, "notes.txt (2 B)") {
+		t.Errorf("workspace under a 'build' ancestor must still list its files, got:\n%s", out)
+	}
+	if strings.Contains(out, "dep.js") {
+		t.Errorf("child noise directory node_modules must still be pruned, got:\n%s", out)
+	}
+}

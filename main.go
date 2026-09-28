@@ -376,7 +376,12 @@ func runWeb(args []string) {
 	defer cancel()
 	go rt.hub.Run(ctx)
 
-	addr := fmt.Sprintf(":%d", port)
+	// Bind to the loopback interface only: the API carries no
+	// authentication, so a wildcard (":port") bind would let any other
+	// machine on the LAN drive the agent — exec shell commands, read and
+	// rewrite the config. Desktop mode already binds 127.0.0.1 (see
+	// desktop/desktop.go).
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	slog.Info("starting web channel", "port", port)
 	fmt.Printf("Mini Code 已启动: http://127.0.0.1:%d (Ctrl+C 停止)\n", port)
 
