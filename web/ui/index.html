@@ -2112,6 +2112,7 @@ async function stop() {
     case "usage":
       // 每轮 LLM 调用后后端推送的真实 usage,画缓存命中率
       paintCacheHit(m.prompt_tokens, m.cached_tokens, m.cache_reported);
+      rememberCacheHit(state.current, m.prompt_tokens, m.cached_tokens, m.cache_reported);
       break;
     case "assistant":
       pendingRemove();
@@ -2832,6 +2833,26 @@ function paintCacheHit(prompt, cached, reported) {
   el.textContent = "缓存 " + pct + "% (" + fmtK(cached || 0) + "/" + fmtK(prompt) + ")";
   el.className = "token-usage";
 }
+// 缓存命中是"上一轮 LLM 调用"的瞬态指标:后端只在 usage 事件里推送一次,
+// 刷新页面 / 切会话 / 重启进程后不会重发,指标就空了(看起来像"功能没了")。
+// 这里把每个会话最近一次 usage 记进 localStorage,切回或刷新时回显最后一次的值。
+const LS_CACHEHIT_KEY = "mini_code.cache_hit";
+function cacheHitStore() {
+  try { return JSON.parse(localStorage.getItem(LS_CACHEHIT_KEY) || "{}"); } catch (e) { return {}; }
+}
+function rememberCacheHit(sid, prompt, cached, reported) {
+  if (!sid || !prompt || prompt <= 0) return;
+  const m = cacheHitStore();
+  m[sid] = { p: prompt, c: cached || 0, r: !!reported };
+  const keys = Object.keys(m);
+  if (keys.length > 50) for (const k of keys.slice(0, keys.length - 50)) delete m[k]; // 防无限增长
+  try { localStorage.setItem(LS_CACHEHIT_KEY, JSON.stringify(m)); } catch (e) { /* 忽略配额/隐私模式 */ }
+}
+function restoreCacheHit(sid) {
+  const e = sid && cacheHitStore()[sid];
+  if (e && e.p > 0) paintCacheHit(e.p, e.c, e.r);
+  else paintCacheHit(0, 0, false);
+}
 async function updateTokenUsage() {
   if (!state.current) { paintTokens(0); return; }
   try {
@@ -2909,7 +2930,7 @@ async function selectSession(id) {
       addStatus("⏳ 任务正在执行中 — 刷新前的已完成输出已回显,后续输出将实时显示");
     }
     paintTokens(data.tokens);
-    paintCacheHit(0, 0, false); // 切会话:清掉上一个会话的缓存命中显示
+    restoreCacheHit(id); // 切会话:回显该会话最近一次的缓存命中(没有则留空)
     saveSession(id);
   } catch (e) {
     toast("打开会话失败:" + e.message, "err");
