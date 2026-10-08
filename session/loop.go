@@ -40,7 +40,7 @@ type AgentLoop struct {
 	onAssistantReply func(content string, reasoning string)
 	onTurn           func(turn int, messages []provider.Message)
 	onContextUsage   func(tokens int)
-	onUsage          func(promptTokens, cachedTokens, completionTokens int, cacheReported bool) // real per-call usage (cache-hit visibility)
+	onUsage          func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64) // real per-call usage (cache-hit + output-speed visibility)
 	gate             ToolGate // runtime permission gate (nil = no gate)
 
 	// Per-path locks serialize batched tool calls that touch the same file
@@ -171,8 +171,10 @@ func (l *AgentLoop) SetOnContextUsage(fn func(tokens int)) { l.onContextUsage = 
 // the provider reported cache-hit information at all. It is the source of the
 // cache-hit indicator: cachedTokens is the number of prompt tokens served from
 // the provider's KV prefix cache, and cacheReported distinguishes "0% hits"
-// from "this deployment does not report cache hits".
-func (l *AgentLoop) SetOnUsage(fn func(promptTokens, cachedTokens, completionTokens int, cacheReported bool)) {
+// from "this deployment does not report cache hits". speed is the average
+// output speed of this call in tokens/second (completion tokens over the
+// call's wall time; 0 when the provider reported no completion count).
+func (l *AgentLoop) SetOnUsage(fn func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64)) {
 	l.onUsage = fn
 }
 
@@ -524,6 +526,10 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			flusher = newStreamFlusher(l.onAssistantReply)
 			flusher.start()
 		}
+		// Wall time of this LLM call (first attempt through success, retries
+		// included): with the provider's completion-token count it yields the
+		// average output speed of the call for the UI's speed indicator.
+		callStart := time.Now()
 		resp, err := l.chatWithRetry(ctx, turn, messages, l.toToolSchemas(l.toolDefinitions), func(chunk provider.StreamChunk) {
 			if flusher != nil {
 				flusher.push(chunk.Content, chunk.ReasoningContent)
@@ -550,9 +556,18 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		if u := resp.Usage; u != nil {
 			cached := u.CachedTokens()
 			reported := u.CacheReported()
-			slog.Info("llm usage", "turn", turn, "prompt_tokens", u.PromptTokens, "est_tokens", l.estBefore, "cached_tokens", cached, "cache_reported", reported, "completion_tokens", u.CompletionTokens, "reasoning_tokens", u.ReasoningTokens)
+			// Average output speed of this call (tokens/s). Only meaningful
+			// when the provider reported a completion count; 0 otherwise
+			// (the UI keeps its live estimate or the previous value).
+			speed := 0.0
+			if u.CompletionTokens > 0 {
+				if sec := time.Since(callStart).Seconds(); sec > 0 {
+					speed = float64(u.CompletionTokens) / sec
+				}
+			}
+			slog.Info("llm usage", "turn", turn, "prompt_tokens", u.PromptTokens, "est_tokens", l.estBefore, "cached_tokens", cached, "cache_reported", reported, "completion_tokens", u.CompletionTokens, "reasoning_tokens", u.ReasoningTokens, "speed_tok_s", speed)
 			if l.onUsage != nil {
-				l.onUsage(u.PromptTokens, cached, u.CompletionTokens, reported)
+				l.onUsage(u.PromptTokens, cached, u.CompletionTokens, reported, speed)
 			}
 			// Fold this call's (estimate, reported prompt_tokens) pair into
 			// the calibration so the next turn's threshold decisions are

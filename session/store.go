@@ -157,20 +157,43 @@ type SessionSummary struct {
 	MessageCount int
 }
 
-// ListSessionSummaries returns root-session summaries, most recently updated
-// first. The message count comes from json_array_length, so conversation
-// payloads are never loaded into a list response — the endpoint stays cheap
-// enough for frequent polling.
+// sessionListQuery is the shared lightweight list query for root sessions.
+// archivedOnly selects the archived list (hidden from the main conversation
+// list) instead of the main one. The message count comes from
+// json_array_length, so conversation payloads are never loaded into a list
+// response — the endpoint stays cheap enough for frequent polling.
+func sessionListQuery(archivedOnly bool) string {
+	flag := "!= 1"
+	if archivedOnly {
+		flag = "= 1"
+	}
+	return `SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key,
+	        created_at, updated_at,
+	        COALESCE(json_array_length(messages), 0) AS message_count
+	 FROM sessions
+	 WHERE parent_id IS NULL OR parent_id = ''` +
+		` AND COALESCE(json_extract(metadata, '$.archived'), 0) ` + flag +
+		` ORDER BY updated_at DESC LIMIT ? OFFSET ?`
+}
+
+// ListSessionSummaries returns the main conversation list: root sessions that
+// are NOT archived, most recently updated first.
 func (s *SessionStore) ListSessionSummaries(limit, offset int) ([]SessionSummary, error) {
-	rows, err := s.db.FetchAll(
-		`SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key,
-		        created_at, updated_at,
-		        COALESCE(json_array_length(messages), 0) AS message_count
-		 FROM sessions
-		 WHERE parent_id IS NULL OR parent_id = ''
-		 ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
-		limit, offset,
-	)
+	rows, err := s.db.FetchAll(sessionListQuery(false), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SessionSummary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, summaryFromRow(row))
+	}
+	return out, nil
+}
+
+// ListArchivedSummaries returns the archived root sessions (hidden from the
+// main conversation list), most recently updated first.
+func (s *SessionStore) ListArchivedSummaries(limit, offset int) ([]SessionSummary, error) {
+	rows, err := s.db.FetchAll(sessionListQuery(true), limit, offset)
 	if err != nil {
 		return nil, err
 	}

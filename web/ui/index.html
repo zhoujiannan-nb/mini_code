@@ -212,6 +212,26 @@ aside {
 .rename-btn:hover { background: var(--blue-btn); color: #fff; }
 .empty-hint { color: var(--text3); font-size: 12px; text-align: center; padding: 24px 12px; }
 
+/* ===== 已归档区(原群聊位置)===== */
+/* 平常收起(只显示分区头);拖会话到该区域 = 归档,拖回会话区 = 恢复。
+   复用群区同款分区样式(group-sec/group-list),视觉与布局一致。 */
+/* 与会话列表之间留一段间距,分区头下移一点,不与会话条目贴死 */
+#archive-sec { margin-top: 14px; }
+#archive-sec.drop-hint { background: var(--green-xl); }
+#archive-sec.drop-hint .group-head { color: var(--green-t); }
+.sess-list.drop-hint { outline: 2px dashed var(--green); outline-offset: -2px; border-radius: 8px; }
+/* 归档条目:复用 sess-item 外观,多一个"恢复"按钮(三按钮布局) */
+.arch-item .arch-btn {
+  position: absolute; right: 8px; top: 8px; width: 20px; height: 20px;
+  border: none; border-radius: 5px; background: transparent; color: var(--text3);
+  font-size: 12px; cursor: pointer; display: none; line-height: 20px;
+}
+.arch-item .rename-btn { right: 32px; }
+.arch-item .del-btn { right: 56px; }
+.arch-item .sess-title { padding-right: 76px; }
+.arch-item:hover .arch-btn { display: block; }
+.arch-btn:hover { background: var(--green-btn); color: #fff; }
+
 /* ---------- 聊天区 ---------- */
 .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .chat-head {
@@ -441,6 +461,9 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .token-usage.warn { color: var(--amber-t); font-weight: 600; }
 #cache-hit { color: var(--green-t); }
 #cache-hit.nohit { color: var(--text3); }
+/* 输出速度:生成中为字符增量实时估算(≈),任务停止后保留最后一次值
+   (最后一次 LLM 调用的实测均值,由后端持久化在会话中) */
+#output-speed { color: var(--blue-t); }
 .foot-hint { /* AAA: 不再用 opacity 降低小字对比度 */ cursor: pointer; padding: 2px 6px; margin-left: -6px; border-radius: 4px; user-select: none; }
 .foot-hint:hover { color: var(--green-t); background: var(--green-xl); }
 .compact-btn {
@@ -839,7 +862,7 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .avatar-opt:hover { border-color: var(--green-b); }
 .avatar-opt.sel { border-color: var(--green); background: var(--green-xl); }
 /* 群模式:隐藏会话级控制,显示群按钮 */
-main.group-mode #token-usage, main.group-mode #cache-hit, main.group-mode #ctx-toggle,
+main.group-mode #token-usage, main.group-mode #cache-hit, main.group-mode #output-speed, main.group-mode #ctx-toggle,
 main.group-mode #btn-mode, main.group-mode #btn-compact, main.group-mode .model-menu-wrap,
 main.group-mode #foot-hint, main.group-mode #btn-tasks, main.group-mode #btn-back-parent,
 main.group-mode #btn-stop { display: none !important; }
@@ -880,6 +903,14 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
         <button class="gh-add" id="btn-new-group" title="新建群聊(多智能体协作)">＋</button>
       </div>
       <div class="group-list" id="group-list"></div>
+    </div>
+    <div class="group-sec collapsed" id="archive-sec" title="拖会话到这里归档;拖回会话区恢复">
+      <div class="sec-head group-head">
+        <span class="gh-toggle" id="archive-toggle" title="折叠/展开已归档区">▾</span>
+        <span class="gh-title" id="archive-head-title" title="已归档的对话不在会话列表显示;拖会话到这里归档,拖回会话区恢复">已归档(拖会话到此处归档)</span>
+        <span class="sec-count" id="archive-count"></span>
+      </div>
+      <div class="group-list" id="archive-list"></div>
     </div>
   </aside>
   <section class="chat">
@@ -938,6 +969,7 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
       <div class="composer-foot">
         <span class="token-usage" id="token-usage">Token —</span>
         <span class="token-usage" id="cache-hit" title="上一轮 LLM 调用的 KV 前缀缓存命中(cached / prompt tokens)。n/a = 该部署未上报缓存命中(如 SGLang 未开 --enable-cache-report);0% = 已上报但本轮无命中。"></span>
+        <span class="token-usage" id="output-speed" title="输出速度(token/秒)。生成中为实时估算(≈);任务停止后保留最后一次的展示值(最后一次 LLM 调用的实测均值,已存入数据库)"></span>
         <div style="display:flex; align-items:center; gap:10px">
           <label class="ctx-toggle" id="ctx-toggle" title="实验:上下文占用提醒(达 50%/70% 注入提醒,并可用 context_usage/compact_context 工具主动查看/压缩)">
             <input type="checkbox" id="ctx-reminders" checked> 上下文提醒
@@ -1114,6 +1146,7 @@ if (window.matchMedia) {
 
 const state = {
   sessions: [],
+  archived: [],     // 已归档会话(不在主会话列表显示;侧边栏"已归档"分区,平常收起)
   current: null,      // 当前会话 id,null = 新会话
   userAvatar: "",     // 用户头像 data URL(全局,存服务端配置;"" = 首字+哈希色回退)
   running: false,     // 当前会话是否有活动任务(以服务端为准)
@@ -1573,6 +1606,7 @@ async function loadSessions(select) {
   } catch (e) { return; }
   renderSessions();
   syncRunning();
+  loadArchived(); // 归档列表随主列表一起收敛(轻量查询)
   if (state.current) loadChildren(); // 子任务状态随列表一起收敛
   if (select && select !== state.current) selectSession(select);
 }
@@ -1618,13 +1652,19 @@ function renderSessions() {
   for (const s of state.sessions) {
     const el = document.createElement("div");
     el.className = "sess-item" + (s.session_id === state.current ? " active" : "");
-    // 拖到侧边栏的群上 = 加入该群
+    // 拖到侧边栏的群上 = 加入该群;拖到"已归档"区 = 归档(不在会话列表显示)
     el.draggable = true;
     el.addEventListener("dragstart", (e) => {
-      e.dataTransfer.setData("text/plain", s.session_id);
-      e.dataTransfer.effectAllowed = "copy";
-      // 拖会话入群的落点必须可见:群区若折叠则自动展开
+      e.dataTransfer.setData("text/plain", JSON.stringify({ kind: "session", sid: s.session_id }));
+      e.dataTransfer.effectAllowed = "move";
+      // 拖会话入群/归档的落点必须可见:分区若折叠则临时展开(remember=false,
+      // 不写 localStorage,否则会永远记住展开态)
       setGroupCollapsed(false);
+      setArchiveCollapsed(false, false);
+    });
+    el.addEventListener("dragend", () => {
+      // 无论松手在哪(归档成功/恢复/取消拖拽),都回到用户自己的折叠偏好(默认折叠)
+      setArchiveCollapsed(userArchiveCollapsed(), false);
     });
     // 执行中只看服务端的 active 标志(本进程是否有活动任务):
     // 持久化的 status 在进程崩溃/重启后可能停留在 "running",不可信。
@@ -1681,6 +1721,150 @@ async function renameSession(id, currentTitle) {
     renderSessions();
     toast("已重命名", "ok");
   } catch (err) { toast("重命名失败:" + err.message, "err"); }
+}
+
+/* ---------------- 已归档 ---------------- */
+// 已归档对话:与正常会话的唯一区别是不显示在会话列表(侧边栏"已归档"
+// 分区,平常收起)。归档的会话照常可打开、继续发消息。
+// 归档 = 会话 metadata 里的一个标记,不改变发给模型的任何内容(前缀缓存安全)。
+// 归档状态标记:拖会话到"已归档"区 = 归档;拖回会话区或点 ↩ = 恢复。
+// v2:旧版 key 曾被"拖动时自动展开"污染(误写展开态),换键重置回默认折叠
+const LS_ARCHIVE_COLLAPSED_KEY = "mini_code.archive_collapsed.v2";
+// remember=false:临时态(拖会话时自动展开落点);只有手动切换才写 localStorage
+function setArchiveCollapsed(c, remember) {
+  const sec = $("#archive-sec"), t = $("#archive-toggle");
+  if (!sec) return;
+  sec.classList.toggle("collapsed", c);
+  if (t) t.textContent = c ? "▸" : "▾";
+  if (remember) { try { localStorage.setItem(LS_ARCHIVE_COLLAPSED_KEY, c ? "1" : "0"); } catch (e) {} }
+}
+// 用户自己的偏好:默认折叠;拖动的自动展开/收起不修改它
+function userArchiveCollapsed() {
+  try { return localStorage.getItem(LS_ARCHIVE_COLLAPSED_KEY) !== "0"; } catch (e) { return true; }
+}
+async function loadArchived() {
+  try {
+    state.archived = await api("/api/sessions?archived=1");
+  } catch (e) { state.archived = []; }
+  renderArchiveList();
+}
+function renderArchiveList() {
+  const list = $("#archive-list");
+  if (!list) return;
+  const cnt = $("#archive-count");
+  if (cnt) cnt.textContent = state.archived.length ? String(state.archived.length) : "";
+  list.innerHTML = "";
+  if (!state.archived.length) {
+    list.innerHTML = '<div class="empty-hint" style="padding:10px 8px">暂无已归档对话<br>拖会话到此处归档</div>';
+    return;
+  }
+  for (const s of state.archived) {
+    const el = document.createElement("div");
+    el.className = "sess-item arch-item" + (s.session_id === state.current ? " active" : "");
+    // 拖回会话区 = 恢复
+    el.draggable = true;
+    el.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", JSON.stringify({ kind: "archived", sid: s.session_id }));
+      e.dataTransfer.effectAllowed = "move";
+    });
+    const dotClass = s.active ? "running" : (["completed", "failed", "interrupted"].includes(s.status) ? s.status : "idle");
+    const statusText = s.active ? "执行中" : { completed: "已完成", failed: "失败", interrupted: "已中断" }[s.status] || "";
+    el.innerHTML =
+      '<div class="sess-title-row">' +
+      '<span class="sess-ava" style="background:' + hashColor(s.session_id) + '">' + esc(firstChar(s.title)) + '</span>' +
+      '<div class="sess-title">' + esc(s.title || "未命名会话") + '</div></div>' +
+      '<div class="sess-meta"><span class="s ' + dotClass + '"></span>' +
+      (statusText ? "<span>" + statusText + "</span>" : "") +
+      "<span>" + relTime(s.updated_at) + "</span><span>" + s.message_count + " 条</span></div>" +
+      '<button class="arch-btn" title="恢复到会话列表">↩</button>' +
+      '<button class="rename-btn" title="重命名会话">✎</button>' +
+      '<button class="del-btn" title="删除会话">✕</button>';
+    el.addEventListener("click", (e) => {
+      if (e.target.classList.contains("arch-btn") || e.target.classList.contains("del-btn") || e.target.classList.contains("rename-btn")) return;
+      selectSession(s.session_id);
+    });
+    el.querySelector(".arch-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      setArchived(s.session_id, false);
+    });
+    el.querySelector(".rename-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      renameSession(s.session_id, s.title);
+    });
+    el.querySelector(".del-btn").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm("确定删除该会话?(消息将一并删除)")) return;
+      try {
+        await api("/api/sessions/" + s.session_id, { method: "DELETE" });
+        if (state.current === s.session_id) resetToNew();
+        await loadSessions(); // loadSessions 会连带刷新归档列表
+        toast("会话已删除", "ok");
+      } catch (err) { toast("删除失败:" + err.message, "err"); }
+    });
+    list.appendChild(el);
+  }
+}
+async function setArchived(sid, on) {
+  try {
+    await api("/api/sessions/" + sid + "/archive", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived: on }),
+    });
+    toast(on ? "已归档(不在会话列表显示)" : "已恢复到会话列表", "ok");
+    await loadSessions(); // 主列表 + 归档列表一起收敛
+  } catch (err) { toast("操作失败:" + err.message, "err"); }
+}
+// 拖拽载荷:新版为 JSON({kind:"session"|"archived", sid}),
+// 兼容旧版纯 sid 文本(按会话处理)。
+function readDragPayload(e) {
+  const raw = e.dataTransfer.getData("text/plain");
+  if (!raw) return null;
+  try {
+    const d = JSON.parse(raw);
+    if (d && d.sid) return d;
+  } catch (err) {}
+  return { kind: "session", sid: raw };
+}
+function initArchiveDragDrop() {
+  // 注意:HTML5 DnD 里 dataTransfer.getData() 只在 drop 事件能读到值,
+  // dragover 期间恒为空(安全限制)——所以 dragover 只能查 types 放行,
+  // drop 里再读真实载荷按 kind 过滤(否则 drop 永不触发,拖动无效)。
+  const hasText = (e) => e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, "text/plain") >= 0;
+  const zone = $("#archive-sec");
+  zone.addEventListener("dragover", (e) => {
+    if (hasText(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; zone.classList.add("drop-hint"); }
+  });
+  zone.addEventListener("dragleave", (e) => {
+    if (!zone.contains(e.relatedTarget)) zone.classList.remove("drop-hint");
+  });
+  zone.addEventListener("drop", async (e) => {
+    zone.classList.remove("drop-hint");
+    const p = readDragPayload(e);
+    if (!p || p.kind !== "session") return;
+    e.preventDefault();
+    await setArchived(p.sid, true);
+  });
+  // 恢复落点:会话列表(含"会话"分区头)
+  const list = $("#sess-list");
+  const attachRestore = (target) => {
+    target.addEventListener("dragover", (e) => {
+      if (hasText(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; list.classList.add("drop-hint"); }
+    });
+    target.addEventListener("dragleave", (e) => {
+      if (!target.contains(e.relatedTarget)) list.classList.remove("drop-hint");
+    });
+    target.addEventListener("drop", async (e) => {
+      list.classList.remove("drop-hint");
+      const p = readDragPayload(e);
+      if (!p || p.kind !== "archived") return;
+      e.preventDefault();
+      await setArchived(p.sid, false);
+    });
+  };
+  attachRestore(list);
+  const head = list.previousElementSibling;
+  if (head && head.classList.contains("sec-head")) attachRestore(head);
 }
 
 /* ---------------- 消息区 ---------------- */
@@ -2035,13 +2219,16 @@ async function stop() {
  /* ---------------- SSE 事件 ---------------- */
  // 新会话发送后的"接管"动作:把当前视图切到刚创建的会话。
  // session_created 无论先到还是后到,按 task_id 确认后统一走这里。
- function adoptNewSession(sid) {
-   state.current = sid;  // 本地视图已包含用户消息,不重新拉历史
-   saveSession(sid);
-   setChatTitle("会话 " + sid.slice(0, 8), "");
-   renderSessions();
-   paintTokens(0);
-   compactBtnState();
+  function adoptNewSession(sid) {
+    state.current = sid;  // 本地视图已包含用户消息,不重新拉历史
+    saveSession(sid);
+    setChatTitle("会话 " + sid.slice(0, 8), "");
+    renderSessions();
+    paintTokens(0);
+    paintCacheHit(0, 0, false); // 新会话:统计从零开始
+    speedStopTicker();
+    paintSpeed(0, false);
+    compactBtnState();
    paintMode();
     paintModel(); // 会话已创建:按钮提示从"新会话"切到"当前会话模型"
     paintBackBtn("");
@@ -2096,6 +2283,7 @@ async function stop() {
     case "content_delta":
       liveStart();
       liveUpdate("content", m.content);
+      speedDelta(m.content); // 实时估算输出速度(滚动窗口)
       break;
     case "tool_start":
       pendingRemove();
@@ -2110,13 +2298,15 @@ async function stop() {
       paintTokens(m.tokens);
       break;
     case "usage":
-      // 每轮 LLM 调用后后端推送的真实 usage,画缓存命中率
+      // 每轮 LLM 调用后后端推送的真实 usage,画缓存命中率与实测输出速度
       paintCacheHit(m.prompt_tokens, m.cached_tokens, m.cache_reported);
       rememberCacheHit(state.current, m.prompt_tokens, m.cached_tokens, m.cache_reported);
+      if (m.speed > 0) { paintSpeed(m.speed, true); speedStopTicker(); } // 实测值覆盖实时估算
       break;
     case "assistant":
       pendingRemove();
       liveRemove();
+      speedStopTicker(); // 任务结束:保留最后一次的展示值
       if (m.content || m.reasoning) addAssistant(m.content, m.reasoning);
       setRunning(false);
       updateTokenUsage();
@@ -2125,6 +2315,7 @@ async function stop() {
     case "error":
       pendingRemove();
       liveRemove();
+      speedStopTicker();
       addError(m.content);
       clearSending(); // 任务没起来:结束 sending 保护期,允许降级
       setRunning(false);
@@ -2142,11 +2333,13 @@ async function stop() {
       if (m.status === "interrupted") {
         pendingRemove();
         liveRemove();
+        speedStopTicker();
         addStatus("⏹ 任务已中断(已保留进度,可继续发送消息)");
         setRunning(false);
       } else if (m.status === "task_done") {
         pendingRemove();
         liveRemove();
+        speedStopTicker();
         setRunning(false);
       }
       updateTokenUsage();
@@ -2853,6 +3046,50 @@ function restoreCacheHit(sid) {
   if (e && e.p > 0) paintCacheHit(e.p, e.c, e.r);
   else paintCacheHit(0, 0, false);
 }
+/* ---------------- 输出速度 ---------------- */
+// 生成中:content_delta 累积下发,用滚动窗口(最近 4s)的字符增长估算
+// 输出速度(≈ token/s,按 ~3 字符/token 折算混合中英文);
+// 每次 LLM 调用结束后的 usage 事件带后端实测均值(completion_tokens /
+// 调用耗时),覆盖估算值并持久化进会话数据库;
+// 任务停止后保留最后一次的展示值(实测值优先,否则最后的实时估算)。
+const SPEED_WINDOW_MS = 4000;
+const speedState = { samples: [], timer: null };
+function speedDelta(text) {
+  const now = Date.now();
+  const len = (text || "").length;
+  const s = speedState.samples;
+  // 新一轮 LLM 调用从更短(或空)的内容重新开始:清掉旧窗口,避免跨调用混算
+  if (s.length && len < s[s.length - 1][1]) s.length = 0;
+  s.push([now, len]);
+  while (s.length > 2 && now - s[0][0] > SPEED_WINDOW_MS) s.shift();
+  if (!speedState.timer) {
+    speedState.timer = setInterval(speedTick, 1000);
+  }
+  speedTick();
+}
+function speedTick() {
+  const s = speedState.samples;
+  if (s.length >= 2) {
+    const t0 = s[0][0], l0 = s[0][1];
+    const t1 = s[s.length - 1][0], l1 = s[s.length - 1][1];
+    const dt = (t1 - t0) / 1000;
+    if (dt > 0.5 && l1 > l0) paintSpeed((l1 - l0) / dt / 3, false);
+  }
+  if (!state.running) speedStopTicker();
+}
+function speedStopTicker() {
+  if (speedState.timer) { clearInterval(speedState.timer); speedState.timer = null; }
+}
+// paintSpeed 展示输出速度。accurate=true 为后端实测(最后一次 LLM 调用均值),
+// false 为前端实时估算(带 ≈)。v<=0 清空(回到空态)。
+function paintSpeed(v, accurate) {
+  const el = $("#output-speed");
+  if (!el) return;
+  if (!v || v <= 0) { el.textContent = ""; el.className = "token-usage"; return; }
+  const n = v >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
+  el.textContent = "速度" + (accurate ? "" : " ≈") + " " + n + " t/s";
+  el.className = "token-usage";
+}
 async function updateTokenUsage() {
   if (!state.current) { paintTokens(0); return; }
   try {
@@ -2886,6 +3123,8 @@ async function updateTokenUsage() {
   paintContextReminders();
   paintTokens(0);
   paintCacheHit(0, 0, false);
+  speedStopTicker();
+  paintSpeed(0, false); // 新会话:清空上一会话的速度展示
   paintBackBtn("");
   closeTasksPanel();
   renderTasksPanel();
@@ -2930,7 +3169,17 @@ async function selectSession(id) {
       addStatus("⏳ 任务正在执行中 — 刷新前的已完成输出已回显,后续输出将实时显示");
     }
     paintTokens(data.tokens);
-    restoreCacheHit(id); // 切会话:回显该会话最近一次的缓存命中(没有则留空)
+    // 缓存命中 + 输出速度:优先用数据库里持久化的最后一次 LLM 调用实测值
+    // (后端在每次任务中实时写入会话,停止/刷新/重启后仍保留);
+    // 旧版本会话(无 last_usage)回退到 localStorage 里的最近值。
+    const lu = data.last_usage;
+    if (lu && (lu.prompt > 0 || lu.completion > 0)) {
+      paintCacheHit(lu.prompt, lu.cached, lu.reported);
+      paintSpeed(lu.speed || 0, true);
+    } else {
+      restoreCacheHit(id); // 切会话:回显该会话最近一次的缓存命中(没有则留空)
+      paintSpeed(0, false);
+    }
     saveSession(id);
   } catch (e) {
     toast("打开会话失败:" + e.message, "err");
@@ -3074,6 +3323,10 @@ function fsInsert(i) {
 }
 
 /* ---------------- 群聊 ---------------- */
+// 群聊功能开关(UI 层面安全隐藏):false 时侧边栏群区与群入口全部隐藏,
+// 后端群接口/代码原样保留(改回 true 即可重新启用,无需改代码),
+// 已有群数据(群、成员、群日志)不受影响。
+const GROUP_CHAT_ENABLED = false;
 // state.currentGroup:当前打开的群 id(null = 会话视图);
 // state.groupData:{group,members,messages};state.groupTimer:群视图轮询。
 let groupMsgKey = "";
@@ -3196,8 +3449,8 @@ function renderGroupList() {
     el.addEventListener("dragleave", () => el.classList.remove("drop-hint"));
     el.addEventListener("drop", (e) => {
       e.preventDefault(); el.classList.remove("drop-hint");
-      const sid = e.dataTransfer.getData("text/plain");
-      if (sid) joinSessionToGroup(g.group_id, sid);
+      const p = readDragPayload(e);
+      if (p && p.kind === "session") joinSessionToGroup(g.group_id, p.sid);
     });
     list.appendChild(el);
   }
@@ -3834,7 +4087,25 @@ applySendMode();
   });
 
   await loadSessions();
-  loadGroups();
+  if (GROUP_CHAT_ENABLED) {
+    loadGroups();
+  } else {
+    // 群聊隐藏:其侧边栏位置由下方"已归档"区承接(群区元素保留但不可见)
+    const gsec = $("#group-sec");
+    if (gsec) gsec.style.display = "none";
+  }
+  // 已归档区:默认折叠(localStorage 只记忆用户手动切换,未设置 = 折叠),初始化拖放
+  setArchiveCollapsed(userArchiveCollapsed(), false);
+  // 归档区手动折叠/展开(记忆状态;标题点击仅用于从折叠态展开)
+  $("#archive-toggle").addEventListener("click", (e) => {
+    e.stopPropagation();
+    setArchiveCollapsed(!$("#archive-sec").classList.contains("collapsed"), true);
+  });
+  // 与箭头同逻辑:展开/收起都是完整切换(箭头 & 文字均可双向切换)
+  $("#archive-head-title").addEventListener("click", () => {
+    setArchiveCollapsed(!$("#archive-sec").classList.contains("collapsed"), true);
+  });
+  initArchiveDragDrop();
   loadStatus();
   connectEvents();
   paintMode();
@@ -3852,7 +4123,7 @@ applySendMode();
   // (运行中也不跳过,这样 SSE 漏掉终结事件时停止按钮能自动收敛)
   setInterval(() => {
     loadSessions();
-    loadGroups();
+    if (GROUP_CHAT_ENABLED) loadGroups();
     updateTokenUsage();
     syncApprovals();
   }, 30000);

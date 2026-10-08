@@ -97,6 +97,10 @@ type Message struct {
 	// information (even a genuine 0), so the UI can tell "0% hits" apart from
 	// "this deployment does not report cache hits".
 	CacheReported bool `json:"cache_reported,omitempty"`
+	// On KindUsage: the average output speed of the last LLM call in
+	// tokens/second (completion tokens over the call's wall time). 0 when the
+	// provider reported no completion count.
+	Speed float64 `json:"speed,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -169,9 +173,9 @@ func NewContextUsageMessage(sessionID, sessionKey string, tokens int) Message {
 // NewUsageMessage builds a real-usage update for the UI cache-hit indicator.
 // promptTokens/cachedTokens/completionTokens come from the provider's usage
 // block of the last LLM call; cachedTokens is 0 when the provider does not
-// report cache hits.
-func NewUsageMessage(sessionID, sessionKey string, promptTokens, cachedTokens, completionTokens int, cacheReported bool) Message {
-	return Message{ID: util.RandomHex(12), Kind: KindUsage, SessionID: sessionID, SessionKey: sessionKey, PromptTokens: promptTokens, CachedTokens: cachedTokens, CompletionTokens: completionTokens, CacheReported: cacheReported, CreatedAt: time.Now()}
+// report cache hits. speed is the call's average output speed (tokens/second).
+func NewUsageMessage(sessionID, sessionKey string, promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64) Message {
+	return Message{ID: util.RandomHex(12), Kind: KindUsage, SessionID: sessionID, SessionKey: sessionKey, PromptTokens: promptTokens, CachedTokens: cachedTokens, CompletionTokens: completionTokens, CacheReported: cacheReported, Speed: speed, CreatedAt: time.Now()}
 }
 
 // ApprovalRequestPayload is the JSON carried in a KindApprovalRequest
@@ -287,11 +291,11 @@ func (h *Hub) Attach(mgr *session.SessionManager) {
 			OnContextUsage: func(tokens int) {
 				h.emit(NewContextUsageMessage(sessionID, h.channelKeyFor(sessionID), tokens))
 			},
-			OnUsage: func(promptTokens, cachedTokens, completionTokens int, cacheReported bool) {
+			OnUsage: func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64) {
 				// Only emit when the provider reported a usable prompt count, so
 				// providers that never send usage don't spam empty indicators.
 				if promptTokens > 0 {
-					h.emit(NewUsageMessage(sessionID, h.channelKeyFor(sessionID), promptTokens, cachedTokens, completionTokens, cacheReported))
+					h.emit(NewUsageMessage(sessionID, h.channelKeyFor(sessionID), promptTokens, cachedTokens, completionTokens, cacheReported, speed))
 				}
 			},
 			OnReply: func(content string, reasoning string) {

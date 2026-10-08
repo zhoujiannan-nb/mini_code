@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/user/mini_code/agent"
 	"github.com/user/mini_code/provider"
@@ -40,7 +41,7 @@ type Session struct {
 	onToolCallEnd    func(name string, params map[string]interface{}, result string)
 	onAssistantReply func(content string, reasoning string)
 	onContextUsage   func(tokens int)
-	onUsage          func(promptTokens, cachedTokens, completionTokens int, cacheReported bool)
+	onUsage          func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64)
 
 	// mu guards record.Messages against concurrent writers (the loop's
 	// per-turn persistence, settlement-notice appends, manual compaction)
@@ -118,6 +119,77 @@ func (s *Session) SetReasoningOverride(thinking, effort string) {
 	setOrClear("reasoning_effort", effort)
 	s.store.Update(s.record)
 	s.mu.Unlock()
+}
+
+// lastUsageMetadataKey holds the session's most recent per-call provider
+// usage report (cache-hit + output speed) in the session metadata, so the
+// UI composer stats survive session switches, page refreshes and restarts.
+const lastUsageMetadataKey = "last_usage"
+
+// recordLastUsage persists the last per-call provider usage into the session
+// metadata (whole-row update under the session lock, same pattern as
+// SetContextRemindersEnabled). It is called from the agent loop after each
+// successful LLM call, so the stored value is always the conversation's
+// "last one" — exactly what the UI shows after the task settles.
+func (s *Session) recordLastUsage(prompt, cached, completion int, reported bool, speed float64) {
+	if prompt <= 0 && completion <= 0 {
+		return
+	}
+	s.mu.Lock()
+	if s.record.Metadata == nil {
+		s.record.Metadata = map[string]interface{}{}
+	}
+	s.record.Metadata[lastUsageMetadataKey] = map[string]interface{}{
+		"prompt":     prompt,
+		"cached":     cached,
+		"completion": completion,
+		"reported":   reported,
+		"speed":      speed, // tokens/second, average of the last LLM call; 0 = not reported
+		"at":         time.Now().Format(time.RFC3339),
+	}
+	s.store.Update(s.record)
+	s.mu.Unlock()
+}
+
+// LastUsage returns the persisted last-call usage report (see
+// recordLastUsage); nil when the session has no LLM call recorded yet.
+func (s *Session) LastUsage() map[string]interface{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, _ := s.record.Metadata[lastUsageMetadataKey].(map[string]interface{})
+	return m
+}
+
+// archivedMetadataKey marks a session as archived: hidden from the main
+// conversation list (rendered in the collapsed "已归档" sidebar section
+// instead). The flag is metadata-only and invisible to the agent loop, so
+// archiving never changes the prompt prefix (KV-prefix-cache safe).
+const archivedMetadataKey = "archived"
+
+// SetArchived toggles the session's archived flag. It is valid while a task
+// is running: a targeted metadata write under the session lock that neither
+// touches the conversation nor the prompt prefix.
+func (s *Session) SetArchived(on bool) {
+	s.mu.Lock()
+	if s.record.Metadata == nil {
+		s.record.Metadata = map[string]interface{}{}
+	}
+	if on {
+		s.record.Metadata[archivedMetadataKey] = true
+	} else {
+		delete(s.record.Metadata, archivedMetadataKey)
+	}
+	s.store.Update(s.record)
+	s.mu.Unlock()
+}
+
+// Archived reports whether the session is archived (hidden from the main
+// conversation list).
+func (s *Session) Archived() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, _ := s.record.Metadata[archivedMetadataKey].(bool)
+	return b
 }
 
 // QueueUserMessage appends a user message to be injected into the running
@@ -292,7 +364,15 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	loop.SetContextState(ctxState)
 	loop.SetContextRemindersOn(s.ContextRemindersEnabled())
 	loop.SetOnContextUsage(s.onContextUsage)
-	loop.SetOnUsage(s.onUsage)
+	// Wrap the usage callback: first persist the last per-call usage into the
+	// session (DB) so the composer stats restore after a stop/refresh, then
+	// forward it to the channel for the live UI update.
+	if s.onUsage != nil {
+		loop.SetOnUsage(func(prompt, cached, completion int, reported bool, speed float64) {
+			s.recordLastUsage(prompt, cached, completion, reported, speed)
+			s.onUsage(prompt, cached, completion, reported, speed)
+		})
+	}
 
 	slog.Info("session prompt", "id", s.ID(), "goal", goal[:min(80, len(goal))])
 	s.mu.Lock()
@@ -413,7 +493,7 @@ type SessionCallbacks struct {
 	OnToolEnd      func(name string, params map[string]interface{}, result string)
 	OnReply        func(content string, reasoning string)
 	OnContextUsage func(tokens int) // per-turn context token count (UI token bar)
-	OnUsage        func(promptTokens, cachedTokens, completionTokens int, cacheReported bool) // real per-call usage (cache-hit indicator)
+	OnUsage        func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64) // real per-call usage (cache-hit + output-speed indicator)
 }
 
 type SessionManager struct {
@@ -684,6 +764,22 @@ func (m *SessionManager) RenameSession(sessionID, title string) error {
 	}
 	m.mu.Unlock()
 	slog.Info("session renamed", "session", sessionID, "title", title)
+	return nil
+}
+
+// SetArchived toggles a session's archived flag: an archived session is
+// fully functional but hidden from the main conversation list (the UI
+// renders it in the collapsed "已归档" section). The flag lives in the
+// session metadata and is invisible to the agent loop, so archiving never
+// changes the prompt prefix (KV-prefix-cache safe). Valid while a task is
+// running (targeted metadata write under the session lock).
+func (m *SessionManager) SetArchived(sessionID string, on bool) error {
+	s, err := m.Get(sessionID)
+	if err != nil || s == nil {
+		return fmt.Errorf("会话不存在: %s", sessionID)
+	}
+	s.SetArchived(on)
+	slog.Info("session archived state changed", "session", sessionID, "archived", on)
 	return nil
 }
 

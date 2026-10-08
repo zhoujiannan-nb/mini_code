@@ -101,6 +101,7 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/model", s.handleSetModel)
 	mux.HandleFunc("POST /api/sessions/{id}/reasoning", s.handleSetReasoning)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleRenameSession)
+	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handleSetArchived)
 	mux.HandleFunc("GET /api/sessions/{id}/children", s.handleListChildren)
 	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
@@ -333,7 +334,14 @@ func (s *server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	// Root sessions only: sub-agent sessions (parent_id set) are internal.
 	// The lightweight query skips conversation payloads, so the list stays
 	// cheap enough for the UI to poll it on every SSE signal.
-	records, err := s.be.Mgr().GetStore().ListSessionSummaries(limit, 0)
+	// ?archived=1 selects the archived list (hidden from the main list).
+	var records []session.SessionSummary
+	var err error
+	if r.URL.Query().Get("archived") == "1" {
+		records, err = s.be.Mgr().GetStore().ListArchivedSummaries(limit, 0)
+	} else {
+		records, err = s.be.Mgr().GetStore().ListSessionSummaries(limit, 0)
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -402,6 +410,11 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		// Context window of THIS session's model (the token bar must track
 		// the per-session model, not the global default).
 		"context_window": s.be.Mgr().ContextWindowFor(rec.ModelKey),
+		// Last per-LLM-call usage report persisted in the session (DB):
+		// the UI restores the composer stats (cache-hit + output speed)
+		// from it on session open / page refresh. null when the session
+		// has no recorded LLM call yet.
+		"last_usage": sess.LastUsage(),
 	})
 }
 
@@ -611,6 +624,32 @@ func (s *server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"session_id": id,
 		"title":      strings.TrimSpace(req.Title),
+	})
+}
+
+// handleSetArchived toggles a session's archived flag (hide/restore in the
+// conversation list). Archived sessions stay fully functional; the flag
+// never touches the conversation or the prompt prefix (cache-safe).
+func (s *server) handleSetArchived(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.be.Mgr().Get(id); err != nil {
+		writeErr(w, http.StatusNotFound, "session not found: "+id)
+		return
+	}
+	var req struct {
+		Archived bool `json:"archived"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.be.Mgr().SetArchived(id, req.Archived); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"session_id": id,
+		"archived":   req.Archived,
 	})
 }
 
