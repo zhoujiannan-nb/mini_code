@@ -58,6 +58,8 @@ func BuildAgentConfig() *AgentConfig {
 			"task_status": "allow",
 			"task_cancel": "allow",
 			"task_list":   "allow",
+			"context_usage":   "allow", // read context token usage (paired with compact_context)
+			"compact_context": "allow", // actively request context compaction
 		}),
 	}
 }
