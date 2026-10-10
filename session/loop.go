@@ -526,11 +526,25 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			flusher = newStreamFlusher(l.onAssistantReply)
 			flusher.start()
 		}
-		// Wall time of this LLM call (first attempt through success, retries
-		// included): with the provider's completion-token count it yields the
-		// average output speed of the call for the UI's speed indicator.
+		// Decode-phase clock: first non-empty token → stream end (TTFT
+		// excluded, dsh-style). Content/ReasoningContent are accumulated
+		// values, so a retry restarting from empty shows up as a length
+		// shrink and resets the clock to the new attempt's first token.
+		var firstTokAt time.Time
+		var lastLen int
 		callStart := time.Now()
 		resp, err := l.chatWithRetry(ctx, turn, messages, l.toToolSchemas(l.toolDefinitions), func(chunk provider.StreamChunk) {
+			n := len(chunk.Content) + len(chunk.ReasoningContent)
+			if n < lastLen {
+				firstTokAt = time.Time{}
+				lastLen = 0
+			}
+			if firstTokAt.IsZero() && n > 0 {
+				firstTokAt = time.Now()
+			}
+			if n > lastLen {
+				lastLen = n
+			}
 			if flusher != nil {
 				flusher.push(chunk.Content, chunk.ReasoningContent)
 			}
@@ -556,12 +570,19 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		if u := resp.Usage; u != nil {
 			cached := u.CachedTokens()
 			reported := u.CacheReported()
-			// Average output speed of this call (tokens/s). Only meaningful
-			// when the provider reported a completion count; 0 otherwise
-			// (the UI keeps its live estimate or the previous value).
+			// Output speed of the DECODE phase (tokens/s): completion tokens
+			// over first-non-empty-token → stream end, TTFT excluded (dsh
+			// style). Falls back to the full call span when the provider
+			// never delivered a content chunk (e.g. non-streaming); 0 when
+			// no completion count is reported (the UI keeps its live
+			// estimate or the previous value).
 			speed := 0.0
 			if u.CompletionTokens > 0 {
-				if sec := time.Since(callStart).Seconds(); sec > 0 {
+				dec := time.Since(callStart)
+				if !firstTokAt.IsZero() {
+					dec = time.Since(firstTokAt)
+				}
+				if sec := dec.Seconds(); sec > 0 {
 					speed = float64(u.CompletionTokens) / sec
 				}
 			}

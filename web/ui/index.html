@@ -2996,15 +2996,20 @@ function fmtK(n) {
   }
   return String(n);
 }
+// 统一 K 单位(最多 2 位小数,去尾零):135557 → "135.56K",260000 → "260K"
+function fmtK2(n) {
+  n = n || 0;
+  return (Math.round((n / 1000) * 100) / 100) + "K";
+}
 function paintTokens(used) {
   const el = $("#token-usage");
   const cap = state.ctxWindow;
   if (!state.current) {
-    el.textContent = "Token 0 / " + fmtK(cap);
+    el.textContent = "Token 0K / " + fmtK(cap);
     el.classList.remove("warn");
     return;
   }
-  el.textContent = "Token " + (used || 0).toLocaleString() + " / " + fmtK(cap) +
+  el.textContent = "Token " + fmtK2(used) + " / " + (cap ? fmtK2(cap) : "—") +
     (cap ? " · " + Math.min(999, Math.round((used || 0) * 100 / cap)) + "%" : "");
   el.classList.toggle("warn", cap > 0 && (used || 0) / cap >= 0.8);
 }
@@ -3047,11 +3052,11 @@ function restoreCacheHit(sid) {
   else paintCacheHit(0, 0, false);
 }
 /* ---------------- 输出速度 ---------------- */
-// 生成中:content_delta 累积下发,用滚动窗口(最近 4s)的字符增长估算
-// 输出速度(≈ token/s,按 ~3 字符/token 折算混合中英文);
-// 每次 LLM 调用结束后的 usage 事件带后端实测均值(completion_tokens /
-// 调用耗时),覆盖估算值并持久化进会话数据库;
-// 任务停止后保留最后一次的展示值(实测值优先,否则最后的实时估算)。
+ // 生成中:content_delta 累积下发,用滚动窗口(最近 4s)的字符增长估算
+ // 输出速度(≈ token/s,按 ~3 字符/token 折算混合中英文);
+ // 每次 LLM 调用结束后的 usage 事件带后端实测解码速度(completion_tokens /
+ // 首token→流结束,已剔除 TTFT),覆盖估算值并持久化进会话数据库;
+ // 任务停止后保留最后一次的展示值(实测值优先,否则最后的实时估算)。
 const SPEED_WINDOW_MS = 4000;
 const speedState = { samples: [], timer: null };
 function speedDelta(text) {
@@ -3080,14 +3085,14 @@ function speedTick() {
 function speedStopTicker() {
   if (speedState.timer) { clearInterval(speedState.timer); speedState.timer = null; }
 }
-// paintSpeed 展示输出速度。accurate=true 为后端实测(最后一次 LLM 调用均值),
-// false 为前端实时估算(带 ≈)。v<=0 清空(回到空态)。
+// paintSpeed 展示输出速度。accurate=true 为后端实测解码速度(完成token/
+// 首token→流结束,已剔除 TTFT),false 为前端实时估算(带 ≈)。v<=0 清空。
 function paintSpeed(v, accurate) {
   const el = $("#output-speed");
   if (!el) return;
   if (!v || v <= 0) { el.textContent = ""; el.className = "token-usage"; return; }
   const n = v >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
-  el.textContent = "速度" + (accurate ? "" : " ≈") + " " + n + " t/s";
+  el.textContent = "速度" + (accurate ? "" : " ≈") + " " + n + " token/s";
   el.className = "token-usage";
 }
 async function updateTokenUsage() {
