@@ -971,8 +971,8 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
         <span class="token-usage" id="cache-hit" title="上一轮 LLM 调用的 KV 前缀缓存命中(cached / prompt tokens)。n/a = 该部署未上报缓存命中(如 SGLang 未开 --enable-cache-report);0% = 已上报但本轮无命中。"></span>
         <span class="token-usage" id="output-speed" title="输出速度(token/秒)。生成中为实时估算(≈);任务停止后保留最后一次的展示值(最后一次 LLM 调用的实测均值,已存入数据库)"></span>
         <div style="display:flex; align-items:center; gap:10px">
-          <label class="ctx-toggle" id="ctx-toggle" title="实验:上下文占用提醒(达 50%/70% 注入提醒,并可用 context_usage/compact_context 工具主动查看/压缩)">
-            <input type="checkbox" id="ctx-reminders" checked> 上下文提醒
+          <label class="ctx-toggle" id="ctx-toggle" title="上下文占用 75%/80%/85% 时提醒模型主动压缩;87% 强制兜底压缩">
+            <input type="checkbox" id="ctx-reminders"> 上下文提醒
           </label>
           <button class="mode-btn" id="btn-mode" title="权限模式">⚡ 完整模式</button>
           <button class="compact-btn" id="btn-compact" title="手动压缩当前会话上下文(立即调用模型总结旧对话)">⚡ 压缩</button>
@@ -1163,7 +1163,7 @@ const state = {
   model: "",          // 当前会话的模型名;新会话视图下 = 下一条消息创建会话时使用的模型
   pendingImages: [],  // 待发送的截图 data URL(data:image/...;base64,...)
   mode: "full",       // 当前会话的权限模式;新会话视图下 = 下一条消息创建会话时使用的模式
-  contextReminders: true, // 实验:上下文占用提醒开关;新会话视图下 = 创建会话时的偏好
+    contextReminders: true, // 上下文提醒开关;新会话视图下 = 创建会话时的偏好(默认开)
   thinking: "",       // 当前会话的思考开关覆盖("" = 用模型默认;enabled / disabled)
   reasoningEffort: "",// 当前会话的思考深度覆盖("" = 用模型默认;随 provider 取值)
   approvals: {},      // id → payload(待审批队列,跨会话)
@@ -3118,7 +3118,7 @@ async function updateTokenUsage() {
   setChatTitle("新会话", "发送后自动创建会话");
   state.mode = "full"; // 新会话默认完整模式
   state.model = state.defaultModel || ""; // 新会话默认模型
-  state.contextReminders = true; // 新会话默认开启上下文提醒
+    state.contextReminders = true; // 新会话默认开启上下文提醒
   state.thinking = ""; // 新会话:思考模式用模型默认
   state.reasoningEffort = "";
   state.ctxWindow = state.defaultCtxWindow;
@@ -3160,7 +3160,7 @@ async function selectSession(id) {
     if (data.context_window) state.ctxWindow = data.context_window;
     paintModel();
     // 上下文提醒开关:以服务端为准(缺省 = 开)
-    state.contextReminders = s.context_reminders !== false;
+    state.contextReminders = s.context_reminders !== false; // 缺省 = 开(与服务端一致)
     paintContextReminders();
     paintBackBtn(s.parent_id);
     closeTasksPanel();

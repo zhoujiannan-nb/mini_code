@@ -34,7 +34,7 @@ type AgentLoop struct {
 	compactor        *ContextCompactor
 	compactionOn     bool // false = skip CheckAndCompress entirely
 	ctxState         *tools.ContextState // shared context view for context tools (nil = disabled)
-	contextRemindersOn bool             // experimental: inject 50%/70% usage notices (nil ctxState-safe)
+	contextRemindersOn bool             // inject 75%/80%/85% usage notices (nil ctxState-safe)
 	onToolCallStart  func(name string, params map[string]interface{})
 	onToolCallEnd    func(name string, params map[string]interface{}, result string)
 	onAssistantReply func(content string, reasoning string)
@@ -157,8 +157,8 @@ func (l *AgentLoop) SetGate(g ToolGate) { l.gate = g }
 // called before Run; a nil state disables the context tools' live data.
 func (l *AgentLoop) SetContextState(state *tools.ContextState) { l.ctxState = state }
 
-// SetContextRemindersOn toggles the experimental context-usage notices
-// (injected at 50% / 70% of the budget). Must be called before Run.
+// SetContextRemindersOn toggles the context-usage notices
+// (injected at 75% / 80% / 85% of the budget). Must be called before Run.
 func (l *AgentLoop) SetContextRemindersOn(on bool) { l.contextRemindersOn = on }
 
 // SetOnContextUsage installs the per-turn context-usage callback fired after
@@ -329,11 +329,12 @@ func (l *AgentLoop) persistTurn(turn int, messages []provider.Message) {
 }
 
 // Context-usage notice thresholds (fractions of the max input budget). The
-// notices are an experimental, session-toggle-gated feature: they nudge the
-// model to compact proactively before the 85% auto-compaction threshold.
+// notices nudge the model to compact proactively before the 80% auto-compaction
+// threshold. Three stages: 75% (gentle), 80% (consider), 85% (immediate).
 const (
-	usageNoticeStage1 = 0.5 // announce at 50% of the budget
-	usageNoticeStage2 = 0.7 // announce at 70% of the budget
+	usageNoticeStage1 = 0.75 // announce at 75% of the budget
+	usageNoticeStage2 = 0.80 // announce at 80% of the budget
+	usageNoticeStage3 = 0.85 // announce at 85% of the budget
 )
 
 // usageNoticeRole is the role of the injected notice. It is a "user" message so
@@ -350,12 +351,14 @@ func usageNoticeMarker(pct int) string {
 	return fmt.Sprintf("__CTX_USAGE_%d__", pct)
 }
 
-// usageNotice builds the system notice message for the given stage (50 or 70).
+// usageNotice builds the system notice message for the given stage (75/80/85).
 // The text is English and states that, when several notices are present, the
 // most recent one is the current state ("the last one takes effect").
 func usageNotice(pct, tokens, maxInput int) provider.Message {
 	var text string
-	if pct >= 70 {
+	if pct >= 85 {
+		text = fmt.Sprintf("Context usage is now at %d%% of the input budget (%d / %d tokens) and is about to hit the auto-compaction threshold. You should call compact_context NOW to summarize older work (keep only key facts, file paths, decisions, and current progress). If multiple context-usage notices appear, the most recent one is the current state.", pct, tokens, maxInput)
+	} else if pct >= 80 {
 		text = fmt.Sprintf("Context usage is now at %d%% of the input budget (%d / %d tokens). Consider calling compact_context to summarize older work. If multiple context-usage notices appear, the most recent one is the current state.", pct, tokens, maxInput)
 	} else {
 		text = fmt.Sprintf("Context usage is now at %d%% of the input budget (%d / %d tokens). If multiple context-usage notices appear, the most recent one is the current state.", pct, tokens, maxInput)
@@ -363,25 +366,28 @@ func usageNotice(pct, tokens, maxInput int) provider.Message {
 	return provider.Message{Role: usageNoticeRole, Content: text + " " + usageNoticeMarker(pct)}
 }
 
-// scanUsageNoticeMarkers reports whether a 70% and/or 50% usage notice has
-// already been announced in the context (by its marker).
-func scanUsageNoticeMarkers(messages []provider.Message) (has70, has50 bool) {
+// scanUsageNoticeMarkers reports which usage notices (75/80/85) have already
+// been announced in the context (by their markers).
+func scanUsageNoticeMarkers(messages []provider.Message) (has75, has80, has85 bool) {
 	for _, m := range messages {
 		t := m.GetText()
-		if !has70 && strings.Contains(t, usageNoticeMarker(70)) {
-			has70 = true
+		if !has75 && strings.Contains(t, usageNoticeMarker(75)) {
+			has75 = true
 		}
-		if !has50 && strings.Contains(t, usageNoticeMarker(50)) {
-			has50 = true
+		if !has80 && strings.Contains(t, usageNoticeMarker(80)) {
+			has80 = true
+		}
+		if !has85 && strings.Contains(t, usageNoticeMarker(85)) {
+			has85 = true
 		}
 	}
-	return has70, has50
+	return has75, has80, has85
 }
 
 // maybeInjectUsageReminder appends a context-usage notice to the tail of the
-// conversation when the context crosses 50% or 70% of the budget and that stage
-// has not been announced yet in the current context. It is cache-friendly: the
-// notice is only ever appended to the end (extending the prefix), never
+// conversation when the context crosses 75%, 80%, or 85% of the budget and that
+// stage has not been announced yet in the current context. It is cache-friendly:
+// the notice is only ever appended to the end (extending the prefix), never
 // inserted or removed from the middle, so the KV prefix cache is preserved.
 // Returns the (possibly extended) messages. tokens is the calibrated
 // (provider-scale) estimate already computed by the caller.
@@ -391,9 +397,11 @@ func (l *AgentLoop) maybeInjectUsageReminder(messages []provider.Message, tokens
 		return messages
 	}
 	pct := float64(tokens) / float64(maxInput)
-	// Current stage: 2 (>=70%), 1 (>=50%), 0 (below 50%).
+	// Current stage: 3 (>=85%), 2 (>=80%), 1 (>=75%), 0 (below 75%).
 	current := 0
-	if pct >= usageNoticeStage2 {
+	if pct >= usageNoticeStage3 {
+		current = 3
+	} else if pct >= usageNoticeStage2 {
 		current = 2
 	} else if pct >= usageNoticeStage1 {
 		current = 1
@@ -402,20 +410,25 @@ func (l *AgentLoop) maybeInjectUsageReminder(messages []provider.Message, tokens
 		return messages
 	}
 	// Announced stage: the highest stage whose marker is already present.
-	has70, has50 := scanUsageNoticeMarkers(messages)
+	has75, has80, has85 := scanUsageNoticeMarkers(messages)
 	announced := 0
-	if has70 {
+	if has85 {
+		announced = 3
+	} else if has80 {
 		announced = 2
-	} else if has50 {
+	} else if has75 {
 		announced = 1
 	}
 	if current <= announced {
 		return messages
 	}
 	// Inject the notice for the current stage (appended to the tail).
-	label := 50
-	if current == 2 {
-		label = 70
+	label := 75
+	if current >= 2 {
+		label = 80
+	}
+	if current >= 3 {
+		label = 85
 	}
 	slog.Info("injecting context usage notice", "stage", label, "tokens", tokens, "max", maxInput)
 	return append(messages, usageNotice(label, tokens, maxInput))
@@ -511,8 +524,8 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				l.onContextUsage(tokens)
 			}
 		}
-		// Context usage notices (experimental, gated by the session toggle): when
-		// the context crosses 50% / 70% of the budget, append a system notice to
+	// Context usage notices: when the context crosses 75% / 80% / 85% of the
+	// budget, append a system notice to the tail nudging the model to compact.
 		// the tail. Cache-friendly: it only extends the prefix, never edits the
 		// middle, so the KV prefix cache is preserved.
 		if l.contextRemindersOn {

@@ -12,8 +12,12 @@ import (
 )
 
 const (
-	compactThreshold = 0.85
-	recentKeep       = 6
+	compactThreshold = 0.80 // auto-compaction threshold (normal path)
+	// forceCompactThreshold is the hard fallback: if the model ignored the
+	// proactive reminders and the context reaches 87%, force compaction
+	// before the request risks overflowing the input window.
+	forceCompactThreshold = 0.87
+	recentKeep            = 6
 	// recentMaxRatio caps the verbatim "recent" window at this fraction of
 	// maxInput. If the last recentKeep messages exceed this (e.g. the model
 	// just read a huge file and it dominates the tail), the excess is pushed
@@ -64,11 +68,25 @@ func NewContextCompactor(client *provider.ModelClient) *ContextCompactor {
 	return &ContextCompactor{client: client}
 }
 
+// ShouldCompact reports whether the context has crossed the auto-compaction
+// threshold (80%). The 85% usage notice asks the model to compact proactively
+// (via the compact_context tool) before this point; ShouldForceCompact (87%)
+// is the last-resort hard fallback if the model did not act in time.
 func (c *ContextCompactor) ShouldCompact(currentTokens, maxInput int) bool {
 	if maxInput <= 0 {
 		return false
 	}
 	return float64(currentTokens)/float64(maxInput) >= compactThreshold
+}
+
+// ShouldForceCompact reports whether the context has crossed the forced
+// fallback threshold (87%) — compaction runs regardless of the model's
+// proactive behavior.
+func (c *ContextCompactor) ShouldForceCompact(currentTokens, maxInput int) bool {
+	if maxInput <= 0 {
+		return false
+	}
+	return float64(currentTokens)/float64(maxInput) >= forceCompactThreshold
 }
 
 func (c *ContextCompactor) CheckAndCompress(ctx context.Context, messages []provider.Message, maxInput int) ([]provider.Message, error) {
