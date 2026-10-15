@@ -244,38 +244,22 @@ func (s *Session) SetGroupMembership(groupID, name string) {
 	s.store.Update(s.record)
 }
 
-// Prompt runs one agent task and returns the final reply text together with
-// the reasoning_content the model produced for it (may be empty).
+// preparePromptTools assembles the agent config, the prompt builder (tool set
+// and system-prompt inputs) and the per-task context state.
 //
-// images optionally carries image data URLs (data:image/...;base64,...) that
-// are attached to the initial user message as multimodal content, so the
-// model sees them on the first turn (e.g. screenshots pasted in the web UI).
-//
-// Panic containment: any panic inside the task (LLM path, compaction, tool
-// execution, persistence) is converted into a clean task failure instead of
-// crashing the whole process — the server keeps serving other sessions.
-func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxTurns int) (content string, reasoning string, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("agent task panicked, contained", "session", s.ID(), "panic", r)
-			func() {
-				defer func() { recover() }() // never let the bookkeeping itself re-panic
-				s.updateStatus("failed")
-			}()
-			content = ""
-			reasoning = ""
-			err = fmt.Errorf("agent task crashed (panic: %v)", r)
-		}
-	}()
-	s.updateStatus("running")
-
+// It is deliberately shared by Prompt (a live agent turn) and the manual
+// compaction path: the tool schemas are rendered into the prompt PREFIX, so a
+// compaction request must carry exactly the same schemas and system prompt as
+// the session's normal turns. Any difference makes the request stop being a
+// prefix of the previous one, the provider recomputes the whole conversation,
+// and the user pays for it — hence one single source of truth.
+func (s *Session) preparePromptTools() (*agent.AgentConfig, *PromptBuilder, *tools.ContextState, string, error) {
 	cfg := s.agentCfg
 	if cfg == nil {
 		var err error
 		cfg, err = agent.GetAgentConfig(s.record.AgentRole)
 		if err != nil {
-			s.updateStatus("failed")
-			return "", "", fmt.Errorf("get agent config: %w", err)
+			return nil, nil, nil, "", fmt.Errorf("get agent config: %w", err)
 		}
 	}
 
@@ -308,7 +292,39 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 			}
 		}
 	}
+	return cfg, pb, ctxState, groupBackground, nil
+}
 
+// Prompt runs one agent task and returns the final reply text together with
+// the reasoning_content the model produced for it (may be empty).
+//
+// images optionally carries image data URLs (data:image/...;base64,...) that
+// are attached to the initial user message as multimodal content, so the
+// model sees them on the first turn (e.g. screenshots pasted in the web UI).
+//
+// Panic containment: any panic inside the task (LLM path, compaction, tool
+// execution, persistence) is converted into a clean task failure instead of
+// crashing the whole process — the server keeps serving other sessions.
+func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxTurns int) (content string, reasoning string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("agent task panicked, contained", "session", s.ID(), "panic", r)
+			func() {
+				defer func() { recover() }() // never let the bookkeeping itself re-panic
+				s.updateStatus("failed")
+			}()
+			content = ""
+			reasoning = ""
+			err = fmt.Errorf("agent task crashed (panic: %v)", r)
+		}
+	}()
+	s.updateStatus("running")
+
+	cfg, pb, ctxState, groupBackground, err := s.preparePromptTools()
+	if err != nil {
+		s.updateStatus("failed")
+		return "", "", err
+	}
 	systemPrompt := pb.BuildSystemPrompt(s.record.WorkDir, groupBackground)
 	defs := pb.GetFilteredDefinitions(cfg)
 
@@ -457,14 +473,28 @@ func (m *SessionManager) CompactSession(ctx context.Context, sessionID string) (
 	before := util.CountMessagesTokens(msgs)
 
 	// Compact with the session's own model, so the summary is produced by
-	// the same model the conversation runs on.
+	// the same model the conversation runs on. The per-session thinking
+	// override is applied here too (as in Prompt): it changes the rendered
+	// template, so omitting it would put the request on a different prefix.
 	s.mu.Lock()
 	client := s.client
+	thinking, _ := s.record.Metadata["thinking"].(string)
+	effort, _ := s.record.Metadata["reasoning_effort"].(string)
 	s.mu.Unlock()
 	if client == nil {
 		return before, before, fmt.Errorf("会话未配置模型,无法压缩")
 	}
-	newMsgs, err := NewContextCompactor(client).Compact(ctx, msgs)
+	if thinking != "" || effort != "" {
+		client = client.WithReasoning(thinking, effort)
+	}
+	// The tool schemas must match a normal turn exactly — they are part of the
+	// cached prompt prefix (see preparePromptTools).
+	cfg, pb, _, _, err := s.preparePromptTools()
+	if err != nil {
+		return before, before, fmt.Errorf("准备压缩上下文失败: %w", err)
+	}
+	defs := pb.GetFilteredDefinitions(cfg)
+	newMsgs, err := NewContextCompactor(client).SummarizeAndRebuild(ctx, msgs, defs, "")
 	if err != nil {
 		return before, before, fmt.Errorf("压缩失败: %w", err)
 	}

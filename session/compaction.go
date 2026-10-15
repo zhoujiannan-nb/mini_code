@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -139,20 +140,37 @@ func SummaryBlock(summary string) string {
 
 // RebuildContext restarts the conversation from a summary. Input is the
 // context as it was sent for the summarization turn (compaction instruction
-// included). Output is [system][summary][verbatim tail]:
+// included). Output is [system][verbatim tail][summary]:
 //
 //   - the system message is kept byte-identical (it is the one prefix segment
 //     that survives any rewrite);
-//   - the summary becomes a single user message right after it;
 //   - the last keep verbatim messages are walked backwards, never splitting a
 //     tool result from the assistant tool_calls that produced it, and never
-//     starting with a tool message;
+//     starting with a tool message; they stay a contiguous block, in order,
+//     exactly as they were sent before — that block is what the provider's
+//     prefix cache can still match, so it goes first;
+//   - the summary is appended as a single user message *after* that block: it
+//     is the only new bytes of the request, which keeps [system][tail] a
+//     byte-stable prefix for every later turn and for the next compaction
+//     (which retains a suffix of this very tail);
 //   - the verbatim block stays within budget tokens; a single message that is
 //     itself too large is truncated to fit.
 //
 // Compaction instructions and usage notices are dropped. ok is false when
 // nothing could be kept and the caller should keep the original context.
 func RebuildContext(messages []provider.Message, summary string, keep, budget int) (out []provider.Message, ok bool) {
+	return RebuildContextEst(messages, summary, keep, budget, defaultTokenEstimator)
+}
+
+// RebuildContextEst is RebuildContext with an explicit token estimator. est must
+// be the function the compaction threshold is judged with (the loop's calibrated
+// count): the budget arithmetic below and the next turn's threshold decision have
+// to be in the same unit, otherwise the rebuilt context comes back ~2x larger
+// than budgeted and immediately triggers another compaction turn.
+func RebuildContextEst(messages []provider.Message, summary string, keep, budget int, est tokenEstimator) (out []provider.Message, ok bool) {
+	if est == nil {
+		est = defaultTokenEstimator
+	}
 	if strings.TrimSpace(summary) == "" {
 		return messages, false
 	}
@@ -188,18 +206,12 @@ func RebuildContext(messages []provider.Message, summary string, keep, budget in
 	for i := len(history) - 1; i >= 0 && len(taken) < keep; i-- {
 		m := history[i]
 		// Text-only cost estimate of this message.
-		cost := util.CountMessagesTokens([]provider.Message{m})
-		if cost == 0 {
-			// Empty (e.g. an assistant message whose content lives entirely
-			// in tool_calls, which are counted separately): keep it only as a
-			// tool-call parent, see the boundary fix below.
-			cost = 0
-		}
+		cost := est([]provider.Message{m})
 		if used+cost > budget {
 			if len(taken) == 0 {
 				// The single newest message is itself over budget: keep a
 				// truncated copy rather than losing the newest turn entirely.
-				taken = append(taken, truncateToBudget(m, budget))
+				taken = append(taken, truncateToBudget(m, budget, est))
 				used = budget
 				break
 			}
@@ -212,7 +224,10 @@ func RebuildContext(messages []provider.Message, summary string, keep, budget in
 	// Boundary safety: a tool result is only valid API input while the
 	// assistant message declaring its tool_calls is kept alongside it, and the
 	// retained block must never open with a tool message. Pull the parent in
-	// (extra messages beyond `keep` are allowed for integrity).
+	// (extra messages beyond `keep` are allowed for integrity), but charge it
+	// against the budget: its tool_call arguments are counted too, and one large
+	// call payload must not silently push the tail past what was budgeted. The
+	// tool_calls themselves are never touched, so the pairing stays valid.
 	for len(taken) > 0 && taken[len(taken)-1].Role == "tool" {
 		idx := len(history) - 1 - len(taken) // index in history of the message just before the block
 		if idx < 0 {
@@ -222,6 +237,16 @@ func RebuildContext(messages []provider.Message, summary string, keep, budget in
 		if parent.Role != "assistant" || len(parent.ToolCalls) == 0 {
 			break
 		}
+		cost := est([]provider.Message{parent})
+		allow := budget - used
+		if allow < minParentTokens {
+			allow = minParentTokens
+		}
+		if used+cost > budget && cost > allow {
+			parent = truncateToBudget(parent, allow, est)
+			cost = est([]provider.Message{parent})
+		}
+		used += cost
 		taken = append(taken, parent)
 	}
 	// Drop a leading tool message with no retrievable parent (should not
@@ -234,26 +259,34 @@ func RebuildContext(messages []provider.Message, summary string, keep, budget in
 	if system != nil {
 		out = append(out, *system)
 	}
-	out = append(out, provider.Message{Role: "user", Content: SummaryBlock(summary)})
 	for i := len(taken) - 1; i >= 0; i-- {
 		out = append(out, taken[i])
 	}
+	// The summary closes the context: everything before it is byte-identical to
+	// what has already been sent (and cached), only these new bytes are not.
+	out = append(out, provider.Message{Role: "user", Content: SummaryBlock(summary)})
 	return out, true
 }
 
-// truncateToBudget cuts m down to roughly budget tokens, keeping its head
-// (where the payload usually matters most) and marking the cut. The estimate
-// uses the same counter as the threshold logic, refined by a few passes.
-func truncateToBudget(m provider.Message, budget int) provider.Message {
+// truncateToBudget cuts m down to at most budget tokens (as counted by est, the
+// same estimator the threshold logic uses), keeping its head — where the payload
+// usually matters most — and marking the cut.
+func truncateToBudget(m provider.Message, budget int, est tokenEstimator) provider.Message {
+	if est == nil {
+		est = defaultTokenEstimator
+	}
 	text := m.GetText()
-	cost := util.CountMessagesTokens([]provider.Message{m})
+	cost := est([]provider.Message{m})
 	if cost <= budget || cost == 0 || text == "" {
 		return m
 	}
-	out := m
-	for pass := 0; pass < 6; pass++ {
-		// Leave room for the marker line.
-		keep := int(float64(len(text)) * float64(budget) / float64(cost) * 0.95)
+	marker := func(total int) string {
+		return fmt.Sprintf("\n[... truncated to fit the %d token compaction budget, total %d tokens ...]", budget, total)
+	}
+	// Shrink proportionally first, then verify with the estimator and keep
+	// shaving 5% until it actually fits. Bounded and always terminating.
+	keep := int(float64(len(text)) * float64(budget) / float64(cost) * 0.9)
+	for {
 		if keep < 0 {
 			keep = 0
 		}
@@ -264,15 +297,125 @@ func truncateToBudget(m provider.Message, budget int) provider.Message {
 		for keep > 0 && keep < len(text) && (text[keep]&0xC0) == 0x80 {
 			keep--
 		}
-		out = m
-		out.SetTextContent(text[:keep] + fmt.Sprintf("\n[... truncated to fit the %d token compaction budget, total %d tokens ...]", budget, cost))
-		cost = util.CountMessagesTokens([]provider.Message{out})
-		if cost <= budget {
+		out := m
+		out.SetTextContent(text[:keep] + marker(cost))
+		if est([]provider.Message{out}) <= budget || keep == 0 {
+			return out
+		}
+		keep = keep * 95 / 100
+		if keep == 0 && len(text) > 0 {
+			// Guard against an infinite loop when even the marker alone does
+			// not fit: fall back to dropping the content entirely.
+			out = m
+			out.SetTextContent("[... content dropped: larger than the compaction budget]")
+			return out
+		}
+	}
+}
+
+// tokenEstimator counts the tokens of a message slice. Two implementations are
+// used: the raw local estimate and the loop's calibrated count (the number the
+// compaction thresholds are judged with).
+type tokenEstimator func([]provider.Message) int
+
+func defaultTokenEstimator(messages []provider.Message) int {
+	return util.CountMessagesTokens(messages)
+}
+
+// RebuildTargetTokens is the size the context should have right after a
+// compaction: half of the input window, and never more than the soft compaction
+// threshold. Rebuilding to the threshold itself would mean the very next turn is
+// already over threshold and spends another (uncached) compaction turn.
+func RebuildTargetTokens(maxInput int) int {
+	if maxInput <= 0 {
+		return CompactKeepMaxTokens
+	}
+	target := maxInput / 2
+	if th := int(float64(maxInput) * compactThreshold); th < target {
+		target = th
+	}
+	return target
+}
+
+// CompactKeepBudget is the token budget of the verbatim tail kept after a
+// summary. The rule is the 20k token window (CompactKeepMaxTokens): the last
+// CompactKeepMessages messages are retained verbatim up to that budget.
+// A window too small to afford it is clamped to what fits under the rebuild
+// target — otherwise compaction would "finish" with a context still above the
+// trigger and immediately compact again — and minKeepTokens keeps the tail from
+// ever being empty for free. overhead is what the rebuilt request carries
+// anyway (system prompt, tool schemas, the summary block), measured with the
+// same estimator the threshold logic uses.
+func CompactKeepBudget(maxInput, overhead int) int {
+	budget := CompactKeepMaxTokens
+	if maxInput > 0 {
+		if room := RebuildTargetTokens(maxInput) - overhead; room < budget {
+			budget = room
+		}
+	}
+	if budget < minKeepTokens {
+		budget = minKeepTokens
+	}
+	return budget
+}
+
+// minKeepTokens keeps at least one (possibly truncated) message after the
+// summary even on a window so small that the system prompt alone eats half of
+// it — dropping the newest turn entirely is worse than going slightly over.
+const minKeepTokens = 256
+
+// minParentTokens is what a tool-call parent message is always allowed to keep
+// when the tail budget is already spent: enough of its narration to make the
+// retained tool result readable, while a megabyte of call arguments cannot
+// become an escape hatch out of the budget.
+const minParentTokens = 256
+
+// RebuildOverhead estimates what the rebuilt request carries besides the
+// verbatim tail: the system prompt, the tool schemas (re-sent, and billed, on
+// every request) and the summary block itself. Must be measured with the same
+// estimator as the budget, or the tail ends up larger than intended.
+func RebuildOverhead(messages []provider.Message, summary string, tools []provider.ToolSchema, est tokenEstimator) int {
+	if est == nil {
+		est = defaultTokenEstimator
+	}
+	var fixed []provider.Message
+	for _, m := range messages {
+		if m.Role == "system" {
+			fixed = append(fixed, m)
 			break
 		}
-		text = out.GetText()
 	}
-	return out
+	if len(tools) > 0 {
+		if data, err := json.Marshal(tools); err == nil {
+			fixed = append(fixed, provider.Message{Role: "system", Content: string(data)})
+		}
+	}
+	cost := est(fixed) + est([]provider.Message{{Role: "user", Content: SummaryBlock(summary)}})
+	return cost
+}
+
+// calibratedEstimator maps the local token estimate onto the provider's token
+// scale, matching AgentLoop.calibratedCount, so the manual (no-loop) compaction
+// path budgets the tail the same way a running loop does.
+func calibratedEstimator(model string, tools []provider.ToolSchema) tokenEstimator {
+	cal := calibratorFor(model, tools)
+	return func(messages []provider.Message) int {
+		return cal.apply(util.CountMessagesTokens(messages))
+	}
+}
+
+// recompactGrowTokens is the re-arm guard: after a compaction the context has
+// to grow by at least this many tokens before the passive threshold may
+// trigger another compaction turn. Without it, a context that is still over the
+// threshold right after a compacting (large retained tool output, oversized
+// system prompt) would spend every single turn on a compaction turn — a full
+// re-prefill each time, for nothing.
+func recompactGrowTokens(maxInput int) int {
+	g := maxInput / 20 // 5% of the input budget
+	if g < 512 {
+		g = 512
+	}
+	return g
 }
 
 // ContextCompactor holds the thresholds and the one-shot summarization path
@@ -322,6 +465,7 @@ func (c *ContextCompactor) SummarizeAndRebuild(ctx context.Context, messages []p
 	if len(messages) == 0 {
 		return messages, fmt.Errorf("会话为空,无需压缩")
 	}
+	compEst := calibratedEstimator(c.client.ModelName(), tools)
 	// The request is the existing context plus one user message: everything
 	// before it is byte-identical to the last normal request, so the provider
 	// serves it from the KV prefix cache.
@@ -341,7 +485,8 @@ func (c *ContextCompactor) SummarizeAndRebuild(ctx context.Context, messages []p
 	if summary == "" {
 		return messages, fmt.Errorf("模型未返回摘要")
 	}
-	out, ok := RebuildContext(messages, summary, CompactKeepMessages, CompactKeepMaxTokens)
+	out, ok := RebuildContextEst(messages, summary, CompactKeepMessages,
+		CompactKeepBudget(c.client.GetMaxInput(), RebuildOverhead(messages, summary, tools, compEst)), compEst)
 	if !ok {
 		return messages, fmt.Errorf("没有可压缩的历史(内容太短或没有安全的切分点)")
 	}

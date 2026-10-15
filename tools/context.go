@@ -88,8 +88,8 @@ func (t *ContextUsageTool) Execute(ctx context.Context, params map[string]interf
 		return NewTextResult(fmt.Sprintf("Context usage: %d tokens (budget unknown).", tokens)), nil
 	}
 	pct := float64(tokens) / float64(maxInput) * 100
-	trigger := int(float64(maxInput) * 0.85)
-	return NewTextResult(fmt.Sprintf("Context usage: %d / %d tokens (%.1f%%). Auto-compaction triggers at 85%% (%d tokens).", tokens, maxInput, pct, trigger)), nil
+	trigger := int(float64(maxInput) * 0.80)
+	return NewTextResult(fmt.Sprintf("Context usage: %d / %d tokens (%.1f%%). Automatic compaction triggers at 80%% (%d tokens); you can call compact_context earlier yourself.", tokens, maxInput, pct, trigger)), nil
 }
 
 // CompactContextTool lets the model actively request a context compaction,
@@ -106,7 +106,7 @@ func NewCompactContextTool(state *ContextState) *CompactContextTool {
 
 func (t *CompactContextTool) Name() string { return "compact_context" }
 func (t *CompactContextTool) Description() string {
-	return "Actively compress this session's context now, regardless of the auto-compaction threshold. Provide an instruction describing what to focus on or preserve in the summary (e.g. 'keep the test results and the failing case'). The compression is applied before the next model call; the compressed context takes effect on the next turn."
+	return "Actively compress this session's context now, regardless of the automatic threshold. Provide an instruction describing what the summary should focus on or preserve (e.g. 'keep the test results and the failing case'); with it the compression prompt is yours instead of the fixed one. The next model turn is spent writing that summary, and the conversation then restarts from [system prompt][summary][the last few messages], so nothing else is lost from the model's working set."
 }
 func (t *CompactContextTool) IsHidden() bool { return false }
 func (t *CompactContextTool) Parameters() map[string]interface{} {

@@ -246,16 +246,15 @@ func TestRunCalibratesUsage(t *testing.T) {
 	}
 }
 
-// TestCheckAndCompressCountHonorsCalibratedCount: the compaction decision
-// must be made on the caller-supplied (calibrated) count. Below the threshold
-// no compaction and no LLM call; at/above it, compaction runs.
-func TestCheckAndCompressCountHonorsCalibratedCount(t *testing.T) {
+// TestShouldCompactCountHonorsCalibratedCount: the compaction *decision* must
+// be made on the caller-supplied (calibrated) count. Compaction itself is no
+// longer a side call here — it is a turn of the agent loop (see
+// compaction_turn_test.go) — so this test pins only the threshold logic:
+// below the threshold nothing is requested and no LLM call is made.
+func TestShouldCompactCountHonorsCalibratedCount(t *testing.T) {
 	var calls int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(&calls, 1)
-		// Non-streaming JSON (the compactor uses Chat, not ChatStream).
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"choices":[{"message":{"content":"Goal: test summary of old turns"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`))
 	}))
 	defer srv.Close()
 
@@ -263,44 +262,25 @@ func TestCheckAndCompressCountHonorsCalibratedCount(t *testing.T) {
 	defer client.Close()
 	maxInput := loop.client.GetMaxInput()
 
-	// A long-ish history (more than recentKeep non-system messages) so that,
-	// were the threshold crossed, compaction could actually run.
-	var msgs []provider.Message
-	msgs = append(msgs, provider.Message{Role: "system", Content: "s"})
-	for i := 0; i < 10; i++ {
-		msgs = append(msgs,
-			provider.Message{Role: "user", Content: strings.Repeat("x", 100) + fmt.Sprintf(" %d", i)},
-			provider.Message{Role: "assistant", Content: "ok"})
+	// Below the threshold → no compaction requested, no LLM call.
+	if loop.compactor.ShouldCompactCount(int(float64(maxInput)*0.5), maxInput) {
+		t.Fatal("ShouldCompactCount true below the 80% threshold")
 	}
-
-	// Raw estimate below the threshold → no compaction, no LLM call.
-	below := int(float64(maxInput) * 0.5)
-	if _, compacted, err := loop.compactor.CheckAndCompressCount(context.Background(), msgs, maxInput, below); err != nil {
-		t.Fatalf("CheckAndCompressCount: %v", err)
-	} else if compacted {
-		t.Fatal("compacted below threshold")
-	} else if atomic.LoadInt64(&calls) != 0 {
-		t.Fatal("compaction LLM call made below threshold")
+	// At/above the threshold → compaction requested. A raw cl100k
+	// under-estimate must not delay it, which is why the loop feeds the
+	// calibrated count here.
+	if !loop.compactor.ShouldCompactCount(int(float64(maxInput)*0.9), maxInput) {
+		t.Fatal("ShouldCompactCount false above the 80% threshold")
 	}
-
-	// Calibrated count above the threshold even though the raw estimate is
-	// below it → compaction must run. This is the whole point of feeding the
-	// calibrated count: a raw cl100k under-estimate must not delay compaction.
-	at := int(float64(maxInput) * 0.9)
-	newMsgs, compacted, err := loop.compactor.CheckAndCompressCount(context.Background(), msgs, maxInput, at)
-	if err != nil {
-		t.Fatalf("CheckAndCompressCount: %v", err)
+	if !loop.compactor.ShouldForceCompact(int(float64(maxInput)*0.9), maxInput) {
+		t.Fatal("ShouldForceCompact false above the 87% threshold")
 	}
-	if !compacted {
-		t.Fatal("expected compaction when the calibrated count crosses the threshold")
+	if atomic.LoadInt64(&calls) != 0 {
+		t.Fatalf("threshold checks must not call the model, got %d calls", calls)
 	}
-	if atomic.LoadInt64(&calls) != 1 {
-		t.Fatalf("expected exactly 1 compaction LLM call, got %d", calls)
-	}
-	if len(newMsgs) >= len(msgs) {
-		t.Fatalf("compacted history (%d msgs) not shorter than original (%d)", len(newMsgs), len(msgs))
-	}
-	if !strings.Contains(newMsgs[1].GetText(), "<previous-summary>") {
-		t.Fatal("compacted history missing the summary marker")
+	// maxInput unknown → never compact (avoids dividing by zero / a bogus 0
+	// budget triggering compaction on a fresh session).
+	if loop.compactor.ShouldCompactCount(1000, 0) {
+		t.Fatal("ShouldCompactCount must be false when the budget is unknown")
 	}
 }

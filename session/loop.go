@@ -32,7 +32,21 @@ type AgentLoop struct {
 	tools            *tools.ToolRegistry
 	toolDefinitions  []provider.ToolSchema
 	compactor        *ContextCompactor
-	compactionOn     bool // false = skip CheckAndCompress entirely
+	compactionOn     bool // false = skip the automatic compaction check entirely
+	// compactionTurn is set from the moment the compaction instruction is
+	// appended until the summary comes back: the next model call IS the
+	// summarization turn.
+	compactionTurn bool
+	// compactionBlocked stops retrying compaction for the rest of this run
+	// after the model failed to produce a summary (avoids a compaction loop).
+	compactionBlocked bool
+	// lastCompactionTokens is the calibrated size right after the last
+	// compaction. Compaction only re-arms once the context has grown by a
+	// meaningful amount since — otherwise a context that is still over the
+	// threshold after a compaction (huge retained tool output, big system
+	// prompt) would trigger a compaction turn on EVERY turn, which costs a
+	// full re-prefill each time and never converges.
+	lastCompactionTokens int
 	ctxState         *tools.ContextState // shared context view for context tools (nil = disabled)
 	contextRemindersOn bool             // inject 75%/80%/85% usage notices (nil ctxState-safe)
 	onToolCallStart  func(name string, params map[string]interface{})
@@ -144,6 +158,13 @@ func (l *AgentLoop) calibrator() *tokenCalibrator {
 func (l *AgentLoop) calibratedCount(messages []provider.Message) int {
 	l.estBefore = util.CountMessagesTokens(messages)
 	return l.calibrator().apply(l.estBefore)
+}
+
+// countMessages is calibratedCount without the estBefore side effect: budget
+// math outside the request path must not pollute the sample pair that the next
+// usage report is folded into.
+func (l *AgentLoop) countMessages(messages []provider.Message) int {
+	return l.calibrator().apply(util.CountMessagesTokens(messages))
 }
 
 // SetGate installs the runtime permission gate consulted before every tool
@@ -435,6 +456,11 @@ func (l *AgentLoop) maybeInjectUsageReminder(messages []provider.Message, tokens
 }
 
 func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, history []provider.Message) (*LoopResult, error) {
+	// A compaction instruction as the last stored message means the previous
+	// run was cut off in the middle of a summarization turn. Resume that turn
+	// instead of answering a new message on top of a stale instruction.
+	resumeCompaction := len(history) > 0 && IsCompactRequest(history[len(history)-1])
+
 	userMsg := l.buildUserMessage(userMessage)
 	var messages []provider.Message
 	if len(history) > 0 {
@@ -443,8 +469,11 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			messages = append([]provider.Message{{Role: "system", Content: systemPrompt}}, messages...)
 		}
 		// Only append user message if history doesn't already end with it
-		// (interrupt recovery must not re-append the same message).
-		if len(messages) == 0 || !historyEndsWithUserMsg(messages, userMsg) {
+		// (interrupt recovery must not re-append the same message). While
+		// resuming a compaction turn nothing is appended: the instruction must
+		// stay the last message so the request keeps extending the cached
+		// prefix.
+		if !resumeCompaction && (len(messages) == 0 || !historyEndsWithUserMsg(messages, userMsg)) {
 			messages = append(messages, userMsg)
 		}
 	} else {
@@ -455,6 +484,14 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 	}
 
 	slog.Info("AgentLoop started", "initial_tokens", util.CountMessagesTokens(messages), "max_input", l.client.GetMaxInput())
+
+	if resumeCompaction {
+		l.compactionTurn = true
+		slog.Info("resuming in-flight compaction turn", "messages", len(messages))
+	} else {
+		// Anywhere else a stale instruction would only confuse the model.
+		messages = StripCompactRequests(messages)
+	}
 
 	for turn := 1; turn <= l.maxTurns; turn++ {
 		slog.Info(fmt.Sprintf("=== Turn %d ===", turn))
@@ -479,18 +516,15 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			}
 		}
 
-		// Active compaction requested by the model via the compact_context tool:
-		// compact now regardless of the auto threshold, using the model's own
-		// instruction. Consumed before the auto-compaction check.
-		if l.ctxState != nil {
-			if pending, instruction := l.ctxState.TakePendingCompaction(); pending {
-				if newMsgs, err := l.compactor.CompactWithInstruction(ctx, messages, instruction); err != nil {
-					slog.Warn("active compaction failed", "err", err)
-				} else {
-					messages = newMsgs
-				}
-			}
-		}
+		// ---- Compaction: the next model call becomes the summarization turn.
+		//
+		// The conversation is no longer re-serialized and shipped to a separate
+		// summarizer call. Instead one user message (the compaction
+		// instruction) is appended to the live context, so the request stays an
+		// exact extension of the previous one — everything before the new
+		// message is byte-identical and keeps hitting the provider's KV prefix
+		// cache — and the model itself answers with the summary. The context is
+		// then restarted from [system][summary][verbatim tail] (RebuildContext).
 		// Estimate the context about to be sent: first locally (raw cl100k
 		// proxy), then calibrated onto the provider's own token scale (see
 		// tokenCalibrator). The calibrated count drives the auto-compaction
@@ -498,21 +532,42 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		// the provider's usage report for this very call can refine the
 		// calibration afterwards.
 		tokens := l.calibratedCount(messages)
-		// Auto compaction (threshold-based), skipped entirely when the toggle is off.
-		if l.compactionOn {
-			var err error
-			var compacted bool
-			messages, compacted, err = l.compactor.CheckAndCompressCount(ctx, messages, l.client.GetMaxInput(), tokens)
-			if err != nil {
-				slog.Warn("compaction failed", "err", err)
+		if l.compactionTurn {
+			// The instruction is already the last message; this call answers it.
+		} else if !l.compactionBlocked {
+			need, instruction := false, ""
+			// Model-initiated (compact_context): always honored, regardless of
+			// the automatic-compaction toggle, with the model's own instruction
+			// as the compaction prompt.
+			if l.ctxState != nil {
+				if pending, instr := l.ctxState.TakePendingCompaction(); pending {
+					need, instruction = true, instr
+				}
 			}
-			if compacted {
-				tokens = l.calibratedCount(messages) // context was rewritten: re-estimate
+			// Passive (automatic) compaction uses the fixed prompt. The second
+			// condition is the re-arm guard: only compact again once the
+			// context has grown by at least recompactGrowTokens since the last
+			// compaction (see lastCompactionTokens).
+			if !need && l.compactionOn {
+				maxInput := l.client.GetMaxInput()
+				if l.compactor.ShouldCompactCount(tokens, maxInput) &&
+					tokens >= l.lastCompactionTokens+recompactGrowTokens(maxInput) {
+					need = true
+				}
 			}
-			if ctx.Err() != nil {
-				slog.Info("agent loop interrupted after compaction", "turn", turn)
-				return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
+			if need {
+				slog.Info("starting compaction turn", "tokens", tokens, "max_input", l.client.GetMaxInput(), "agent_instruction", instruction != "")
+				messages = append(messages, BuildCompactRequest(instruction))
+				l.compactionTurn = true
+				// Persist before the call: a crash mid-turn leaves the
+				// instruction as the last message and Run() resumes it.
+				l.persistTurn(turn, messages)
+				tokens = l.calibratedCount(messages)
 			}
+		}
+		if ctx.Err() != nil {
+			slog.Info("agent loop interrupted before compaction turn", "turn", turn)
+			return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
 		}
 		// Publish the current context usage (reflects the context about to be
 		// sent to the model) to the context tools and to the UI token bar.
@@ -528,7 +583,9 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 	// budget, append a system notice to the tail nudging the model to compact.
 		// the tail. Cache-friendly: it only extends the prefix, never edits the
 		// middle, so the KV prefix cache is preserved.
-		if l.contextRemindersOn {
+		// Skipped on a compaction turn: telling the model to call
+		// compact_context while it is writing the summary is counter-productive.
+		if l.contextRemindersOn && !l.compactionTurn {
 			messages = l.maybeInjectUsageReminder(messages, tokens)
 		}
 		l.persistTurn(turn, messages)
@@ -609,6 +666,59 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			if u.PromptTokens > 0 {
 				l.calibrator().update(l.estBefore, u.PromptTokens)
 			}
+		}
+
+		// Was this call the summarization turn? Clear the flag here so every
+		// branch below (and any later turn) starts from a normal state.
+		wasCompactionTurn := l.compactionTurn
+		l.compactionTurn = false
+
+		// Compaction turn: this reply is the summary, not an answer to the
+		// user. Restart the context from it and keep the task running. Tool
+		// calls on this turn are discarded — the instruction forbids them, and
+		// executing tools from a summary request would derail the task.
+		if wasCompactionTurn {
+			summary := ExtractSummary(resp.Content, resp.ReasoningContent)
+			// Budget arithmetic runs on the calibrated count — the same number
+			// the next turn's threshold decision uses — so the rebuilt context
+			// really does land below the threshold.
+			est := l.countMessages
+			overhead := RebuildOverhead(messages, summary, l.toolDefinitions, est)
+			rebuildBudget := CompactKeepBudget(l.client.GetMaxInput(), overhead)
+			newMsgs, ok := RebuildContextEst(messages, summary, CompactKeepMessages, rebuildBudget, est)
+			if !ok {
+				slog.Warn("compaction turn produced no usable summary; continuing uncompacted",
+					"turn", turn, "dropped_tool_calls", len(resp.ToolCalls), "content_chars", len(resp.Content))
+				messages = StripCompactRequests(messages)
+				// Do not retry for the rest of this run: a model that will not
+				// summarize should not burn the turn budget trying.
+				l.compactionBlocked = true
+				l.persistTurn(turn, messages)
+				continue
+			}
+			after := l.countMessages(newMsgs)
+			// No-progress guard: if this compaction did not leave the context
+			// smaller than the previous one, stop compacting for this run.
+			if l.lastCompactionTokens > 0 && after >= l.lastCompactionTokens {
+				slog.Warn("compaction made no progress, disabling further compaction for this run",
+					"turn", turn, "after", after, "previous_after", l.lastCompactionTokens)
+				l.compactionBlocked = true
+			}
+			l.lastCompactionTokens = after
+			slog.Info("compaction complete", "turn", turn, "before_tokens", tokens, "after_tokens", after,
+				"before_msgs", len(messages), "after_msgs", len(newMsgs), "summary_chars", len(summary),
+				"dropped_tool_calls", len(resp.ToolCalls),
+				"rebuild_target", RebuildTargetTokens(l.client.GetMaxInput()),
+				"fixed_overhead", overhead, "tail_budget", rebuildBudget)
+			messages = newMsgs
+			if l.ctxState != nil {
+				l.ctxState.SetUsage(after, l.client.GetMaxInput())
+			}
+			if l.onContextUsage != nil {
+				l.onContextUsage(after)
+			}
+			l.persistTurn(turn, messages)
+			continue
 		}
 
 		// parse response
