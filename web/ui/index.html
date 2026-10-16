@@ -971,7 +971,7 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
         <span class="token-usage" id="cache-hit" title="上一轮 LLM 调用的 KV 前缀缓存命中(cached / prompt tokens)。n/a = 该部署未上报缓存命中(如 SGLang 未开 --enable-cache-report);0% = 已上报但本轮无命中。"></span>
         <span class="token-usage" id="output-speed" title="输出速度(token/秒)。生成中为实时估算(≈);任务停止后保留最后一次的展示值(最后一次 LLM 调用的实测均值,已存入数据库)"></span>
         <div style="display:flex; align-items:center; gap:10px">
-          <label class="ctx-toggle" id="ctx-toggle" title="上下文占用 75%/80%/85% 时提醒模型主动压缩;87% 强制兜底压缩">
+          <label class="ctx-toggle" id="ctx-toggle" title="上下文占用达窗口 85%/90% 时提醒模型主动压缩;95% 强制兜底压缩(提醒按 context window 计算,并以模型输入上限兜底)">
             <input type="checkbox" id="ctx-reminders"> 上下文提醒
           </label>
           <button class="mode-btn" id="btn-mode" title="权限模式">⚡ 完整模式</button>

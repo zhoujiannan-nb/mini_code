@@ -146,7 +146,7 @@ func TestRebuildContextDropsNoticesAndInstructions(t *testing.T) {
 	in := []provider.Message{
 		{Role: "system", Content: "SYSTEM"},
 		{Role: "user", Content: "work"},
-		usageNotice(85, 900, 1000),
+		usageNotice(usageNoticeStage1Pct, 900, 1000, 950),
 		BuildCompactRequest(""),
 	}
 	out, ok := RebuildContext(in, "summary", CompactKeepMessages, CompactKeepMaxTokens)
@@ -249,10 +249,11 @@ func TestCompactKeepBudget(t *testing.T) {
 	if got := CompactKeepBudget(8928, 100_000); got != minKeepTokens {
 		t.Fatalf("starved window should still keep %d tokens, got %d", minKeepTokens, got)
 	}
-	// Whatever the window, the rebuild target sits under the 80% trigger so the
-	// turn right after a compaction is a normal turn.
+	// Whatever the window, the rebuild target stays well under the compaction
+	// point (95% of the window, clamped to the input budget), so the turn right
+	// after a compaction is a normal turn.
 	for _, mi := range []int{2048, 8928, 32_000, 200_000} {
-		if got := RebuildTargetTokens(mi); float64(got)/float64(mi) >= compactThreshold {
+		if got := RebuildTargetTokens(mi); float64(got)/float64(mi) >= autoCompactWindowFraction {
 			t.Fatalf("rebuild target %d of %d is not below the compaction threshold", got, mi)
 		}
 	}
@@ -282,7 +283,7 @@ func TestRebuildBudgetUsesTheThresholdUnits(t *testing.T) {
 	if !ok {
 		t.Fatal("rebuild refused")
 	}
-	if got := est(out); float64(got)/float64(maxInput) >= compactThreshold {
+	if got := est(out); float64(got)/float64(maxInput) >= autoCompactWindowFraction {
 		t.Fatalf("rebuilt context is %d tokens (%.0f%% of the window), still over the trigger",
 			got, 100*float64(got)/float64(maxInput))
 	}

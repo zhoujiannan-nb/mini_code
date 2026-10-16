@@ -19,6 +19,7 @@ type ContextState struct {
 	mu             sync.Mutex
 	tokens         int
 	maxInput       int
+	compactionAt   int
 	pendingCompact bool
 	pendingInstr   string
 }
@@ -27,12 +28,23 @@ func NewContextState() *ContextState {
 	return &ContextState{}
 }
 
-// SetUsage records the current context token count and the max input budget.
-func (c *ContextState) SetUsage(tokens, maxInput int) {
+// SetUsage records the current context token count, the max input budget and the
+// token count at which the loop compacts on its own (0 = unknown). The tools only
+// report these numbers: keeping the threshold arithmetic in the loop means a
+// policy change never has to be mirrored here.
+func (c *ContextState) SetUsage(tokens, maxInput, compactionAt int) {
 	c.mu.Lock()
 	c.tokens = tokens
 	c.maxInput = maxInput
+	c.compactionAt = compactionAt
 	c.mu.Unlock()
+}
+
+// CompactionAt returns the token count where the loop forces a compaction turn.
+func (c *ContextState) CompactionAt() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.compactionAt
 }
 
 // Usage returns the current context token count and the max input budget.
@@ -88,8 +100,10 @@ func (t *ContextUsageTool) Execute(ctx context.Context, params map[string]interf
 		return NewTextResult(fmt.Sprintf("Context usage: %d tokens (budget unknown).", tokens)), nil
 	}
 	pct := float64(tokens) / float64(maxInput) * 100
-	trigger := int(float64(maxInput) * 0.80)
-	return NewTextResult(fmt.Sprintf("Context usage: %d / %d tokens (%.1f%%). Automatic compaction triggers at 80%% (%d tokens); you can call compact_context earlier yourself.", tokens, maxInput, pct, trigger)), nil
+	if at := t.state.CompactionAt(); at > 0 {
+		return NewTextResult(fmt.Sprintf("Context usage: %d / %d input tokens (%.1f%%). This session compacts automatically at %d tokens; you can call compact_context earlier yourself.", tokens, maxInput, pct, at)), nil
+	}
+	return NewTextResult(fmt.Sprintf("Context usage: %d / %d input tokens (%.1f%%); you can call compact_context any time to summarize older work.", tokens, maxInput, pct)), nil
 }
 
 // CompactContextTool lets the model actively request a context compaction,

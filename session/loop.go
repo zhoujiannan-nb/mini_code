@@ -48,7 +48,7 @@ type AgentLoop struct {
 	// full re-prefill each time and never converges.
 	lastCompactionTokens int
 	ctxState         *tools.ContextState // shared context view for context tools (nil = disabled)
-	contextRemindersOn bool             // inject 75%/80%/85% usage notices (nil ctxState-safe)
+	contextRemindersOn bool             // inject 85%/90% usage notices (95% forces compaction) (nil ctxState-safe)
 	onToolCallStart  func(name string, params map[string]interface{})
 	onToolCallEnd    func(name string, params map[string]interface{}, result string)
 	onAssistantReply func(content string, reasoning string)
@@ -179,7 +179,7 @@ func (l *AgentLoop) SetGate(g ToolGate) { l.gate = g }
 func (l *AgentLoop) SetContextState(state *tools.ContextState) { l.ctxState = state }
 
 // SetContextRemindersOn toggles the context-usage notices
-// (injected at 75% / 80% / 85% of the budget). Must be called before Run.
+// (injected at 85% / 90% of the context window). Must be called before Run.
 func (l *AgentLoop) SetContextRemindersOn(on bool) { l.contextRemindersOn = on }
 
 // SetOnContextUsage installs the per-turn context-usage callback fired after
@@ -349,13 +349,15 @@ func (l *AgentLoop) persistTurn(turn int, messages []provider.Message) {
 	}
 }
 
-// Context-usage notice thresholds (fractions of the max input budget). The
-// notices nudge the model to compact proactively before the 80% auto-compaction
-// threshold. Three stages: 75% (gentle), 80% (consider), 85% (immediate).
+// Context-usage notices: two stages, measured against the model's FULL CONTEXT
+// WINDOW (clamped to the input budget by ContextWindowFraction) — the same
+// reference as the automatic compaction, which now runs at 95% of the window.
+// 85% nudges, 90% says the loop will do it next turn if you do not.
 const (
-	usageNoticeStage1 = 0.75 // announce at 75% of the budget
-	usageNoticeStage2 = 0.80 // announce at 80% of the budget
-	usageNoticeStage3 = 0.85 // announce at 85% of the budget
+	usageNoticeStage1    = 0.85 // first fraction
+	usageNoticeStage2    = 0.90 // second fraction
+	usageNoticeStage1Pct = 85   // marker / message label of stage 1
+	usageNoticeStage2Pct = 90   // marker / message label of stage 2
 )
 
 // usageNoticeRole is the role of the injected notice. It is a "user" message so
@@ -372,87 +374,90 @@ func usageNoticeMarker(pct int) string {
 	return fmt.Sprintf("__CTX_USAGE_%d__", pct)
 }
 
-// usageNotice builds the system notice message for the given stage (75/80/85).
-// The text is English and states that, when several notices are present, the
-// most recent one is the current state ("the last one takes effect").
-func usageNotice(pct, tokens, maxInput int) provider.Message {
+// usageNotice builds the notice for one of the two stages. pct is the share of
+// the context window the context has reached; ref is the absolute window size the
+// percentage is measured against and compactionAt is the token count where the
+// loop compacts on its own — quoting both means the model never has to guess
+// what a bare percentage meant.
+func usageNotice(pct, tokens, ref, compactionAt int) provider.Message {
 	var text string
-	if pct >= 85 {
-		text = fmt.Sprintf("Context usage is now at %d%% of the input budget (%d / %d tokens) and is about to hit the auto-compaction threshold. You should call compact_context NOW to summarize older work (keep only key facts, file paths, decisions, and current progress). If multiple context-usage notices appear, the most recent one is the current state.", pct, tokens, maxInput)
-	} else if pct >= 80 {
-		text = fmt.Sprintf("Context usage is now at %d%% of the input budget (%d / %d tokens). Consider calling compact_context to summarize older work. If multiple context-usage notices appear, the most recent one is the current state.", pct, tokens, maxInput)
+	if pct >= usageNoticeStage2Pct {
+		text = fmt.Sprintf("Context usage is now at %d%% of the model context window (%d / %d tokens). The session compacts automatically at %d tokens, so call compact_context NOW to summarize older work (keep only key facts, file paths, decisions, and current progress). If multiple context-usage notices appear, the most recent one is the current state.", pct, tokens, ref, compactionAt)
 	} else {
-		text = fmt.Sprintf("Context usage is now at %d%% of the input budget (%d / %d tokens). If multiple context-usage notices appear, the most recent one is the current state.", pct, tokens, maxInput)
+		text = fmt.Sprintf("Context usage is now at %d%% of the model context window (%d / %d tokens); the session compacts automatically at %d tokens. Consider calling compact_context to summarize older work. If multiple context-usage notices appear, the most recent one is the current state.", pct, tokens, ref, compactionAt)
 	}
 	return provider.Message{Role: usageNoticeRole, Content: text + " " + usageNoticeMarker(pct)}
 }
 
-// scanUsageNoticeMarkers reports which usage notices (75/80/85) have already
-// been announced in the context (by their markers).
-func scanUsageNoticeMarkers(messages []provider.Message) (has75, has80, has85 bool) {
+// scanUsageNoticeMarkers reports which usage notices (85/90%) have already been
+// announced in the context (by their markers).
+func scanUsageNoticeMarkers(messages []provider.Message) (has85, has90 bool) {
 	for _, m := range messages {
 		t := m.GetText()
-		if !has75 && strings.Contains(t, usageNoticeMarker(75)) {
-			has75 = true
-		}
-		if !has80 && strings.Contains(t, usageNoticeMarker(80)) {
-			has80 = true
-		}
-		if !has85 && strings.Contains(t, usageNoticeMarker(85)) {
+		if !has85 && strings.Contains(t, usageNoticeMarker(usageNoticeStage1Pct)) {
 			has85 = true
 		}
+		if !has90 && strings.Contains(t, usageNoticeMarker(usageNoticeStage2Pct)) {
+			has90 = true
+		}
 	}
-	return has75, has80, has85
+	return has85, has90
 }
 
-// maybeInjectUsageReminder appends a context-usage notice to the tail of the
-// conversation when the context crosses 75%, 80%, or 85% of the budget and that
-// stage has not been announced yet in the current context. It is cache-friendly:
-// the notice is only ever appended to the end (extending the prefix), never
-// inserted or removed from the middle, so the KV prefix cache is preserved.
-// Returns the (possibly extended) messages. tokens is the calibrated
-// (provider-scale) estimate already computed by the caller.
+// maybeInjectUsageReminder appends a context-usage notice when the context
+// crosses 85% or 90% of the model's context window and that stage has not been
+// announced yet in the current context. Both fractions are clamped to the input
+// budget (ContextWindowFraction), so a model whose output reserve is larger than
+// that margin collapses the stages onto the budget instead of asking for a
+// request the provider would reject.
+//
+// It is cache-friendly: the notice is only ever appended to the end (extending
+// the prefix), never inserted or removed from the middle, so the KV prefix cache
+// is preserved. tokens is the calibrated (provider-scale) estimate the caller
+// already computed.
 func (l *AgentLoop) maybeInjectUsageReminder(messages []provider.Message, tokens int) []provider.Message {
-	maxInput := l.client.GetMaxInput()
-	if maxInput <= 0 {
+	window := l.client.GetContextWindow()
+	limit1 := ContextWindowFraction(window, l.client.GetMaxInput(), usageNoticeStage1)
+	limit2 := ContextWindowFraction(window, l.client.GetMaxInput(), usageNoticeStage2)
+	if limit2 <= 0 {
 		return messages
 	}
-	pct := float64(tokens) / float64(maxInput)
-	// Current stage: 3 (>=85%), 2 (>=80%), 1 (>=75%), 0 (below 75%).
-	current := 0
-	if pct >= usageNoticeStage3 {
-		current = 3
-	} else if pct >= usageNoticeStage2 {
-		current = 2
-	} else if pct >= usageNoticeStage1 {
-		current = 1
+	// Current stage: 2 (>= second limit), 1 (>= first limit), 0 (below both).
+	current, label := 0, 0
+	switch {
+	case tokens >= limit2:
+		current, label = 2, usageNoticeStage2Pct
+	case tokens >= limit1:
+		current, label = 1, usageNoticeStage1Pct
 	}
 	if current == 0 {
 		return messages
 	}
 	// Announced stage: the highest stage whose marker is already present.
-	has75, has80, has85 := scanUsageNoticeMarkers(messages)
+	has85, has90 := scanUsageNoticeMarkers(messages)
 	announced := 0
-	if has85 {
-		announced = 3
-	} else if has80 {
+	if has90 {
 		announced = 2
-	} else if has75 {
+	} else if has85 {
 		announced = 1
 	}
 	if current <= announced {
 		return messages
 	}
-	// Inject the notice for the current stage (appended to the tail).
-	label := 75
-	if current >= 2 {
-		label = 80
+	ref := window
+	if ref <= 0 {
+		ref = l.client.GetMaxInput()
 	}
-	if current >= 3 {
-		label = 85
-	}
-	slog.Info("injecting context usage notice", "stage", label, "tokens", tokens, "max", maxInput)
-	return append(messages, usageNotice(label, tokens, maxInput))
+	compactionAt := l.autoCompactLimit()
+	slog.Info("injecting context usage notice", "stage", label, "tokens", tokens,
+		"context_window", ref, "compaction_at", compactionAt)
+	return append(messages, usageNotice(label, tokens, ref, compactionAt))
+}
+
+// autoCompactLimit is the token count at which the loop compacts on its own:
+// 95% of the model's context window, clamped to the input budget.
+func (l *AgentLoop) autoCompactLimit() int {
+	return ContextWindowFraction(l.client.GetContextWindow(), l.client.GetMaxInput(), autoCompactWindowFraction)
 }
 
 func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, history []provider.Message) (*LoopResult, error) {
@@ -524,7 +529,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		// exact extension of the previous one — everything before the new
 		// message is byte-identical and keeps hitting the provider's KV prefix
 		// cache — and the model itself answers with the summary. The context is
-		// then restarted from [system][summary][verbatim tail] (RebuildContext).
+		// then restarted from [system][verbatim tail][summary] (RebuildContext).
 		// Estimate the context about to be sent: first locally (raw cl100k
 		// proxy), then calibrated onto the provider's own token scale (see
 		// tokenCalibrator). The calibrated count drives the auto-compaction
@@ -550,13 +555,20 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			// compaction (see lastCompactionTokens).
 			if !need && l.compactionOn {
 				maxInput := l.client.GetMaxInput()
-				if l.compactor.ShouldCompactCount(tokens, maxInput) &&
+				// 95% of the context window (clamped to the input budget), not a
+				// fraction of it: how much output was reserved must not move the
+				// point where the session compacts.
+				if l.compactor.ShouldCompactCount(tokens, l.autoCompactLimit()) &&
 					tokens >= l.lastCompactionTokens+recompactGrowTokens(maxInput) {
 					need = true
 				}
 			}
 			if need {
-				slog.Info("starting compaction turn", "tokens", tokens, "max_input", l.client.GetMaxInput(), "agent_instruction", instruction != "")
+				slog.Info("starting compaction turn", "tokens", tokens,
+					"compaction_at", l.autoCompactLimit(),
+					"context_window", l.client.GetContextWindow(),
+					"max_input", l.client.GetMaxInput(),
+					"agent_instruction", instruction != "")
 				messages = append(messages, BuildCompactRequest(instruction))
 				l.compactionTurn = true
 				// Persist before the call: a crash mid-turn leaves the
@@ -573,14 +585,14 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		// sent to the model) to the context tools and to the UI token bar.
 		if l.ctxState != nil || l.onContextUsage != nil {
 			if l.ctxState != nil {
-				l.ctxState.SetUsage(tokens, l.client.GetMaxInput())
+				l.ctxState.SetUsage(tokens, l.client.GetMaxInput(), l.autoCompactLimit())
 			}
 			if l.onContextUsage != nil {
 				l.onContextUsage(tokens)
 			}
 		}
-	// Context usage notices: when the context crosses 75% / 80% / 85% of the
-	// budget, append a system notice to the tail nudging the model to compact.
+		// Context usage notices: when the context crosses 85% / 90% of the model's
+		// context window (compaction itself is forced at 95%), append a notice to
 		// the tail. Cache-friendly: it only extends the prefix, never edits the
 		// middle, so the KV prefix cache is preserved.
 		// Skipped on a compaction turn: telling the model to call
@@ -712,7 +724,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				"fixed_overhead", overhead, "tail_budget", rebuildBudget)
 			messages = newMsgs
 			if l.ctxState != nil {
-				l.ctxState.SetUsage(after, l.client.GetMaxInput())
+				l.ctxState.SetUsage(after, l.client.GetMaxInput(), l.autoCompactLimit())
 			}
 			if l.onContextUsage != nil {
 				l.onContextUsage(after)

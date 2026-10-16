@@ -13,11 +13,17 @@ import (
 )
 
 const (
-	compactThreshold = 0.80 // auto-compaction threshold (normal path)
-	// forceCompactThreshold is the hard fallback: if the model ignored the
-	// proactive reminders and the context reaches 87%, compaction runs
-	// regardless of the model's proactive behavior.
-	forceCompactThreshold = 0.87
+	// autoCompactWindowFraction is where the loop forces a compaction turn,
+	// measured against the model's FULL CONTEXT WINDOW (not the input budget):
+	// the session runs until 95% of the window and only then compacts.
+	// ContextWindowFraction clamps it to the input budget so a request is never
+	// assembled larger than the provider accepts.
+	autoCompactWindowFraction = 0.95
+	// usageNoticeWindowFractions are the two reminder stages, same reference:
+	// nudging the model at 85% and 90% leaves it one turn before the loop
+	// compacts on its own at 95%.
+	usageNoticeWindowFraction1 = 0.85
+	usageNoticeWindowFraction2 = 0.90
 
 	// CompactKeepMessages is how many verbatim messages survive a compaction:
 	// the newest ones are walked backwards from the summary until this many
@@ -29,6 +35,25 @@ const (
 	// of being kept verbatim.
 	CompactKeepMaxTokens = 20000
 )
+
+// ContextWindowFraction maps a fraction of the model's context window to a token
+// count and clamps it to the input budget. The clamp is not decoration: a
+// provider only ever takes context_window - max_output_tokens - slack tokens, so
+// on a model whose output reserve is bigger than the requested margin (260k
+// window with a 31k output: 95% of the window is above the input budget), the
+// fraction degrades to "as late as safely possible" — the input budget itself.
+func ContextWindowFraction(contextWindow, maxInput int, fraction float64) int {
+	limit := maxInput
+	if contextWindow > 0 {
+		if t := int(float64(contextWindow) * fraction); limit <= 0 || t < limit {
+			limit = t
+		}
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	return limit
+}
 
 // compactRequestMarker is embedded in every synthesized compaction instruction
 // so the loop can recognise it (a) on the turn it is sent and (b) after a
@@ -117,13 +142,13 @@ func StripCompactRequests(messages []provider.Message) []provider.Message {
 	return out
 }
 
-// IsUsageNotice reports whether m is one of the 75/80/85% context-usage
-// notices. They are dropped on compaction: after a compaction the numbers they
-// quote are wrong, and the marker-based dedup re-arms them from the new (much
-// lower) usage.
+// IsUsageNotice reports whether m is one of the context-usage notices (85/90%,
+// plus the legacy 75/80% ones still stored in older sessions). They are dropped
+// on compaction: after a compaction the numbers they quote are wrong, and the
+// marker-based dedup re-arms them from the new (much lower) usage.
 func IsUsageNotice(m provider.Message) bool {
 	t := m.GetText()
-	for _, pct := range []int{75, 80, 85} {
+	for _, pct := range []int{75, 80, 85, 90} {
 		if strings.Contains(t, usageNoticeMarker(pct)) {
 			return true
 		}
@@ -323,18 +348,15 @@ func defaultTokenEstimator(messages []provider.Message) int {
 }
 
 // RebuildTargetTokens is the size the context should have right after a
-// compaction: half of the input window, and never more than the soft compaction
-// threshold. Rebuilding to the threshold itself would mean the very next turn is
-// already over threshold and spends another (uncached) compaction turn.
+// compaction: half of the input budget. Half is always below the compaction
+// trigger (which is a fraction of the window clamped to the input budget), so
+// the turn right after a compaction is a normal turn and not another
+// (uncached) compaction turn.
 func RebuildTargetTokens(maxInput int) int {
 	if maxInput <= 0 {
 		return CompactKeepMaxTokens
 	}
-	target := maxInput / 2
-	if th := int(float64(maxInput) * compactThreshold); th < target {
-		target = th
-	}
-	return target
+	return maxInput / 2
 }
 
 // CompactKeepBudget is the token budget of the verbatim tail kept after a
@@ -428,28 +450,13 @@ func NewContextCompactor(client *provider.ModelClient) *ContextCompactor {
 	return &ContextCompactor{client: client}
 }
 
-// ShouldCompact reports whether the context has crossed the auto-compaction
-// threshold (80%).
-func (c *ContextCompactor) ShouldCompact(currentTokens, maxInput int) bool {
-	if maxInput <= 0 {
-		return false
-	}
-	return float64(currentTokens)/float64(maxInput) >= compactThreshold
-}
-
-// ShouldForceCompact reports whether the context has crossed the forced
-// fallback threshold (87%).
-func (c *ContextCompactor) ShouldForceCompact(currentTokens, maxInput int) bool {
-	if maxInput <= 0 {
-		return false
-	}
-	return float64(currentTokens)/float64(maxInput) >= forceCompactThreshold
-}
-
-// ShouldCompactCount is the threshold test used by the loop (calibrated
-// provider-scale count).
-func (c *ContextCompactor) ShouldCompactCount(currentTokens, maxInput int) bool {
-	return c.ShouldCompact(currentTokens, maxInput)
+// ShouldCompactCount reports whether the (calibrated, provider-scale) context
+// count reached an absolute token limit. The limit comes from
+// AgentLoop.autoCompactLimit — a fraction of the context window clamped to the
+// input budget — so the threshold no longer depends on how large the output
+// reserve happens to be. limit <= 0 means "unknown budget": never compact.
+func (c *ContextCompactor) ShouldCompactCount(currentTokens, limit int) bool {
+	return limit > 0 && currentTokens >= limit
 }
 
 // SummarizeAndRebuild is the compaction path for a session with NO running
