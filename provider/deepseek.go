@@ -60,7 +60,7 @@ func (p *DeepSeekProvider) BuildHeaders() map[string]string {
 
 func (p *DeepSeekProvider) GetContextWindow() int { return p.ContextWindow }
 func (p *DeepSeekProvider) GetMaxTokens() int     { return p.MaxTokens }
-func (p *DeepSeekProvider) GetMaxInput() int      { return p.ContextWindow - p.MaxTokens - 2048 }
+func (p *DeepSeekProvider) GetMaxInput() int      { return maxInputBudget(p.ContextWindow, p.MaxTokens) }
 
 // ConfigureRequest sets DeepSeek's request fields: top_p, stream_options, and
 // the thinking mode. DeepSeek defaults to thinking ON; the resolved mode is

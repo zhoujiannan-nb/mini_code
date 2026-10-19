@@ -121,6 +121,7 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)
 	mux.HandleFunc("POST /api/llm/models", s.handleListModels)
+	mux.HandleFunc("POST /api/llm/probe", s.handleProbeModel)
 	mux.HandleFunc("GET /api/fs/search", s.handleFsSearch)
 	mux.HandleFunc("GET /api/approvals", s.handleListApprovals)
 	mux.HandleFunc("POST /api/approvals/{id}/decision", s.handleApprovalDecision)
@@ -896,8 +897,37 @@ func (s *server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"models": models})
 }
 
-// --- folder search (the "@" picker in the composer) ---
+// handleProbeModel asks the serving framework what it knows about one model:
+// context window, output cap and default sampling parameters (temperature /
+// top_p / top_k). It backs the settings dialog's "一键获取" button. Anything the
+// deployment does not report is simply absent from the response, and the UI
+// leaves that config field empty — an empty field is never sent to the model,
+// so the framework's own default applies.
+func (s *server) handleProbeModel(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		BaseURL   string `json:"base_url"`
+		APIKey    string `json:"api_key"`
+		ModelName string `json:"model_name"`
+		Provider  string `json:"provider"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.BaseURL = strings.TrimSpace(req.BaseURL)
+	if req.BaseURL == "" {
+		writeErr(w, http.StatusBadRequest, "base_url is required")
+		return
+	}
+	params, err := provider.ProbeModelParams(req.BaseURL, req.APIKey, strings.TrimSpace(req.ModelName), req.Provider)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, params)
+}
 
+// --- folder search (the "@" picker in the composer) ---
 func (s *server) handleFsSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	limit := 20

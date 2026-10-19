@@ -249,7 +249,7 @@ func TestRunCalibratesUsage(t *testing.T) {
 
 // TestShouldCompactCountHonorsCalibratedCount: the compaction *decision* is made
 // on the caller-supplied (calibrated) count against an absolute token limit. The
-// limit itself is the loop's autoCompactLimit — 95% of the context window clamped
+// limit itself is the loop's autoCompactLimit — 90% of the context window clamped
 // to the input budget — so how much output was reserved cannot move it below the
 // window the model actually has. Compaction is a turn of the agent loop (see
 // compaction_turn_test.go); this pins only the threshold logic.
@@ -262,17 +262,18 @@ func TestShouldCompactCountHonorsCalibratedCount(t *testing.T) {
 
 	loop, client := newTestLoop(t, srv.URL)
 	defer client.Close()
+	// The compaction point is a fraction of the usable input budget, so it always
+	// stays below what the provider takes.
 	maxInput := loop.client.GetMaxInput() // window 4096 - output 100 - 2048
-	window := loop.client.GetContextWindow()
-
-	// 95% of this window (3891) is larger than the input budget, so the clamp
-	// wins: the session may never be asked for more than the provider takes.
-	limit := loop.autoCompactLimit()
-	if want := int(float64(window) * autoCompactWindowFraction); want > maxInput && limit != maxInput {
-		t.Fatalf("limit should clamp to the input budget %d, got %d", maxInput, limit)
+	if maxInput <= 0 {
+		t.Fatalf("the test model should have an input budget, got %d", maxInput)
 	}
-	if limit <= 0 {
-		t.Fatal("unknown budget produced a positive limit")
+	limit := loop.autoCompactLimit()
+	if want := InputBudgetFraction(maxInput, compactInputFraction); limit != want {
+		t.Fatalf("limit = %d, want %d (%.0f%% of the budget)", limit, want, 100*compactInputFraction)
+	}
+	if limit >= maxInput {
+		t.Fatalf("the compaction point must stay below the budget: %d >= %d", limit, maxInput)
 	}
 	if loop.compactor.ShouldCompactCount(limit-1, limit) {
 		t.Fatalf("ShouldCompactCount true below the limit (%d/%d)", limit-1, limit)
@@ -289,33 +290,30 @@ func TestShouldCompactCountHonorsCalibratedCount(t *testing.T) {
 	}
 }
 
-// TestContextWindowFraction: thresholds are fractions of the model's context
-// window, clamped to the input budget so a percentage can never become a request
-// the provider would reject.
-func TestContextWindowFraction(t *testing.T) {
-	// 1M window with a 32K output: input budget 1013760, and 95% of the window
-	// (996147) fits inside it.
-	if got := ContextWindowFraction(1_048_576, 1_013_760, 0.95); got != 996147 {
-		t.Fatalf("95%% of a 1M window: got %d, want 996147", got)
+// TestInputBudgetFraction: every threshold is a fraction of the usable input
+// budget — the only denominator a request can honestly be measured against. An
+// unknown budget yields no threshold at all rather than a made-up one.
+func TestInputBudgetFraction(t *testing.T) {
+	if got := InputBudgetFraction(1_013_760, 0.98); got != 993_484 {
+		t.Fatalf("98%% of 1013760: got %d, want 993484", got)
 	}
-	// 260K window with a 31K output: 95% of the window (247000) is above the
-	// input budget (226880) — clamp to the budget instead of asking for a 400.
-	if got := ContextWindowFraction(260_000, 226_880, 0.95); got != 226_880 {
-		t.Fatalf("an over-budget fraction should clamp to the input budget, got %d", got)
+	// A fraction above 1 still cannot ask for more than the budget itself.
+	if got := InputBudgetFraction(1000, 1.5); got != 1000 {
+		t.Fatalf("an over-unity fraction should clamp to the budget, got %d", got)
 	}
-	// Unknown window → the input budget; unknown budget → the window fraction.
-	if got := ContextWindowFraction(0, 5000, 0.95); got != 5000 {
-		t.Fatalf("unknown window should use the budget, got %d", got)
+	// Unknown budget → unknown threshold (callers skip the check).
+	if got := InputBudgetFraction(0, 0.90); got != 0 {
+		t.Fatalf("an unknown budget should give no threshold, got %d", got)
 	}
-	if got := ContextWindowFraction(10_000, 0, 0.85); got != 8500 {
-		t.Fatalf("unknown budget should use the window fraction, got %d", got)
+	if got := InputBudgetFraction(-5, 0.90); got != 0 {
+		t.Fatalf("a negative budget should give no threshold, got %d", got)
 	}
 }
 
-// TestUsageReminderStagesFollowTheWindow: notices at 85% and 90% of the context
-// window, each announced once, quoting the window and the absolute compaction
-// point instead of a percentage of an unexplained budget.
-func TestUsageReminderStagesFollowTheWindow(t *testing.T) {
+// TestUsageReminderStagesFollowTheInputBudget: notices at 90% and 95% of the usable
+// input budget, each announced once, quoting that budget and the absolute
+// compaction point — the same denominator the loop acts on.
+func TestUsageReminderStagesFollowTheInputBudget(t *testing.T) {
 	client, err := provider.NewModelClient(config.ModelConfig{
 		Provider: "vllm", BaseURL: "http://127.0.0.1:1", APIKey: "t",
 		ModelName: "test-model", MaxTokens: 1000, ContextWindow: 100_000,
@@ -326,30 +324,61 @@ func TestUsageReminderStagesFollowTheWindow(t *testing.T) {
 	defer client.Close()
 	loop := NewAgentLoop(client, 5, nil, nil, nil, nil, nil, nil)
 
-	base := []provider.Message{{Role: "system", Content: "SYSTEM"}}
-	// Window 100000 → stages at 85000 / 90000, compaction at 95000 (input
-	// budget 96952 never gets in the way).
-	if got := loop.maybeInjectUsageReminder(base, 84_999); len(got) != len(base) {
-		t.Fatalf("below 85%% of the window a notice was injected: %d messages", len(got))
+	budget := client.GetMaxInput() // 100000 - 1000 - 2048
+	limit1 := InputBudgetFraction(budget, usageNoticeStage1)
+	limit2 := InputBudgetFraction(budget, usageNoticeStage2)
+	compactAt := InputBudgetFraction(budget, compactInputFraction)
+	if !(0 < limit1 && limit1 < limit2 && limit2 < compactAt && compactAt <= budget) {
+		t.Fatalf("stages must ascend inside the budget: %d < %d < %d <= %d", limit1, limit2, compactAt, budget)
 	}
-	one := loop.maybeInjectUsageReminder(base, 85_000)
-	if len(one) != len(base)+1 || !strings.Contains(one[len(base)].GetText(), usageNoticeMarker(85)) {
-		t.Fatalf("the 85%% stage was not announced: %+v", one)
+
+	base := []provider.Message{{Role: "system", Content: "SYSTEM"}}
+	if got := loop.maybeInjectUsageReminder(base, limit1-1); len(got) != len(base) {
+		t.Fatalf("below the first stage a notice was injected: %d messages", len(got))
+	}
+	one := loop.maybeInjectUsageReminder(base, limit1)
+	if len(one) != len(base)+1 || !strings.Contains(one[len(base)].GetText(), usageNoticeMarker(usageNoticeStage1Pct)) {
+		t.Fatalf("the %d%% stage was not announced: %d messages", usageNoticeStage1Pct, len(one))
 	}
 	text := one[len(base)].GetText()
-	if !strings.Contains(text, "100000 tokens") || !strings.Contains(text, "compacts automatically at 95000") {
-		t.Fatalf("notice does not quote the window and the compaction point: %q", text)
+	if !strings.Contains(text, fmt.Sprintf("%d tokens", budget)) ||
+		!strings.Contains(text, fmt.Sprintf("compacts automatically at %d", compactAt)) {
+		t.Fatalf("notice does not quote the budget and the compaction point: %q", text)
 	}
 	// Still stage 1 → the marker dedup keeps the context untouched (prefix cache).
-	if again := loop.maybeInjectUsageReminder(one, 88_000); len(again) != len(one) {
+	if again := loop.maybeInjectUsageReminder(one, limit2-1); len(again) != len(one) {
 		t.Fatalf("stage announced twice: %d vs %d messages", len(again), len(one))
 	}
-	two := loop.maybeInjectUsageReminder(one, 90_000)
-	if len(two) != len(one)+1 || !strings.Contains(two[len(two)-1].GetText(), usageNoticeMarker(90)) {
-		t.Fatalf("the 90%% stage was not announced: %d messages", len(two))
+	two := loop.maybeInjectUsageReminder(one, limit2)
+	if len(two) != len(one)+1 || !strings.Contains(two[len(two)-1].GetText(), usageNoticeMarker(usageNoticeStage2Pct)) {
+		t.Fatalf("the %d%% stage was not announced: %d messages", usageNoticeStage2Pct, len(two))
 	}
-	if after := loop.maybeInjectUsageReminder(two, 99_000); len(after) != len(two) {
+	if after := loop.maybeInjectUsageReminder(two, budget); len(after) != len(two) {
 		t.Fatal("both stages announced and it still injects")
+	}
+}
+
+// A model with no configured context window has no known budget: the loop then
+// stays quiet instead of inventing a denominator to measure against.
+func TestUsageReminderSilentWithoutAKnownBudget(t *testing.T) {
+	client, err := provider.NewModelClient(config.ModelConfig{
+		Provider: "vllm", BaseURL: "http://127.0.0.1:1", APIKey: "t",
+		ModelName: "test-model",
+	})
+	if err != nil {
+		t.Fatalf("NewModelClient: %v", err)
+	}
+	defer client.Close()
+	loop := NewAgentLoop(client, 5, nil, nil, nil, nil, nil, nil)
+	if client.GetMaxInput() != 0 {
+		t.Fatalf("an unknown window should mean an unknown budget, got %d", client.GetMaxInput())
+	}
+	base := []provider.Message{{Role: "system", Content: "SYSTEM"}}
+	if got := loop.maybeInjectUsageReminder(base, 10_000_000); len(got) != len(base) {
+		t.Fatalf("a notice was injected without a known budget: %d messages", len(got))
+	}
+	if loop.autoCompactLimit() != 0 {
+		t.Fatal("an unknown budget must not produce a compaction threshold")
 	}
 }
 

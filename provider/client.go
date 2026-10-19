@@ -18,6 +18,10 @@ type ModelClient struct {
 	provider     Provider
 	providerType string
 	httpClient   *http.Client
+	// topK is the configured top_k (0 = never sent). It lives on the client
+	// rather than on each provider because every OpenAI-compatible server takes
+	// the same field, so the four providers need no copy of it.
+	topK int
 }
 
 type chatRequest struct {
@@ -28,7 +32,11 @@ type chatRequest struct {
 	// is enabled, so the DeepSeek provider nils it in that case.
 	Temperature     *float64       `json:"temperature,omitempty"`
 	TopP            float64        `json:"top_p,omitempty"`
-	MaxTokens       int            `json:"max_tokens"`
+	// TopK is a pointer so it can be omitted: OpenAI-compatible servers take
+	// top_k = 0 as "sample from everything", so only an explicitly configured
+	// value is ever sent.
+	TopK            *int           `json:"top_k,omitempty"`
+	MaxTokens       *int           `json:"max_tokens,omitempty"`
 	Stream          bool           `json:"stream"`
 	StreamOptions   *streamOptions `json:"stream_options,omitempty"`
 	Tools           []ToolSchema   `json:"tools,omitempty"`
@@ -87,7 +95,39 @@ func NewModelClient(cfg config.ModelConfig) (*ModelClient, error) {
 		provider:     factory(cfg),
 		providerType: cfg.Provider,
 		httpClient:   &http.Client{Timeout: 3600 * time.Second}, // 1 hour timeout for long agent tasks
+		topK:         cfg.TopK,
 	}, nil
+}
+
+// temperaturePtr turns a config/call-site temperature into the request field:
+// 0 means "not set", and the field is then left out so the server's own default
+// (usually the model's recommended value) is used. WithTemperature(0.3) still
+// produces a non-zero value, so an explicit override is always sent.
+func temperaturePtr(t float64) *float64 {
+	if t <= 0 {
+		return nil
+	}
+	return &t
+}
+
+// maxTokensPtr turns a configured/call-site output budget into the request field:
+// 0 means "not set" and the field is then left out, so the server caps the output
+// with its own default instead of a number this program invented.
+func maxTokensPtr(n int) *int {
+	if n <= 0 {
+		return nil
+	}
+	return &n
+}
+
+// applySampling adds the config-level sampling fields that every
+// OpenAI-compatible server spells the same way. It runs after the provider's
+// ConfigureRequest, so a provider that chose a value of its own keeps it.
+func (mc *ModelClient) applySampling(req *chatRequest) {
+	if mc.topK > 0 && req.TopK == nil {
+		k := mc.topK
+		req.TopK = &k
+	}
 }
 
 // WithReasoning returns a client whose provider carries an explicit thinking
@@ -105,12 +145,12 @@ func (mc *ModelClient) WithReasoning(thinking, effort string) *ModelClient {
 		cp := *p
 		cp.Thinking = thinking
 		cp.ReasoningEffort = effort
-		return &ModelClient{provider: &cp, providerType: mc.providerType, httpClient: mc.httpClient}
+		return &ModelClient{provider: &cp, providerType: mc.providerType, httpClient: mc.httpClient, topK: mc.topK}
 	case *DeepSeekProvider:
 		cp := *p
 		cp.Thinking = thinking
 		cp.ReasoningEffort = effort
-		return &ModelClient{provider: &cp, providerType: mc.providerType, httpClient: mc.httpClient}
+		return &ModelClient{provider: &cp, providerType: mc.providerType, httpClient: mc.httpClient, topK: mc.topK}
 	}
 	return mc
 }
@@ -161,9 +201,11 @@ func ListModels(baseURL, apiKey string) ([]string, error) {
 }
 
 func (mc *ModelClient) Chat(ctx context.Context, messages []Message, tools []ToolSchema, opts ...ChatOption) (*ChatResponse, error) {
+	// Temperature is left unset (0) by default: the request then omits it and
+	// the serving framework applies the model's own default. A configured value
+	// (the vllm/ollama branches below) or an explicit WithTemperature still wins.
 	o := chatOptions{
-		Temperature: 0.7,
-		MaxTokens:   8192,
+		MaxTokens: 0, // unset: omitted from the request unless configured/passed
 	}
 	if p, ok := mc.provider.(*VLLMProvider); ok {
 		o.Temperature = p.Temperature
@@ -187,12 +229,11 @@ func (mc *ModelClient) Chat(ctx context.Context, messages []Message, tools []Too
 		opt(&o)
 	}
 
-	temp := o.Temperature
 	req := chatRequest{
 		Model:               mc.modelName(),
 		Messages:            messages,
-		Temperature:         &temp,
-		MaxTokens:           o.MaxTokens,
+		Temperature:         temperaturePtr(o.Temperature),
+		MaxTokens:           maxTokensPtr(o.MaxTokens),
 		Stream:              false,
 		temperatureExplicit: o.TemperatureExplicit,
 	}
@@ -201,6 +242,7 @@ func (mc *ModelClient) Chat(ctx context.Context, messages []Message, tools []Too
 		req.ToolChoice = "auto"
 	}
 	mc.provider.ConfigureRequest(&req)
+	mc.applySampling(&req)
 
 	body, err := json.Marshal(req)
 	if err != nil {

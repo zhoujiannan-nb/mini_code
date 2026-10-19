@@ -19,9 +19,11 @@ type AppConfig struct {
 	Models       []ModelConfig  `json:"models"`
 	DefaultModel string         `json:"default_model"`
 
-	// CompactionEnabled toggles automatic long-context compression
-	// globally. Nil (key absent) = enabled (legacy behavior).
+	// CompactionEnabled is deprecated and ignored: automatic long-context
+	// compression is always on (applyDefaults clears this key), kept only so an
+	// older config file still unmarshals.
 	CompactionEnabled *bool `json:"compaction_enabled,omitempty"`
+
 	WebPort           int   `json:"web_port"`
 	// UserAvatar is the web user's avatar: a data URL
 	// (data:image/jpeg|png|webp;base64,...) uploaded from the UI.
@@ -29,11 +31,11 @@ type AppConfig struct {
 	UserAvatar string `json:"user_avatar,omitempty"`
 }
 
-// Compaction reports whether automatic context compression is on.
-// An absent config key keeps the historical default: enabled.
-func (c *AppConfig) Compaction() bool {
-	return c.CompactionEnabled == nil || *c.CompactionEnabled
-}
+// Compaction reports whether automatic context compression is on. It is always
+// on: keeping a long session inside the window is not optional, and the switch
+// that used to allow turning it off let sessions run into provider-side length
+// errors, so it was removed. The config key is still parsed for compatibility.
+func (c *AppConfig) Compaction() bool { return true }
 
 // ModelByName returns the model entry with the given name, or nil.
 func (c *AppConfig) ModelByName(name string) *ModelConfig {
@@ -84,6 +86,17 @@ func (c *AppConfig) Validate() error {
 		if m.MaxTokens < 0 || m.ContextWindow < 0 {
 			return fmt.Errorf("models[%d] (%s): token limits must be >= 0", i, m.Name)
 		}
+		// 0 on a sampling field means "unset" (the field is then not sent), so
+		// only an out-of-range non-zero value is an error.
+		if m.Temperature < 0 || m.Temperature > 2 {
+			return fmt.Errorf("models[%d] (%s): temperature must be 0 (not set) or between 0 and 2", i, m.Name)
+		}
+		if m.TopP < 0 || m.TopP > 1 {
+			return fmt.Errorf("models[%d] (%s): top_p must be 0 (not set) or between 0 and 1", i, m.Name)
+		}
+		if m.TopK < 0 {
+			return fmt.Errorf("models[%d] (%s): top_k must be 0 (not set) or greater", i, m.Name)
+		}
 		if m.Thinking != "" && m.Thinking != "enabled" && m.Thinking != "disabled" {
 			return fmt.Errorf("models[%d] (%s): thinking must be \"enabled\" or \"disabled\"", i, m.Name)
 		}
@@ -125,8 +138,12 @@ type ModelConfig struct {
 	ModelName       string  `json:"model_name"`
 	MaxTokens       int     `json:"max_tokens"`
 	ContextWindow   int     `json:"context_window"`
+	// Sampling parameters are optional: 0 means "not set" and the field is then
+	// left out of the request entirely, so the serving framework applies its own
+	// (usually model-specific) default. Set a value only to override that.
 	Temperature     float64 `json:"temperature"`
 	TopP            float64 `json:"top_p"`
+	TopK            int     `json:"top_k,omitempty"`
 	ReserveTokens   int     `json:"reserve_tokens"`
 
 	// Thinking and ReasoningEffort control the model's thinking depth. DeepSeek
@@ -141,11 +158,9 @@ type ModelConfig struct {
 	CompactionEnabled *bool `json:"compaction_enabled,omitempty"`
 }
 
-// Compaction reports whether automatic context compression is on.
-// An absent config key keeps the historical default: enabled.
-func (m ModelConfig) Compaction() bool {
-	return m.CompactionEnabled == nil || *m.CompactionEnabled
-}
+// Compaction reports whether automatic context compression is on. Legacy: the
+// per-model switch was retired together with the global one, so this is true.
+func (m ModelConfig) Compaction() bool { return true }
 
 // DefaultModelConfig returns the model configuration used for the
 // auto-generated first-run config (and as fallback defaults for fields
@@ -158,11 +173,9 @@ func DefaultModelConfig() ModelConfig {
 		BaseURL:       "http://ubasic.yuanshi-sec.com:5708/proxy/model/qwen3.82",
 		APIKey:        "这里填你的key",
 		ModelName:     "Qwen3.8-27B-FP8",
-		MaxTokens:     31072,
-		ContextWindow: 200000,
-		Temperature:   1,
-		TopP:          0.95,
-		ReserveTokens: 4096,
+		// No max_tokens / context_window: filled by the user or by the "probe"
+		// button in the UI, never guessed (see applyDefaults).
+		// No temperature / top_p: left to the framework (see applyDefaults).
 	}
 }
 
@@ -201,7 +214,21 @@ func GetConfigPath() (string, error) {
 
 // SaveConfig writes the AppConfig to the given path as indented JSON.
 func SaveConfig(cfg *AppConfig, path string) error {
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	// The compaction toggle is retired (compression is always on), so neither the
+	// global key nor the legacy per-model ones are ever written back: an older
+	// config file loses them on the first save after the upgrade.
+	saved := *cfg
+	saved.CompactionEnabled = nil
+	saved.Model.CompactionEnabled = nil
+	if len(cfg.Models) > 0 {
+		models := make([]ModelConfig, len(cfg.Models))
+		copy(models, cfg.Models)
+		for i := range models {
+			models[i].CompactionEnabled = nil
+		}
+		saved.Models = models
+	}
+	data, err := json.MarshalIndent(&saved, "", "  ")
 	if err != nil {
 		return fmt.Errorf("cannot marshal config: %w", err)
 	}
@@ -247,16 +274,14 @@ func LoadConfig() (*AppConfig, error) {
 
 // applyDefaults fills in zero-value fields with defaults. It also migrates
 // legacy single-model configs: a "model" entry without a "models" list is
-// wrapped into a one-element list, and the legacy per-model compaction
-// toggle is moved to the global switch.
+// wrapped into a one-element list.
 func applyDefaults(cfg *AppConfig) {
 	d := DefaultModelConfig()
 
-	// Legacy per-model compaction → global switch (before the legacy
-	// model entry is consumed and cleared below).
-	if cfg.CompactionEnabled == nil && cfg.Model.CompactionEnabled != nil {
-		cfg.CompactionEnabled = cfg.Model.CompactionEnabled
-	}
+	// Automatic compaction is always on — it is what keeps a long session inside
+	// the window, so it no longer has a switch in the UI or in the config. Any
+	// stored toggle (including the legacy per-model one) is dropped here.
+	cfg.CompactionEnabled = nil
 
 	// Legacy single-model config → models list.
 	if len(cfg.Models) == 0 {
@@ -285,21 +310,13 @@ func applyDefaults(cfg *AppConfig) {
 		if m.Name == "" {
 			m.Name = m.ModelName
 		}
-		if m.MaxTokens == 0 {
-			m.MaxTokens = d.MaxTokens
-		}
-		if m.ContextWindow == 0 {
-			m.ContextWindow = d.ContextWindow
-		}
-		if m.Temperature == 0 {
-			m.Temperature = d.Temperature
-		}
-		if m.TopP == 0 {
-			m.TopP = d.TopP
-		}
-		if m.ReserveTokens == 0 {
-			m.ReserveTokens = d.ReserveTokens
-		}
+		// Sizes and sampling parameters are deliberately NOT defaulted. An unset
+		// max_tokens / context_window / temperature / top_p / top_k stays unset
+		// and is then omitted from the request, which leaves the choice to the
+		// serving framework (its own default is usually the model's recommended
+		// value). Inventing one here would silently override it — and a made-up
+		// context window would silently drive the compaction thresholds, which is
+		// worse than no automatic compaction at all.
 	}
 	if cfg.DefaultModel == "" {
 		cfg.DefaultModel = cfg.Models[0].Name

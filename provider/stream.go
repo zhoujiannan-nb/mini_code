@@ -74,8 +74,7 @@ func (a *streamAccumulator) mergeToolCalls(deltas []streamDeltaToolCall) {
 // duplicate content already rendered).
 func (mc *ModelClient) ChatStream(ctx context.Context, messages []Message, tools []ToolSchema, onChunk func(StreamChunk), opts ...ChatOption) (*ChatResponse, error) {
 	o := chatOptions{
-		Temperature: 0.7,
-		MaxTokens:   8192,
+		MaxTokens: 0, // unset: omitted from the request unless configured/passed
 	}
 	if p, ok := mc.provider.(*VLLMProvider); ok {
 		o.Temperature = p.Temperature
@@ -99,12 +98,11 @@ func (mc *ModelClient) ChatStream(ctx context.Context, messages []Message, tools
 		opt(&o)
 	}
 
-	temp := o.Temperature
 	req := chatRequest{
 		Model:               mc.modelName(),
 		Messages:            messages,
-		Temperature:         &temp,
-		MaxTokens:           o.MaxTokens,
+		Temperature:         temperaturePtr(o.Temperature),
+		MaxTokens:           maxTokensPtr(o.MaxTokens),
 		Stream:              true,
 		temperatureExplicit: o.TemperatureExplicit,
 	}
@@ -113,6 +111,7 @@ func (mc *ModelClient) ChatStream(ctx context.Context, messages []Message, tools
 		req.ToolChoice = "auto"
 	}
 	mc.provider.ConfigureRequest(&req)
+	mc.applySampling(&req)
 
 	body, err := json.Marshal(req)
 	if err != nil {

@@ -9,7 +9,8 @@ import "testing"
 // per thinking state, and stream_options.include_usage.
 //
 // Sampling (official Qwen3.8 recommendation; Qwen3-style models think by
-// default, so an unset switch means thinking ON):
+// default, so an unset switch means thinking ON). Precedence: explicit per-call
+// temperature > configured temperature / top_p (0 = not set) > these fallbacks:
 //
 //	thinking ON:  temperature=1.0, top_p=0.95
 //	thinking OFF: temperature=0.7, top_p=0.80, presence_penalty=1.5
@@ -18,7 +19,9 @@ import "testing"
 // compaction summary) wins over the default.
 func TestSGLangConfigureRequest(t *testing.T) {
 	base := func(thinking, effort string) *SGLangProvider {
-		return NewSGLangProvider("http://proxy/proxy/model/x", "k", "Qwen3.8-27B-FP8", 31072, 200000, 0.6, 0.9, thinking, effort)
+		// temperature / top_p left unset (0): this exercises the per-thinking-state
+		// fallbacks. A configured value is covered by its own subtest below.
+		return NewSGLangProvider("http://proxy/proxy/model/x", "k", "Qwen3.8-27B-FP8", 31072, 200000, 0, 0, thinking, effort)
 	}
 	newReq := func() *chatRequest {
 		temp := 0.6
@@ -106,6 +109,26 @@ func TestSGLangConfigureRequest(t *testing.T) {
 		}
 		if req.PresencePenalty == nil || *req.PresencePenalty != 1.5 {
 			t.Errorf("presence_penalty = %v, want 1.5", req.PresencePenalty)
+		}
+	})
+
+	t.Run("configured sampling overrides the per-state defaults", func(t *testing.T) {
+		p := NewSGLangProvider("http://h", "k", "m", 1024, 8192, 0.5, 0.7, "disabled", "")
+		req := &chatRequest{Model: "m", Stream: true}
+		p.ConfigureRequest(req)
+		if req.Temperature == nil || *req.Temperature != 0.5 {
+			t.Errorf("configured temperature ignored: %v", req.Temperature)
+		}
+		if req.TopP != 0.7 {
+			t.Errorf("configured top_p ignored: %v", req.TopP)
+		}
+		// The thinking-state presence penalty still applies.
+		if req.PresencePenalty == nil || *req.PresencePenalty != 1.5 {
+			t.Errorf("presence_penalty = %v, want 1.5", req.PresencePenalty)
+		}
+		// An unset top_k (0 in the config) is never sent.
+		if req.TopK != nil {
+			t.Errorf("top_k = %d, want omitted", *req.TopK)
 		}
 	})
 }

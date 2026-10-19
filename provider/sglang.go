@@ -67,7 +67,7 @@ func (p *SGLangProvider) BuildHeaders() map[string]string {
 
 func (p *SGLangProvider) GetContextWindow() int { return p.ContextWindow }
 func (p *SGLangProvider) GetMaxTokens() int     { return p.MaxTokens }
-func (p *SGLangProvider) GetMaxInput() int      { return p.ContextWindow - p.MaxTokens - 2048 }
+func (p *SGLangProvider) GetMaxInput() int      { return maxInputBudget(p.ContextWindow, p.MaxTokens) }
 
 // ConfigureRequest sets SGLang's request fields: top_p (when set),
 // stream_options.include_usage for cache-hit accounting, and the thinking
@@ -91,30 +91,31 @@ func (p *SGLangProvider) ConfigureRequest(req *chatRequest) {
 		req.ReasoningEffort = p.ReasoningEffort
 	}
 
-	// Sampling parameters: the official Qwen3.8 recommendation per
-	// thinking state. Qwen3-style models think by default, so an unset
-	// switch (Thinking == "") means thinking ON. SGLang is used for Qwen
-	// here, so the config temperature/top_p are deliberately not applied:
-	// the official values are the tuned defaults and they differ between
-	// the two thinking states (a static config value would be wrong for
-	// one of them). An explicit per-call temperature (temperatureExplicit,
-	// e.g. the 0.3 compaction summary) wins over the default.
+	// Sampling: the official Qwen3.8 recommendation per thinking state is only
+	// the fallback. Qwen3-style models think by default, so an unset switch
+	// (Thinking == "") means thinking ON, and the two states want different
+	// values — which is why a static config value used to be ignored here. It is
+	// not ignored any more: a configured temperature / top_p wins (0 = not set),
+	// and an explicit per-call temperature (temperatureExplicit, e.g. the 0.3
+	// compaction summary) beats both.
 	//
 	//	thinking ON:  temperature=1.0, top_p=0.95
 	//	thinking OFF: temperature=0.7, top_p=0.80, presence_penalty=1.5
+	fallbackTemp, fallbackTopP := 1.0, 0.95
 	if p.Thinking == "disabled" {
-		if !req.temperatureExplicit {
-			temp := 0.7
-			req.Temperature = &temp
-		}
-		req.TopP = 0.80
+		fallbackTemp, fallbackTopP = 0.7, 0.80
 		presencePenalty := 1.5
 		req.PresencePenalty = &presencePenalty
-	} else {
-		if !req.temperatureExplicit {
-			temp := 1.0
-			req.Temperature = &temp
+	}
+	if !req.temperatureExplicit {
+		t := fallbackTemp
+		if p.Temperature > 0 {
+			t = p.Temperature
 		}
-		req.TopP = 0.95
+		req.Temperature = &t
+	}
+	req.TopP = fallbackTopP
+	if p.TopP > 0 {
+		req.TopP = p.TopP
 	}
 }

@@ -512,27 +512,27 @@ details.m-think[open] summary { margin-bottom: 6px; }
   font-size: 13px; font-weight: 600; color: var(--title2); margin: 18px 0 10px;
   padding-bottom: 6px; border-bottom: 1px solid var(--border);
 }
-.frow { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+.frow { display: flex; gap: 10px; margin-bottom: 12px; align-items: center; }
 .frow label { width: 140px; flex: 0 0 140px; font-size: 13px; color: var(--text2); }
 .frow input[type=text], .frow input[type=password], .frow input[type=number] {
   flex: 1; background: var(--surface); border: 1px solid var(--border2); color: var(--text);
   border-radius: 8px; padding: 7px 10px; font-size: 13px; outline: none; min-width: 0;
 }
+/* 数字框装不下多少字符,拉到整行宽度反而把行与行之间的节奏打散;模型编辑面板是
+   单列对齐的,那里的数字框继续跟文本框同宽。 */
+.frow input[type=number] { flex: 1 1 120px; max-width: 180px; }
+.model-editor .frow input[type=number] { max-width: none; }
 .frow input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(22,163,74,.12); }
-.frow .hint { font-size: 11px; color: var(--text3); }
+/* 说明文字永远占住"剩下的那一栏":它参与收缩但不被压成一竖条,控件也不与它抢宽度。 */
+.frow .hint { font-size: 11px; color: var(--text3); line-height: 1.5; flex: 1 1 0; min-width: 0; }
+/* 按钮/头像这类控件按自身内容排版,绝不参与压缩(否则会被压成竖排"上传/更/换头/像")。 */
+.frow .btn, .frow .mode-btn, .frow .ava { flex: 0 0 auto; }
+/* 带说明文字的行(.frow.hinted):控件按内容取宽(最多 340px),整行剩余宽度全部让给说明。 */
+.frow.hinted > *:not(label):not(.hint) { flex: 0 1 auto; min-width: 0; max-width: 340px; }
+.frow.hinted > .hint { flex: 1 1 0; }
+.frow.hinted > input[type=number] { flex: 0 1 110px; max-width: 130px; }
 .check-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; }
-/* 模型列表卡片(设置弹窗) */
-.model-card {
-  border: 1px solid var(--border); border-radius: 10px; padding: 12px;
-  margin-bottom: 10px; background: var(--bg);
-}
-.model-card .mc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; }
-.model-card .mc-head b { color: var(--title); }
-.model-card .mc-rm {
-  margin-left: auto; width: 22px; height: 22px; border: none; border-radius: 6px;
-  background: transparent; color: var(--text3); font-size: 13px; cursor: pointer;
-}
-.model-card .mc-rm:hover { background: var(--red-btn); color: #fff; }
+/* 模型块列表 / 编辑面板见下方 .model-grid 与 .model-editor */
 .add-model-btn {
   width: 100%; padding: 8px; border: 1px dashed var(--border2); border-radius: 10px;
   background: transparent; color: var(--text2); font-size: 13px; cursor: pointer; margin-bottom: 12px;
@@ -549,6 +549,39 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .frow .mc-fetch:hover { border-color: var(--green); color: var(--green-t); }
 .frow .mc-fetch:disabled { opacity: .5; cursor: default; }
 .frow input:disabled { background: var(--bg); color: var(--text3); cursor: not-allowed; }
+/* 模型块(设置弹窗):块列表 + 点击进入的编辑面板 */
+.model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.model-tile {
+  position: relative; border: 1px solid var(--border2); border-radius: 12px; padding: 12px 12px 26px;
+  background: var(--surface); cursor: pointer; transition: border-color .15s, box-shadow .15s;
+}
+.model-tile:hover { border-color: var(--green); box-shadow: 0 0 0 3px rgba(22,163,74,.08); }
+.model-tile .mt-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; font-weight: 600; color: var(--title); }
+.model-tile .mt-badge {
+  font-size: 10px; font-weight: 500; padding: 1px 7px; border-radius: 999px;
+  background: var(--bg); color: var(--text2); border: 1px solid var(--border);
+}
+.model-tile .mt-def { background: rgba(22,163,74,.14); color: var(--green-t); border-color: transparent; }
+.model-tile .mt-sub {
+  margin-top: 6px; font-size: 11px; color: var(--text3); word-break: break-all;
+  font-family: ui-monospace, Consolas, Menlo, monospace;
+}
+.model-tile .mt-stats { display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 10px; font-size: 11px; color: var(--text3); }
+.model-tile .mt-stats b { color: var(--text); font-weight: 600; }
+.model-tile .mt-stats b.auto { color: var(--text3); font-weight: 400; font-style: italic; }
+.model-tile .mt-go { position: absolute; right: 12px; bottom: 8px; font-size: 11px; color: var(--text3); }
+.model-tile:hover .mt-go { color: var(--green-t); }
+.model-editor { border: 1px solid var(--border2); border-radius: 12px; padding: 14px; background: var(--surface); margin-bottom: 12px; }
+.me-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.me-head .me-title { font-size: 14px; font-weight: 600; color: var(--title); }
+.me-head .me-rm { margin-left: auto; }
+.me-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
+  padding: 10px; border: 1px dashed var(--border2); border-radius: 10px; background: var(--bg);
+}
+.me-bar .hint { flex: 1 1 100%; }
+.me-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.me-actions .spacer { margin-left: auto; }
 /* 模型选择(composer 输入行内,发送按钮左侧) */
 .model-menu-wrap { position: relative; display: inline-flex; align-items: center; }
 .model-inline-btn {
@@ -971,7 +1004,7 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
         <span class="token-usage" id="cache-hit" title="上一轮 LLM 调用的 KV 前缀缓存命中(cached / prompt tokens)。n/a = 该部署未上报缓存命中(如 SGLang 未开 --enable-cache-report);0% = 已上报但本轮无命中。"></span>
         <span class="token-usage" id="output-speed" title="输出速度(token/秒)。生成中为实时估算(≈);任务停止后保留最后一次的展示值(最后一次 LLM 调用的实测均值,已存入数据库)"></span>
         <div style="display:flex; align-items:center; gap:10px">
-          <label class="ctx-toggle" id="ctx-toggle" title="上下文占用达窗口 85%/90% 时提醒模型主动压缩;95% 强制兜底压缩(提醒按 context window 计算,并以模型输入上限兜底)">
+          <label class="ctx-toggle" id="ctx-toggle" title="上下文占用达窗口 80%/85% 时提醒模型主动压缩;90% 强制兜底压缩(提醒按 context window 计算,并以模型输入上限兜底)">
             <input type="checkbox" id="ctx-reminders"> 上下文提醒
           </label>
           <button class="mode-btn" id="btn-mode" title="权限模式">⚡ 完整模式</button>
@@ -1051,35 +1084,32 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
   <div class="modal">
     <h2>配置</h2>
     <h3>外观</h3>
-    <div class="frow"><label>主题</label>
+    <div class="frow hinted"><label>主题</label>
       <select id="c-theme">
         <option value="system">跟随系统</option>
         <option value="light">浅色</option>
         <option value="dark">深色</option>
       </select>
-      <span class="hint">立即生效并记住,无需点"保存配置";跟随系统 = 跟随浏览器/Windows 深浅色设置</span>
+      <span class="hint">立即生效并记住,不用点"保存配置"</span>
     </div>
 
     <h3>个人信息</h3>
-    <div class="frow"><label>用户头像</label>
+    <div class="frow hinted"><label>用户头像</label>
       <div style="display:flex;align-items:center;gap:10px">
         <span id="c-user-ava"></span>
         <button class="mode-btn" id="btn-user-ava">上传 / 更换头像</button>
       </div>
-      <span class="hint">jpg / png / webp,≤4MB,自动裁为 256×256;单聊、群聊、个人信息同步显示,重启不丢;未设置时回退"首字+哈希色"</span>
+      <span class="hint">jpg / png / webp,≤4MB,自动裁为 256×256;未设置时显示"首字 + 哈希色"</span>
     </div>
 
     <h3>模型(可配置多个,会话里下拉选择)</h3>
-    <div id="model-list"></div>
-    <button class="add-model-btn" id="btn-add-model">＋ 添加模型</button>
+    <div id="model-list" class="model-grid"></div>
+    <button class="add-model-btn" id="btn-add-model">＋ 新增模型</button>
+    <div id="model-edit"></div>
     <div class="frow"><label>默认模型</label><select id="c-default-model"></select></div>
-    <div class="frow"><label>上下文自动压缩</label>
-      <div class="check-row" style="margin:0"><input type="checkbox" id="c-compaction"><label for="c-compaction" style="width:auto">接近上下文上限时自动压缩旧对话(全局)</label></div>
-      <span class="hint">关闭后不再压缩,长任务更易撞上限</span>
-    </div>
 
     <h3>Web</h3>
-    <div class="frow"><label>Web 端口</label><input type="number" id="w-port"><span class="hint">修改需重启生效</span></div>
+    <div class="frow hinted"><label>Web 端口</label><input type="number" id="w-port"><span class="hint">修改需重启生效</span></div>
 
     <div class="modal-actions">
       <button class="btn" id="btn-cancel">取消</button>
@@ -2726,8 +2756,7 @@ function paintBackBtn(parentId) {
 async function loadStatus() {
   try {
     const s = await api("/api/status");
-    const comp = s.compaction_enabled ? "" : " · 压缩已关闭";
-    $("#status-pill").innerHTML = "<b>" + esc(s.model_name || "未配置模型") + "</b> · 端口 " + s.web_port + comp;
+    $("#status-pill").innerHTML = "<b>" + esc(s.model_name || "未配置模型") + "</b> · 端口 " + s.web_port;
     // 模型列表 + 默认模型(下拉框数据源)
     state.models = s.models || [];
     state.defaultModel = s.default_model || (state.models[0] && state.models[0].name) || "";
@@ -2746,9 +2775,12 @@ async function loadStatus() {
 
 /* ---------------- 配置 ---------------- */
 let modelDraft = []; // 设置弹窗里的模型草稿(编辑中,保存时才提交)
+let modelEditing = -1; // -1 = 块列表;>= 0 = 正在编辑的 modelDraft 下标
 function modelTemplate() {
+  // 全部留空(0):尺寸和采样参数都不猜 —— 空 = 不发给模型,由框架用它自己的默认值;
+  // 上下文窗口为空时不做自动压缩,点"一键获取参数"从服务端读。
   return { name: "", provider: "vllm", base_url: "", api_key: "", model_name: "",
-            max_tokens: 31072, context_window: 131072, temperature: 0.6, top_p: 0.9, reserve_tokens: 4096,
+            max_tokens: 0, context_window: 0, temperature: 0, top_p: 0, top_k: 0,
             thinking: "", reasoning_effort: "" };
 }
 // DeepSeek 官方地址固定,UI 里选了 deepseek 就不用填 base_url。
@@ -2775,59 +2807,192 @@ const THINK_SCALE = {
   ],
 };
 
-function renderModelCards() {
-  const box = $("#model-list");
-  box.innerHTML = "";
-  modelDraft.forEach((m, i) => {
-    const card = document.createElement("div");
-    card.className = "model-card";
-    const field = (k, label, ph, type) =>
-      '<div class="frow"><label>' + label + '</label><input type="' + (type || "text") + '" data-k="' + k +
-      '" placeholder="' + (ph || "") + '" value="' + esc(m[k] == null ? "" : m[k]) + '"></div>';
-    const selectField = (k, label, options) => {
-      const cur = String(m[k] == null ? "" : m[k]);
-      let opts = options;
-      if (cur && !options.some(o => o[0] === cur)) opts = opts.concat([[cur, cur + " (自定义)"]]);
-      const html = opts.map(o =>
-        '<option value="' + esc(o[0]) + '"' + (cur === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>').join("");
-      return '<div class="frow"><label>' + label + '</label><select data-k="' + k + '">' + html + '</select></div>';
-    };
-    card.innerHTML =
-      '<div class="mc-head"><b>模型 ' + (i + 1) + '</b><button class="mc-rm" title="删除该模型">✕</button></div>' +
-      field("name", "显示名", "下拉框里显示的名字,唯一") +
-      selectField("provider", "Provider", [
-        ["vllm", "vllm"], ["sglang", "sglang"], ["deepseek", "deepseek (官方)"], ["ollama", "ollama"],
-      ]) +
-      field("base_url", "Base URL", "sglang 直连带 /v1;走代理则按代理要求") +
-      field("api_key", "API Key") +
-      '<div class="frow"><label>Model Name</label>' +
-        '<input type="text" data-k="model_name" list="models-list-' + i + '" placeholder="服务端模型名" value="' + esc(m.model_name || "") + '">' +
-        '<button class="mc-fetch" title="从服务端拉取模型列表">🔄</button></div>' +
-      '<datalist id="models-list-' + i + '"></datalist>' +
-      field("max_tokens", "Max Tokens", "", "number") +
-      field("context_window", "Context Window", "", "number") +
-      field("temperature", "Temperature", "", "number") +
-      field("top_p", "Top P", "", "number") +
-      field("reserve_tokens", "Reserve Tokens", "", "number");
-    card.querySelectorAll("input").forEach(inp => {
-      inp.addEventListener("input", () => { m[inp.dataset.k] = inp.value; paintDefaultModelSelect(); });
-    });
-    card.querySelectorAll("select").forEach(sel => {
-      sel.addEventListener("change", () => {
-        m[sel.dataset.k] = sel.value;
-        if (sel.dataset.k === "provider") syncProvider(card, m);
-        paintDefaultModelSelect();
-      });
-    });
-    card.querySelector(".mc-rm").addEventListener("click", () => {
-      modelDraft.splice(i, 1);
-      renderModelCards();
-    });
-    card.querySelector(".mc-fetch").addEventListener("click", () => fetchModels(card, i));
-    syncProvider(card, m); // 初始同步:deepseek 固定地址 / 思考控件显隐 / effort 选项
-    box.appendChild(card);
-  });
+// hostOf 把 base_url 收成"主机[:端口]/路径"短形,块卡片里够用
+function hostOf(u) {
+  if (!u) return "(未填 Base URL)";
+  return String(u).replace(/^https?:\/\//, "").replace(/\/$/, "");
+}
+
+// renderModels 是设置弹窗里模型区的总入口:
+// modelEditing = -1 → 块列表(点块进入编辑);>= 0 → 该模型的编辑面板。
+function renderModels() {
+  if (modelEditing < 0) renderModelGrid(); else renderModelEditor();
   paintDefaultModelSelect();
+}
+
+function renderModelGrid() {
+  const box = $("#model-list");
+  $("#model-edit").innerHTML = "";
+  $("#btn-add-model").style.display = "";
+  box.innerHTML = "";
+  const defName = $("#c-default-model").value;
+  const val = (v) => (v === 0 || v === "0" || v === "" || v == null) ? "" : esc(v);
+  modelDraft.forEach((m, i) => {
+    const cell = (label, v, fb) =>
+      '<span>' + label + ' <b class="' + (v ? "" : "auto") + '">' + (v || fb || "自动") + '</b></span>';
+    const tile = document.createElement("div");
+    tile.className = "model-tile";
+    tile.title = "点击编辑该模型";
+    tile.innerHTML =
+      '<div class="mt-name">' + esc(m.name || "(未命名)") +
+        '<span class="mt-badge">' + esc(m.provider || "?") + '</span>' +
+        (m.name && m.name === defName ? '<span class="mt-badge mt-def">默认</span>' : '') +
+      '</div>' +
+      '<div class="mt-sub">' + esc(m.model_name || "(未填 Model Name)") + '</div>' +
+      '<div class="mt-sub">' + esc(hostOf(m.base_url)) + '</div>' +
+      '<div class="mt-stats">' +
+        cell("上下文", val(m.context_window), "未设置") +
+        cell("输出", val(m.max_tokens)) +
+        cell("temp", val(m.temperature)) +
+        cell("top_p", val(m.top_p)) +
+        cell("top_k", val(m.top_k)) +
+      '</div>' +
+      '<div class="mt-go">编辑 ›</div>';
+    tile.addEventListener("click", () => { modelEditing = i; renderModels(); });
+    box.appendChild(tile);
+  });
+}
+
+function renderModelEditor() {
+  const i = modelEditing;
+  const m = modelDraft[i];
+  $("#model-list").innerHTML = "";
+  $("#btn-add-model").style.display = "none";
+  const card = document.createElement("div");
+  card.className = "model-editor";
+  const field = (k, label, ph, type) => {
+    // 数字字段:0 就是"未设置",显示成空 —— 不把 0 当成一个填了的值。
+    const v = m[k];
+    const shown = v == null || (type === "number" && Number(v) === 0) ? "" : v;
+    return '<div class="frow"><label>' + label + '</label><input type="' + (type || "text") + '" data-k="' + k +
+      '" placeholder="' + (ph || "") + '" value="' + esc(shown) + '"></div>';
+  };
+  const selectField = (k, label, options) => {
+    const cur = String(m[k] == null ? "" : m[k]);
+    let opts = options;
+    if (cur && !options.some(o => o[0] === cur)) opts = opts.concat([[cur, cur + " (自定义)"]]);
+    const html = opts.map(o =>
+      '<option value="' + esc(o[0]) + '"' + (cur === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>').join("");
+    return '<div class="frow"><label>' + label + '</label><select data-k="' + k + '">' + html + '</select></div>';
+  };
+  card.innerHTML =
+    '<div class="me-head"><button class="btn me-back" data-act="back">← 模型列表</button>' +
+      '<span class="me-title">' + esc(m.name || "新模型") + '</span>' +
+      '<button class="btn danger me-rm" data-act="rm">删除该模型</button></div>' +
+    '<div class="me-bar">' +
+      '<button class="btn primary" data-act="probe">✨ 一键获取参数</button>' +
+      '<span class="hint">能读到多少填多少:Model Name / 上下文窗口 / 最大输出 / temperature / top_p / top_k。读不到的保持留空 —— 留空即不发送,由框架用它自己的默认值</span>' +
+    '</div>' +
+    field("name", "显示名", "下拉框里显示的名字,唯一") +
+    selectField("provider", "Provider", [
+      ["vllm", "vllm"], ["sglang", "sglang"], ["deepseek", "deepseek (官方)"], ["ollama", "ollama"],
+    ]) +
+    field("base_url", "Base URL", "sglang 直连带 /v1;走代理则按代理要求") +
+    field("api_key", "API Key") +
+    '<div class="frow"><label>Model Name</label>' +
+      '<input type="text" data-k="model_name" list="models-list-' + i + '" placeholder="服务端模型名" value="' + esc(m.model_name || "") + '">' +
+      '<button class="mc-fetch" data-act="models" title="仅拉取模型列表">🔄</button></div>' +
+    '<datalist id="models-list-' + i + '"></datalist>' +
+     field("context_window", "Context Window", "留空/0 = 未知(不自动压缩),可一键获取", "number") +
+     field("max_tokens", "Max Tokens", "留空/0 = 不发送,由框架定", "number") +
+     field("temperature", "Temperature", "留空/0 = 不发送", "number") +
+     field("top_p", "Top P", "留空/0 = 不发送", "number") +
+     field("top_k", "Top K", "留空/0 = 不发送", "number") +
+
+    '<div class="me-actions"><button class="btn primary" data-act="done">完成(返回模型列表)</button>' +
+      '<button class="btn" data-act="default">设为默认</button>' +
+      '<span class="spacer"></span><span class="hint">改完记得点最下面的"保存配置"</span></div>';
+  card.querySelectorAll("input").forEach(inp => {
+    inp.addEventListener("input", () => { m[inp.dataset.k] = inp.value; });
+  });
+  card.querySelectorAll("select").forEach(sel => {
+    sel.addEventListener("change", () => {
+      m[sel.dataset.k] = sel.value;
+      if (sel.dataset.k === "provider") syncProvider(card, m);
+    });
+  });
+  card.querySelector('[data-act="back"]').addEventListener("click", () => { modelEditing = -1; renderModels(); });
+  card.querySelector('[data-act="done"]').addEventListener("click", () => {
+    if (!(m.name || "").trim() || !(m.provider || "").trim() || !(m.base_url || "").trim() || !(m.model_name || "").trim()) {
+      toast("显示名 / Provider / Base URL / Model Name 都要填", "err");
+      return;
+    }
+    modelEditing = -1;
+    renderModels();
+  });
+  card.querySelector('[data-act="default"]').addEventListener("click", () => {
+    if (!(m.name || "").trim()) { toast("先填显示名", "err"); return; }
+    m.name = m.name.trim();
+    paintDefaultModelSelect();
+    $("#c-default-model").value = m.name;
+    toast("默认模型 = " + m.name, "ok");
+  });
+  card.querySelector('[data-act="rm"]').addEventListener("click", () => {
+    if (modelDraft.length <= 1) { toast("至少要保留一个模型", "err"); return; }
+    modelDraft.splice(i, 1);
+    modelEditing = -1;
+    renderModels();
+  });
+  card.querySelector('[data-act="models"]').addEventListener("click", () => fetchModels(card, i));
+  card.querySelector('[data-act="probe"]').addEventListener("click", () => probeModel(card, i));
+  syncProvider(card, m); // 初始同步:deepseek 固定地址 / 思考控件显隐 / effort 选项
+  $("#model-edit").innerHTML = "";
+  $("#model-edit").appendChild(card);
+}
+
+// probeModel 调后端 /api/llm/probe 问服务端要该模型的上下文窗口 / 最大输出 /
+// 采样默认值,只填服务端真的报出来的字段;没报的保持原样(留空即不发送)。
+async function probeModel(card, i) {
+  const m = modelDraft[i];
+  const baseUrl = (card.querySelector('input[data-k="base_url"]').value || "").trim();
+  const apiKey = (card.querySelector("input[data-k=\"api_key\"]").value || "").trim();
+  const btn = card.querySelector('[data-act="probe"]');
+  if (!baseUrl) { toast("请先填写 Base URL", "err"); return; }
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "获取中…";
+  const LABELS = { model_name: "Model Name", context_window: "上下文窗口", max_tokens: "最大输出",
+                   temperature: "temperature", top_p: "top_p", top_k: "top_k" };
+  try {
+    const r = await fetch("/api/llm/probe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_url: baseUrl, api_key: apiKey,
+                             model_name: (m.model_name || "").trim(), provider: m.provider || "" }),
+    });
+    const d = await r.json();
+    if (!r.ok) { toast("获取失败: " + (d.error || r.status), "err"); return; }
+    // 模型列表 → datalist;Model Name 为空时顺带填上服务端报的那个
+    const list = document.getElementById("models-list-" + i);
+    const nameInput = card.querySelector('input[data-k="model_name"]');
+    if (list && d.models && d.models.length) {
+      list.innerHTML = "";
+      for (const name of d.models) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        list.appendChild(opt);
+      }
+    }
+    const filled = [], missed = [];
+    if (d.model_name && !(nameInput.value || "").trim()) {
+      nameInput.value = d.model_name; m.model_name = d.model_name; filled.push(LABELS.model_name);
+    }
+    for (const k of ["context_window", "max_tokens", "temperature", "top_p", "top_k"]) {
+      const inp = card.querySelector('input[data-k="' + k + '"]');
+      if (!inp) continue;
+      if (d.found && d.found.indexOf(k) >= 0) {
+        inp.value = d[k]; m[k] = d[k]; filled.push(LABELS[k]);
+      } else {
+        missed.push(LABELS[k]);
+      }
+    }
+    if (filled.length) toast("已获取: " + filled.join("、"), "ok");
+    if (missed.length) toast("服务端未报: " + missed.join("、") + " —— 留空即不发送", filled.length ? "ok" : "err");
+    if (!filled.length && d.notes && d.notes.length) console.warn("probe notes:", d.notes);
+  } catch (e) {
+    toast("获取失败: " + e.message, "err");
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
 }
 
 // syncProvider 按当前 provider 调整卡片:deepseek 的 base_url 固定为官方地址
@@ -2907,14 +3072,17 @@ async function openSettings() {
   modelDraft = (cfg.models && cfg.models.length ? cfg.models : [cfg.model || {}]).map(m =>
     Object.assign(modelTemplate(), m));
   if (!modelDraft.length) modelDraft = [modelTemplate()];
-  renderModelCards();
+  modelEditing = -1; // 打开设置总是先看块列表
+  // 先把默认模型下拉填好并选定,块卡片才知道该给哪一块打"默认"标记
+  paintDefaultModelSelect();
   $("#c-default-model").value = cfg.default_model || modelDraft[0].name || "";
-  $("#c-compaction").checked = cfg.compaction_enabled !== false; // 缺省 = 开启
+  renderModels();
   $("#w-port").value = cfg.web_port || "";
   $("#settings-mask").classList.add("open");
 }
 async function saveSettings() {
-  const num = (v) => (v === "" ? 0 : Number(v));
+  // 空 / 非数字一律按 0 提交,0 在服务端表示"未设置" → 请求里不带该字段
+  const num = (v) => (v === "" || v == null || isNaN(Number(v)) ? 0 : Number(v));
   const models = modelDraft.map(m => ({
     name: (m.name || "").trim(),
     provider: (m.provider || "").trim(),
@@ -2925,7 +3093,7 @@ async function saveSettings() {
     context_window: num(m.context_window),
     temperature: num(m.temperature),
     top_p: num(m.top_p),
-    reserve_tokens: num(m.reserve_tokens),
+    top_k: num(m.top_k),
     thinking: (m.thinking || "").trim(),
     reasoning_effort: (m.reasoning_effort || "").trim(),
   }));
@@ -2943,7 +3111,6 @@ async function saveSettings() {
     web_port: num($("#w-port").value),
     models,
     default_model: defModel,
-    compaction_enabled: $("#c-compaction").checked,
     user_avatar: state.userAvatar, // 透传用户头像,避免整份配置保存时丢失
   };
   try {
@@ -4051,16 +4218,16 @@ applySendMode();
     updateThinkFill();
   });
   $("#tp-effort").addEventListener("change", () => persistReasoning());
-  // 设置弹窗:添加模型卡片
+  // 设置弹窗:新增模型 = 追加一块并直接进入该块的编辑面板
   $("#btn-add-model").addEventListener("click", () => {
     modelDraft.push(modelTemplate());
-    renderModelCards();
-    const cards = $("#model-list").querySelectorAll(".model-card");
-    const last = cards[cards.length - 1];
-    if (last) {
-      last.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      const f = last.querySelector("input");
-      if (f) f.focus();
+    modelEditing = modelDraft.length - 1;
+    renderModels();
+    const f = $("#model-edit").querySelector('input[data-k="name"]');
+    if (f) {
+      f.focus();
+      const host = $("#model-edit").querySelector(".model-editor");
+      if (host) host.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   });
   // 双击聊天头标题重命名当前会话(群视图:打开群设置)

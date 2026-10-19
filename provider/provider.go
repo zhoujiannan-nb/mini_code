@@ -237,6 +237,20 @@ type Provider interface {
 	ConfigureRequest(req *chatRequest)
 }
 
+// maxInputBudget is the input space a request may use: the context window minus the
+// output reserve minus a small safety margin for template/chat-format overhead.
+// An unknown window (0) means the budget is unknown too, so this returns 0 rather
+// than inventing one — callers then skip window-based thresholds entirely.
+func maxInputBudget(contextWindow, maxTokens int) int {
+	if contextWindow <= 0 {
+		return 0
+	}
+	if n := contextWindow - maxTokens - 2048; n > 0 {
+		return n
+	}
+	return 0
+}
+
 type ChatOption func(*chatOptions)
 
 type chatOptions struct {

@@ -40,7 +40,7 @@ func (p *OllamaProvider) BuildHeaders() map[string]string {
 
 func (p *OllamaProvider) GetContextWindow() int { return p.ContextWindow }
 func (p *OllamaProvider) GetMaxTokens() int     { return p.MaxTokens }
-func (p *OllamaProvider) GetMaxInput() int      { return p.ContextWindow - p.MaxTokens - 2048 }
+func (p *OllamaProvider) GetMaxInput() int      { return maxInputBudget(p.ContextWindow, p.MaxTokens) }
 
 // ConfigureRequest adds top_p when set. Ollama's OpenAI-compatible endpoint
 // reports usage in its own stream shape, so no stream_options is added (adding

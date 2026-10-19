@@ -13,17 +13,16 @@ import (
 )
 
 const (
-	// autoCompactWindowFraction is where the loop forces a compaction turn,
-	// measured against the model's FULL CONTEXT WINDOW (not the input budget):
-	// the session runs until 95% of the window and only then compacts.
-	// ContextWindowFraction clamps it to the input budget so a request is never
-	// assembled larger than the provider accepts.
-	autoCompactWindowFraction = 0.95
-	// usageNoticeWindowFractions are the two reminder stages, same reference:
-	// nudging the model at 85% and 90% leaves it one turn before the loop
-	// compacts on its own at 95%.
-	usageNoticeWindowFraction1 = 0.85
-	usageNoticeWindowFraction2 = 0.90
+	// compactInputFraction is where the loop forces a compaction turn, measured
+	// against the model's USABLE INPUT BUDGET — the largest request the provider
+	// will actually accept (context window minus the output reserve). Just shy of
+	// the ceiling: the estimate is calibrated, but a little head-room keeps a
+	// mis-estimate from turning the request into a provider-side length error.
+	compactInputFraction = 0.98
+	// noticeInputFractions are the two reminder stages on the SAME reference, so
+	// the model gets a turn or two to call compact_context before the loop does it.
+	noticeInputFraction1 = 0.90
+	noticeInputFraction2 = 0.95
 
 	// CompactKeepMessages is how many verbatim messages survive a compaction:
 	// the newest ones are walked backwards from the summary until this many
@@ -36,18 +35,19 @@ const (
 	CompactKeepMaxTokens = 20000
 )
 
-// ContextWindowFraction maps a fraction of the model's context window to a token
-// count and clamps it to the input budget. The clamp is not decoration: a
-// provider only ever takes context_window - max_output_tokens - slack tokens, so
-// on a model whose output reserve is bigger than the requested margin (260k
-// window with a 31k output: 95% of the window is above the input budget), the
-// fraction degrades to "as late as safely possible" — the input budget itself.
-func ContextWindowFraction(contextWindow, maxInput int, fraction float64) int {
-	limit := maxInput
-	if contextWindow > 0 {
-		if t := int(float64(contextWindow) * fraction); limit <= 0 || t < limit {
-			limit = t
-		}
+// InputBudgetFraction maps a fraction of the model's usable input budget to a
+// token count. The budget is what a request may actually use — the context window
+// minus the output reserve — so it is the only honest denominator: a percentage of
+// the raw window would be measured against a size the request can never reach.
+// A zero budget means the model's window is unknown, in which case no absolute
+// threshold can be given and this returns 0 (callers then skip the check).
+func InputBudgetFraction(maxInput int, fraction float64) int {
+	if maxInput <= 0 {
+		return 0
+	}
+	limit := int(float64(maxInput) * fraction)
+	if limit > maxInput {
+		limit = maxInput
 	}
 	if limit < 0 {
 		limit = 0
@@ -142,13 +142,13 @@ func StripCompactRequests(messages []provider.Message) []provider.Message {
 	return out
 }
 
-// IsUsageNotice reports whether m is one of the context-usage notices (85/90%,
-// plus the legacy 75/80% ones still stored in older sessions). They are dropped
-// on compaction: after a compaction the numbers they quote are wrong, and the
-// marker-based dedup re-arms them from the new (much lower) usage.
+// IsUsageNotice reports whether m is one of the context-usage notices (90/95%,
+// plus the legacy 75/80/85/90% ones still stored in older sessions). They are
+// dropped on compaction: after a compaction the numbers they quote are wrong, and
+// the marker-based dedup re-arms them from the new (much lower) usage.
 func IsUsageNotice(m provider.Message) bool {
 	t := m.GetText()
-	for _, pct := range []int{75, 80, 85, 90} {
+	for _, pct := range []int{75, 80, 85, 90, 95} {
 		if strings.Contains(t, usageNoticeMarker(pct)) {
 			return true
 		}
