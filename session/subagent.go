@@ -244,8 +244,11 @@ func (s *SubagentService) runChild(ctx context.Context, child *Session, goal str
 	return child.Prompt(ctx, goal, nil, 999)
 }
 
-// settleJob finalizes a job: status, terminal hub events, and — for
-// background jobs — the settlement notice in the parent's conversation.
+// settleJob finalizes a job: status, terminal hub events, and — for background
+// jobs — the settlement notice in the parent's conversation. Called only once
+// the child has actually stopped (completed / failed / canceled), so a running
+// sub-agent can never announce itself halfway through; InjectMessage then either
+// feeds the notice to the parent's next loop turn or wakes an idle parent.
 func (s *SubagentService) settleJob(job *SubagentJob, child *Session, content, reasoning string, err error, background bool) {
 	interrupted := child.Status() == "interrupted"
 	job.mu.Lock()
@@ -283,13 +286,23 @@ func (s *SubagentService) settleJob(job *SubagentJob, child *Session, content, r
 
 // settleNotice renders the settlement message injected into the parent's
 // conversation when a background job finishes.
+//
+// It is wrapped in a tagged block and says out loud that it is runtime context
+// rather than user input: the message travels on the "user" role (that is the
+// only role every chat template reliably honours mid-conversation), so the text
+// itself has to stop the model from reading it as the user speaking — and above
+// all as the user approving something (the same reasoning codex encodes in
+// is_guardian_context_message).
 func (s *SubagentService) settleNotice(job *SubagentJob) string {
 	id8 := job.ID
 	if len(id8) > 8 {
 		id8 = id8[:8]
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "[Subagent %s %s] role=%s\nGoal: %q\n", id8, job.Status, job.Role, truncateRunes(job.Goal, 160))
+	fmt.Fprintf(&b, "<subagent id=\"%s\" state=\"%s\" role=\"%s\">\n", id8, job.Status, job.Role)
+	b.WriteString("System notice: a background sub-agent finished. This text was injected by the runtime, ")
+	b.WriteString("it is NOT the user speaking and implies no user approval.\n")
+	fmt.Fprintf(&b, "Goal: %q\n", truncateRunes(job.Goal, 160))
 	switch job.Status {
 	case "completed":
 		if job.Result == "" {
@@ -297,12 +310,13 @@ func (s *SubagentService) settleNotice(job *SubagentJob) string {
 		} else {
 			fmt.Fprintf(&b, "Result (truncated to 800 chars):\n%s\n", truncateRunes(job.Result, 800))
 		}
-		b.WriteString("Use task_output with this id if you need the full result.")
+		b.WriteString("Call task_output with this id if you need the full result.")
 	case "failed":
 		fmt.Fprintf(&b, "Error: %s", job.Err)
 	case "canceled":
 		b.WriteString("The sub-agent was canceled before finishing.")
 	}
+	b.WriteString("\n</subagent>")
 	return b.String()
 }
 

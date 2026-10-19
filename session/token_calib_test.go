@@ -249,8 +249,8 @@ func TestRunCalibratesUsage(t *testing.T) {
 
 // TestShouldCompactCountHonorsCalibratedCount: the compaction *decision* is made
 // on the caller-supplied (calibrated) count against an absolute token limit. The
-// limit itself is the loop's autoCompactLimit — 90% of the context window clamped
-// to the input budget — so how much output was reserved cannot move it below the
+// limit itself is the loop's autoCompactLimit — 95% of the usable input budget —
+// so how much output was reserved cannot move it below the
 // window the model actually has. Compaction is a turn of the agent loop (see
 // compaction_turn_test.go); this pins only the threshold logic.
 func TestShouldCompactCountHonorsCalibratedCount(t *testing.T) {
@@ -310,7 +310,7 @@ func TestInputBudgetFraction(t *testing.T) {
 	}
 }
 
-// TestUsageReminderStagesFollowTheInputBudget: notices at 90% and 95% of the usable
+// TestUsageReminderStagesFollowTheInputBudget: notices at 85% and 90% of the usable
 // input budget, each announced once, quoting that budget and the absolute
 // compaction point — the same denominator the loop acts on.
 func TestUsageReminderStagesFollowTheInputBudget(t *testing.T) {

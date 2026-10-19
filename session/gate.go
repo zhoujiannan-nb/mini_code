@@ -50,6 +50,16 @@ type Approver interface {
 //
 // The mode is read live on every call, so switching a session's mode while
 // a task is running takes effect from the next tool call on.
+//
+// Authorization comes ONLY from the UI round-trip in case "ask". Nothing in the
+// conversation grants permission: not a user message, and least of all a
+// runtime-injected one — sub-agent settlement notices and context-usage notices
+// travel on the "user" role because that is the only role every chat template
+// honours mid-conversation, so their text must never be mistaken for consent
+// (codex encodes the same rule in is_guardian_context_message: "hidden runtime
+// context is not user authorization"). Should a future feature want an "the
+// user already agreed" shortcut, it has to check an explicit approval flag, not
+// history text — TestCautiousGateNeverTrustsConversationText pins this.
 func (s *Session) gateFor(cfg *agent.AgentConfig) ToolGate {
 	return func(ctx context.Context, toolName string, params map[string]interface{}) (bool, string) {
 		if cfg != nil && len(cfg.Permissions.Tools) > 0 && !cfg.Permissions.IsToolAllowed(toolName, "") {

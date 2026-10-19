@@ -597,10 +597,10 @@ func (h *Hub) process(m Message) {
 
 	slog.Info("task started", "task", taskID, "session", sess.ID(), "channel", m.Channel)
 	content, reasoning, err := sess.Prompt(taskCtx, m.Content, m.Images, h.maxTurns)
-	// The loop has just persisted its final messages: apply any settlement
-	// notices that were queued while this task was running (e.g. background
-	// sub-agents that finished in the meantime).
-	h.mgr.FlushInjections(sess.ID())
+	// Nothing to flush here: settlement notices and group messages queued while
+	// this task ran are drained by the loop itself (Session.QueueUserMessage →
+	// AgentLoop.SetInjections), and any that arrived after the final turn are
+	// dispatched as a fresh task by Session.Prompt before it returns.
 	if err != nil {
 		slog.Error("task failed", "task", taskID, "session", sess.ID(), "err", err)
 		h.emit(NewErrorMessage(taskID, sess.ID(), sess.ChannelKey(), m.Channel, err.Error()))

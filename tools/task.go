@@ -142,9 +142,11 @@ func (t *TaskTool) Execute(ctx context.Context, params map[string]interface{}) (
 		return NewTextResult(fmt.Sprintf(
 			"Background sub-agent started: job %s (role %s). It runs independently while you continue working.\n"+
 				"- task_output(id=\"%s\", wait=true) to retrieve the result (blocks until done or timeout)\n"+
-				"- task_status(id) / task_list() to check progress\n"+
+				"- task_status(id) / task_list() to check status\n"+
 				"- task_cancel(id) to stop it\n"+
-				"A settlement notice will also appear in the conversation when it finishes.",
+				"A settlement notice will be added to this conversation when it finishes, and it will wake you up if you have stopped in the meantime.\n"+
+				"Do NOT sleep, poll for progress, ask the sub-agent for status, or duplicate its work; avoid editing the same files or topics it is working on. "+
+				"Either continue with non-overlapping work, or briefly tell the user what you launched and end your turn.",
 			jobID, subAgent, jobID)), nil
 	}
 

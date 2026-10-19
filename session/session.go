@@ -66,7 +66,7 @@ func (s *Session) ChannelKey() string     { return s.record.ChannelKey }
 func (s *Session) Record() *SessionRecord { return s.record }
 
 // ContextRemindersEnabled reports whether the context-usage notices
-// (80%/85% window usage reminders) are on for this session. An absent
+// (85%/90% budget usage reminders) are on for this session. An absent
 // metadata key keeps the default: enabled.
 func (s *Session) ContextRemindersEnabled() bool {
 	s.mu.Lock()
@@ -570,12 +570,6 @@ type SessionManager struct {
 	// queue forever into a session that has no live loop.
 	activeCheckMu   sync.RWMutex
 	activeTaskCheck func(sessionID string) bool
-
-	// injections queues settlement notifications for sessions whose task
-	// is still running (a running loop owns its message list; the queued
-	// text is appended once the task settles, see FlushInjections).
-	injMu      sync.Mutex
-	injections map[string][]string
 }
 
 // clientFor resolves the model client for a session's model key. Empty or
@@ -646,7 +640,6 @@ func NewSessionManager(client *provider.ModelClient, dbPath string) (*SessionMan
 		sessions:     make(map[string]*Session),
 		compactionOn: true,
 		modes:        make(map[string]string),
-		injections:   make(map[string][]string),
 	}, nil
 }
 
@@ -663,7 +656,6 @@ func NewDefaultSessionManager(client *provider.ModelClient) (*SessionManager, er
 		sessions:     make(map[string]*Session),
 		compactionOn: true,
 		modes:        make(map[string]string),
-		injections:   make(map[string][]string),
 	}, nil
 }
 
@@ -927,40 +919,48 @@ func (m *SessionManager) DeliverToSession(sessionID, text string) error {
 
 // --- settlement notifications ---
 
-// InjectMessage appends a system-generated user message (e.g. a background
-// sub-agent settlement notice) to a session's conversation. When the
-// session's task is still running, the loop owns its message list, so the
-// text is queued and applied by FlushInjections once the task settles —
-// this keeps the notice from being clobbered by the loop's per-turn
-// persistence.
+// InjectMessage appends a system-generated user message (today: a background
+// sub-agent settlement notice) to a session's conversation.
+//
+// It follows the same delivery rule as group chat (DeliverToSession), because
+// that is what makes a notice useful instead of merely stored:
+//
+//   - the session's task is running → queue it on the session itself
+//     (QueueUserMessage) so the agent loop feeds it to the model at the start of
+//     its NEXT turn instead of after the whole task is over. It is persisted
+//     right away (write-ahead, so a UI refresh shows it) and the loop's next
+//     persist rewrites the record from its own copy — once. A notice arriving
+//     after the loop's final drain is dispatched as a fresh task by
+//     Session.Prompt's settle-drain, so nothing is lost or clobbered.
+//   - the session is idle → wake it: the notice is dispatched as a fresh task
+//     through the deliver hook, so the parent digests the result immediately
+//     instead of letting the work stall until the user types again (opencode
+//     resumes the parent for exactly this reason; there is no switch — a
+//     settled sub-agent that nobody reads is dead weight). With no hook wired
+//     (CLI, tests) the notice is only appended to the history.
 func (m *SessionManager) InjectMessage(sessionID, text string) error {
 	s, err := m.Get(sessionID)
 	if err != nil || s == nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 	if m.TaskRunning(sessionID) {
-		m.injMu.Lock()
-		m.injections[sessionID] = append(m.injections[sessionID], text)
-		m.injMu.Unlock()
-		slog.Info("settlement notice queued (session running)", "session", sessionID)
+		s.QueueUserMessage(text)
+		slog.Info("settlement notice queued for the next loop turn (session running)", "session", sessionID)
+		return nil
+	}
+	if m.hasDeliverHook() {
+		m.deliverIdle(sessionID, text)
+		slog.Info("settlement notice dispatched as a fresh task (session idle)", "session", sessionID)
 		return nil
 	}
 	return m.appendMessage(sessionID, text)
 }
 
-// FlushInjections applies queued settlement notices. The hub calls it right
-// after a task's Prompt returns (the loop has just persisted its final
-// messages), so the notices land on top of the final state.
-func (m *SessionManager) FlushInjections(sessionID string) {
-	m.injMu.Lock()
-	texts := m.injections[sessionID]
-	delete(m.injections, sessionID)
-	m.injMu.Unlock()
-	for _, t := range texts {
-		if err := m.appendMessage(sessionID, t); err != nil {
-			slog.Warn("flush injection failed", "session", sessionID, "err", err)
-		}
-	}
+// hasDeliverHook reports whether a wake path is wired (the web hub wires one).
+func (m *SessionManager) hasDeliverHook() bool {
+	m.deliverMu.RLock()
+	defer m.deliverMu.RUnlock()
+	return m.deliverHook != nil
 }
 
 func (m *SessionManager) appendMessage(sessionID, text string) error {

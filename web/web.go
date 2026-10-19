@@ -277,7 +277,7 @@ type SessionSummary struct {
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
 	MessageCount     int    `json:"message_count"`
-	ContextReminders bool   `json:"context_reminders"` // experimental context-usage notices (session-level, default off)
+	ContextReminders bool   `json:"context_reminders"` // experimental context-usage notices (session-level, default on)
 	// Thinking / ReasoningEffort are the per-session thinking-depth override
 	// (composer control); empty = the model's configured default.
 	Thinking        string `json:"thinking,omitempty"`
@@ -682,7 +682,7 @@ type SendMessageRequest struct {
 	Images           []string `json:"images,omitempty"` // data URLs (data:image/...;base64,...); the model sees them on the first turn
 	Mode             string   `json:"mode,omitempty"`   // permission mode for a NEW session (full / cautious)
 	Model            string   `json:"model,omitempty"`  // model name for a NEW session (config key); ignored for existing sessions
-	ContextReminders *bool    `json:"context_reminders,omitempty"` // new-session preference; nil = default (off)
+	ContextReminders *bool    `json:"context_reminders,omitempty"` // new-session preference; nil = default (on)
 	Thinking         string   `json:"thinking,omitempty"`          // thinking switch for a NEW session; ignored for existing sessions
 	ReasoningEffort  string   `json:"reasoning_effort,omitempty"`  // thinking depth for a NEW session; ignored for existing sessions
 }
