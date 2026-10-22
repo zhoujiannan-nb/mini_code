@@ -48,6 +48,12 @@ type BootAnimConfig struct {
 	// clickable over the whole UI is more obstacle than feature.
 	Interactive bool `json:"interactive"`
 
+	// Mute silences a theme's voice/sound effects. False (the default) lets the
+	// theme play audio: the player gives the iframe allow="autoplay" so an intro
+	// can speak without a prior click, and a theme must still finish the
+	// animation when playback is blocked.
+	Mute bool `json:"mute"`
+
 	// Dir is the theme directory. Empty = ~/.mini_code/boot-anim (see DirPath).
 	// Users can point it anywhere (e.g. a git checkout of the plugin repo).
 	Dir string `json:"dir,omitempty"`
@@ -117,7 +123,7 @@ func (b *BootAnimConfig) Normalize() {
 // an older config.json — or a UI that knows nothing about boot animation —
 // unmarshals to.
 func (b BootAnimConfig) IsZero() bool {
-	return !b.Enabled && b.Theme == "" && b.Mode == "" && b.Speed == 0 && b.Dir == "" && b.Repo == "" && b.Name == "" && !b.Interactive
+	return !b.Enabled && b.Theme == "" && b.Mode == "" && b.Speed == 0 && b.Dir == "" && b.Repo == "" && b.Name == "" && !b.Interactive && !b.Mute
 }
 
 // applyBootAnimDefaults fills an unconfigured boot-anim block with defaults and
@@ -216,7 +222,7 @@ func (b BootAnimConfig) Validate() error {
 func SameBootAnim(a, b BootAnimConfig) bool {
 	return a.Enabled == b.Enabled && a.Theme == b.Theme && a.Mode == b.Mode &&
 		a.Speed == b.Speed && a.Name == b.Name && a.Interactive == b.Interactive &&
-		a.Dir == b.Dir && a.Repo == b.Repo
+		a.Mute == b.Mute && a.Dir == b.Dir && a.Repo == b.Repo
 }
 
 func clampBootAnimSpeed(v float64) float64 {

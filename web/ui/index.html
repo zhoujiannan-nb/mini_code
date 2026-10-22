@@ -80,8 +80,17 @@ var __mcBoot = (function () {
     return stamp(SKEY) !== "1";
   }
   function entryURL() {
-    var q = "?speed=" + encodeURIComponent(cfg.speed || 1) + "&interactive=" + (cfg.interactive ? 1 : 0);
+    // 宿主说了算的参数放前面,主题自己的 options 只补缺:同名键不重复拼,
+    // 免得 URLSearchParams.get(取第一个)读到两份值。
+    var q = "?speed=" + encodeURIComponent(cfg.speed || 1) +
+      "&interactive=" + (cfg.interactive ? 1 : 0) + "&mute=" + (cfg.mute ? 1 : 0);
     if (cfg.name) q += "&name=" + encodeURIComponent(cfg.name);
+    var seen = { speed: 1, interactive: 1, mute: 1, name: 1 };
+    var o = cfg.options || {};
+    Object.keys(o).sort().forEach(function (k) {
+      if (seen[k]) return;
+      q += "&" + encodeURIComponent(k) + "=" + encodeURIComponent(o[k]);
+    });
     return cfg.entry + q;
   }
   function clear() {
@@ -131,6 +140,9 @@ var __mcBoot = (function () {
     frame.setAttribute("src", entryURL());
     // 只给 allow-scripts:主题读不到本地存储、拿不到 cookie、也开不了新窗口。
     frame.setAttribute("sandbox", "allow-scripts");
+    // 开机动画没有"用户手势",不给这条带语音的主题就出不了声。主题自己
+    // 也必须 catch 播放失败(播放策略随时可能反悔)。
+    frame.setAttribute("allow", "autoplay");
     frame.setAttribute("title", "开机动画");
     frame.setAttribute("aria-hidden", "true");
     el.appendChild(frame);
@@ -1518,6 +1530,10 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
             <div class="frow hinted"><label>片尾可交互</label>
               <label class="ck-row"><input type="checkbox" id="b-interactive">动画结束后仍可动</label>
               <span class="hint">只对声明支持的主题有效;开启后无法用点击跳过</span>
+            </div>
+            <div class="frow hinted"><label>声音</label>
+              <label class="ck-row"><input type="checkbox" id="b-mute">静默(不放主题语音/音效)</label>
+              <span class="hint">带语音的主题(如「技术档案」)默认出声;勾上就只演不出声</span>
             </div>
             <div class="frow hinted"><label>主题目录</label>
               <input type="text" id="b-dir" placeholder="~/.mini_code/boot-anim">
@@ -3667,6 +3683,7 @@ function bootForm() {
     speed: Number($("#b-speed").value) || 1,
     name: $("#b-name").value.trim(),
     interactive: $("#b-interactive").checked,
+    mute: $("#b-mute").checked,
     dir: $("#b-dir").value.trim(),
     repo: $("#b-repo").value.trim(),
   };
@@ -3689,6 +3706,7 @@ function bootFillForm(ba) {
   $("#b-speed").value = String(best);
   $("#b-name").value = ba.name || "";
   $("#b-interactive").checked = !!ba.interactive;
+  $("#b-mute").checked = !!ba.mute;
   $("#b-dir").value = ba.dir || "";
   $("#b-repo").value = ba.repo || "";
 }

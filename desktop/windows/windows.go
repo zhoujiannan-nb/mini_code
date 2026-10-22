@@ -180,6 +180,14 @@ func (p *platform) NewWindow(opts desktop.WindowOptions) (desktop.Window, error)
 		dataPath = ""
 	}
 
+	// 开机动画的语音要在【用户一次都没点过】的情况下出声,而 Chromium 的自动播放
+	// 策略默认禁止(实测:沙箱 iframe、allow="autoplay"、甚至顶层文档都拦,加这个
+	// 开关后沙箱里能正常播)。WebView2 支持用环境变量传浏览器参数,已有值就追加。
+	if args := os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"); !strings.Contains(args, "autoplay-policy") {
+		os.Setenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+			strings.TrimSpace(args+" --autoplay-policy=no-user-gesture-required"))
+	}
+
 	// 进程现在是 DPI-aware(dpi.go),CreateWindowExW 收的是物理像素,
 	// 所以先把设计尺寸按系统 DPI 换算,并夹到工作区 90% 以内。
 	winW, winH := scaledWindowSize(uint(opts.Width), uint(opts.Height))

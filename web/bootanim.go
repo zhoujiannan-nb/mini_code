@@ -59,6 +59,10 @@ type BootAnimTheme struct {
 	MinViewport int      `json:"minViewport"`
 	Tags        []string `json:"tags,omitempty"`
 
+	// Options is theme.json's "options" block: default query parameters the
+	// player passes to the entry (brand text, mute, ...). Sanitized.
+	Options map[string]any `json:"options,omitempty"`
+
 	// URL / PreviewURL are served paths, set for installed themes only.
 	URL        string `json:"url,omitempty"`
 	PreviewURL string `json:"preview_url,omitempty"`
@@ -252,6 +256,14 @@ func loadBootAnimThemeDir(dir, id string) (*BootAnimTheme, error) {
 		MinViewport: m.MinViewport,
 		Tags:        m.Tags,
 		Installed:   true,
+	}
+	// theme.json 的 options 会被播放器拼成入口的 query(见 bootAnimBootJSON),
+	// 清单结构体没这个字段,单独取一次再收敛。
+	var extra struct {
+		Options map[string]any `json:"options"`
+	}
+	if json.Unmarshal(raw, &extra) == nil {
+		t.Options = sanitizeBootAnimOptions(extra.Options)
 	}
 	if t.MaxMs < t.DurationMs {
 		t.MaxMs = t.DurationMs
@@ -832,6 +844,12 @@ type BootAnimBootConfig struct {
 	DurationMs  int     `json:"durationMs"`
 	MaxMs       int     `json:"maxMs"`
 	MinViewport int     `json:"minViewport"`
+	// Mute is the user's "no sound" switch: a theme with voice cues reads it and
+	// stays quiet. Default false = sound allowed (a bool in a nested struct can
+	// only mean "off" in its zero value, so the default has to be the loud one).
+	Mute bool `json:"mute"`
+	// Options are the selected theme's own default query parameters.
+	Options map[string]any `json:"options,omitempty"`
 }
 
 // bootAnimBootJSON renders that block. It returns "null" when there is nothing
@@ -873,6 +891,8 @@ func (s *server) bootAnimBootJSON() string {
 		Speed:       b.Speed,
 		Name:        b.Name,
 		Interactive: b.Interactive && t.Interactive,
+		Mute:        b.Mute,
+		Options:     t.Options,
 		DurationMs:  duration,
 		MaxMs:       maxMs,
 		MinViewport: minVp,
@@ -883,6 +903,46 @@ func (s *server) bootAnimBootJSON() string {
 	// A theme manifest can carry user text; "</script>" inside the JSON would
 	// close the block early. "<\/" is the same string to the JSON parser.
 	return strings.ReplaceAll(string(out), "</", `<\/`)
+}
+
+// bootAnimOptionKeyRe keeps theme-supplied query keys boring: short lowercase
+// words. Anything else is dropped before it can end up in an injected URL.
+var bootAnimOptionKeyRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+
+// sanitizeBootAnimOptions trims a theme's "options" block to what is safe to
+// hand to the entry as a query string: a handful of short keys with scalar
+// values. Keys the player sets itself are dropped here too, so a theme cannot
+// override e.g. the speed the user picked.
+func sanitizeBootAnimOptions(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	drop := map[string]bool{"speed": true, "name": true, "interactive": true, "mute": true}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		if len(out) >= 16 || drop[k] || !bootAnimOptionKeyRe.MatchString(k) {
+			continue
+		}
+		switch val := v.(type) {
+		case bool:
+			if val {
+				out[k] = 1
+			} else {
+				out[k] = 0
+			}
+		case float64:
+			out[k] = val
+		case string:
+			val = strings.TrimSpace(val)
+			if val != "" && len(val) <= 64 {
+				out[k] = val
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // injectBootAnim replaces the placeholder script in the embedded UI with the

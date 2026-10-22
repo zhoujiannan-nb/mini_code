@@ -566,3 +566,59 @@ func fetchBody(t *testing.T, url string) (string, error) {
 	}
 	return string(b), err
 }
+
+// TestBootAnimBootOptionsMuteAndAudio: theme.json 的 options 会被收敛后注入播放器
+// (主题不能覆盖宿主自己的 speed/name/interactive/mute),Mute 一并注入,
+// 并且主题里的语音文件取得到、CSP 放行 media-src。
+func TestBootAnimBootOptionsMuteAndAudio(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "t1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	theme := `{"id":"t1","name":"测试主题","version":"1.2.3","entry":"index.html","durationMs":2000,"maxMs":4000,` +
+		`"options":{"brand":"Mini Code","sub":"欢迎来到人类联盟","speed":9,"Bad Key":"x","n":true,` +
+		`"long":"` + strings.Repeat("y", 80) + `"}}`
+	if err := os.WriteFile(filepath.Join(dir, "t1", "theme.json"), []byte(theme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "t1", "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "t1", "voice-hello.wav"), []byte("RIFF....WAVEfmt "), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.AppConfig{BootAnim: config.BootAnimConfig{
+		Enabled: true, Theme: "t1", Mode: config.BootAnimModeSession, Speed: 1, Mute: true, Dir: dir,
+	}}
+	srv := httptest.NewServer(NewServer(&fakeBackend{cfg: cfg}))
+	defer srv.Close()
+
+	body, err := fetchBody(t, srv.URL+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// map 的键按字母序序列化:只有 brand / n / sub 活下来(空格键名、过长的值、
+	// 以及宿主保留的 speed 都被丢掉)。
+	if !strings.Contains(body, `"options":{"brand":"Mini Code","n":1,"sub":"欢迎来到人类联盟"}`) {
+		t.Errorf("options 没有被正确收敛/注入: %s", body)
+	}
+	if !strings.Contains(body, `"mute":true`) {
+		t.Errorf("静音开关没有注入: %s", body)
+	}
+
+	resp, err := http.Get(srv.URL + "/bootanim/t1/voice-hello.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("语音文件应当可取,得到 %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "audio/wav" {
+		t.Errorf("语音文件 Content-Type = %q", ct)
+	}
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "media-src") {
+		t.Errorf("CSP 必须放行 media-src,主题才放得出声音: %s", csp)
+	}
+}
