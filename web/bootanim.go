@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path"
@@ -667,6 +668,10 @@ func installBootAnimTheme(dir, rawBase string, item *bootAnimIndexItem) (*BootAn
 		return nil, fmt.Errorf("下载完成但主题不可用,已回滚: %w", err)
 	}
 	os.RemoveAll(old)
+	// 校验过才留得住:每个文件都比对过 sha256/大小(见 bootAnimDownloadFile),
+	// 装完在日志里留一行,用户能自己确认"读取/核验"确实完成了。
+	slog.Info("boot theme installed", "id", installed.ID, "version", installed.Version,
+		"files", len(item.Files), "bytes", total, "dir", target)
 	return installed, nil
 }
 
