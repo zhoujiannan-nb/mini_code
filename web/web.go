@@ -87,6 +87,13 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /favicon.ico", s.handleFavicon)
 	mux.HandleFunc("GET /avatars/{name}", s.handleAvatar)
 
+	// --- startup animation themes (untrusted third-party HTML, see bootanim.go) ---
+	mux.HandleFunc("GET /bootanim/", s.handleBootAnimAsset)
+	mux.HandleFunc("GET /api/bootanim", s.handleBootAnimList)
+	mux.HandleFunc("GET /api/bootanim/remote", s.handleBootAnimRemote)
+	mux.HandleFunc("POST /api/bootanim/install", s.handleBootAnimInstall)
+	mux.HandleFunc("DELETE /api/bootanim/{id}", s.handleBootAnimDelete)
+
 	// --- API ---
 	mux.HandleFunc("GET /api/healthz", s.handleHealthz)
 	mux.HandleFunc("GET /api/avatar", s.handleUserAvatarGet)
@@ -155,6 +162,9 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// UI 是内嵌的单文件:升级 exe 后必须拿到新页面,
 	// 否则 WebView2/浏览器可能继续用本地缓存的旧 UI(桌面端缓存是持久化的)
 	w.Header().Set("Cache-Control", "no-cache")
+	// 开机动画的配置直接注入页面里的占位 script:内联播放器在首帧之前就知道
+	// 要不要播、播哪个主题,不必等一次 /api 往返,首屏不会先白一下再盖黑幕。
+	page = injectBootAnim(page, s.bootAnimBootJSON())
 	w.Write([]byte(page))
 }
 
@@ -269,7 +279,7 @@ type SessionSummary struct {
 	// the session (hub task registry). It is the authoritative "running
 	// right now" flag for the UI: a persisted status of "running" can be
 	// stale after a process restart, but an active task never is.
-	Active       bool   `json:"active"`
+	Active           bool   `json:"active"`
 	AgentRole        string `json:"agent_role"`
 	Mode             string `json:"mode"`
 	WorkDir          string `json:"work_dir"`
@@ -679,9 +689,9 @@ func (s *server) handleListChildren(w http.ResponseWriter, r *http.Request) {
 type SendMessageRequest struct {
 	SessionID        string   `json:"session_id"` // empty = let the hub create a session
 	Content          string   `json:"content"`
-	Images           []string `json:"images,omitempty"` // data URLs (data:image/...;base64,...); the model sees them on the first turn
-	Mode             string   `json:"mode,omitempty"`   // permission mode for a NEW session (full / cautious)
-	Model            string   `json:"model,omitempty"`  // model name for a NEW session (config key); ignored for existing sessions
+	Images           []string `json:"images,omitempty"`            // data URLs (data:image/...;base64,...); the model sees them on the first turn
+	Mode             string   `json:"mode,omitempty"`              // permission mode for a NEW session (full / cautious)
+	Model            string   `json:"model,omitempty"`             // model name for a NEW session (config key); ignored for existing sessions
 	ContextReminders *bool    `json:"context_reminders,omitempty"` // new-session preference; nil = default (on)
 	Thinking         string   `json:"thinking,omitempty"`          // thinking switch for a NEW session; ignored for existing sessions
 	ReasoningEffort  string   `json:"reasoning_effort,omitempty"`  // thinking depth for a NEW session; ignored for existing sessions
@@ -860,6 +870,15 @@ func (s *server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	// A config posted by a UI that predates the boot-anim block carries an
+	// all-zero one: keep the live setting instead of wiping it, and normalize
+	// whatever was sent so a missing mode/speed is filled rather than rejected.
+	if cfg.BootAnim.IsZero() {
+		if cur := s.be.GetConfig(); cur != nil {
+			cfg.BootAnim = cur.BootAnim
+		}
+	}
+	cfg.BootAnim.Normalize()
 	if err := cfg.Validate(); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

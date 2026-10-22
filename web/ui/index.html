@@ -18,6 +18,186 @@
 })();
 </script>
 <style>
+/* ---------- 开机动画(播放器) ----------
+   黑幕写在 head:第一帧就把整个视口铺黑,不会先白一下再盖住(和配置注入配套,
+   见服务端 web/bootanim.go 的 injectBootAnim)。主题本身是不可信的第三方 HTML,
+   放进 sandbox="allow-scripts" 的 iframe 里跑,只能往父窗口 postMessage。 */
+html.mc-boot::after {
+  content: ""; position: fixed; inset: 0; z-index: 2147483000;
+  background: #05070a; pointer-events: auto;
+  opacity: 1; transition: opacity .7s ease;
+}
+html.mc-boot-out::after { opacity: 0; }
+#mc-boot {
+  position: fixed; inset: 0; z-index: 2147483001; margin: 0;
+  background: #05070a; border: 0; opacity: 1;
+  transition: opacity .7s ease;
+}
+#mc-boot.out { opacity: 0; pointer-events: none; }
+#mc-boot iframe { display: block; width: 100%; height: 100%; border: 0; background: #05070a; }
+#mc-boot-skip {
+  position: fixed; right: 18px; bottom: 16px; z-index: 2147483002;
+  font: 12px/1 system-ui, "Microsoft YaHei", sans-serif; color: #9aa4b2;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px; padding: 7px 12px; cursor: pointer;
+  opacity: 0; transition: opacity .5s ease .6s, color .15s, border-color .15s;
+}
+html.mc-boot #mc-boot-skip.show { opacity: .75; }
+#mc-boot-skip:hover { opacity: 1 !important; color: #e6edf3; border-color: rgba(255,255,255,.3); }
+</style>
+<script id="mc-boot-cfg" type="application/json">null</script>
+<script>
+/* 开机动画播放器。刻意写成不依赖页面任何部分的 ES5:它跑在 <head> 里,
+   比 CSS 之后的主脚本早,也必须在主脚本出错时照样能收场。
+   交还节奏由主题决定:主题发 handoff 就开始淡出(它继续画到最后一帧),
+   发 done 或被 maxMs/就绪看门狗兜住就强制结束 —— 主题再怎么坏也不会把界面锁死。 */
+var __mcBoot = (function () {
+  var cfg = null;
+  try { cfg = JSON.parse((document.getElementById("mc-boot-cfg") || {}).textContent || "null"); } catch (e) {}
+  var SKEY = "mc-boot-session", DKEY = "mc-boot-day";
+  var el = null, frame = null, skipBtn = null, timer = null, readyTimer = null;
+  var finished = !cfg || !cfg.enabled;
+  function today() {
+    var d = new Date();
+    return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
+  }
+  function stamp(k) {
+    try { return (k === SKEY ? sessionStorage : localStorage).getItem(k); } catch (e) { return null; }
+  }
+  function mark(k) {
+    try { (k === SKEY ? sessionStorage : localStorage).setItem(k, k === SKEY ? "1" : today()); } catch (e) {}
+  }
+  // 播放策略:服务端配置说了算(每次开页都会重新注入,所以"每次"就是每次)。
+  function shouldPlay() {
+    if (!cfg || !cfg.enabled || !cfg.entry) return false;
+    if (window.innerWidth < (cfg.minViewport || 320) || window.innerHeight < 300) return false;
+    try {
+      if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
+    } catch (e) {}
+    var mode = cfg.mode || "session";
+    if (mode === "always") return true;
+    if (mode === "daily") return stamp(DKEY) !== today();
+    return stamp(SKEY) !== "1";
+  }
+  function entryURL() {
+    var q = "?speed=" + encodeURIComponent(cfg.speed || 1) + "&interactive=" + (cfg.interactive ? 1 : 0);
+    if (cfg.name) q += "&name=" + encodeURIComponent(cfg.name);
+    return cfg.entry + q;
+  }
+  function clear() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+    if (skipBtn && skipBtn.parentNode) skipBtn.parentNode.removeChild(skipBtn);
+    el = frame = skipBtn = null;
+    var c = document.documentElement.className.replace(/\bmc-boot(-out)?\b/g, "").replace(/\s+/g, " ");
+    document.documentElement.className = c.replace(/^\s+|\s+$/g, "");
+  }
+  // fade=true 走淡出(主题已经交还画面),false 立即撤掉(跳过/超时)。
+  function finish(fade) {
+    if (finished) return;
+    finished = true;
+    if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (!fade || !el) { clear(); return; }
+    try { document.documentElement.classList.add("mc-boot-out"); } catch (e) {}
+    if (el) el.classList.add("out");
+    setTimeout(clear, 800);
+  }
+  function onMessage(e) {
+    if (!frame || !e || e.source !== frame.contentWindow) return;
+    var d = e.data;
+    // 主题的通信协议(见插件仓库 docs/theme-contract.md):
+    // parent.postMessage({mc:"boot-anim", type:"ready|step|handoff|done", id, ...}, "*")
+    if (!d || typeof d !== "object" || d.mc !== "boot-anim") return;
+    if (d.type === "ready") {
+      if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+      if (skipBtn) skipBtn.classList.add("show");
+    } else if (d.type === "handoff" || d.type === "done") {
+      // handoff = 主题刚开始淡出(此刻就叠化,别等它淡完);done = 收尾
+      finish(true);
+    }
+  }
+  function start(force) {
+    if (!cfg || !cfg.entry || el) return false;
+    if (!force && !shouldPlay()) return false;
+    finished = false;
+    if (!force) { mark(SKEY); mark(DKEY); }
+    var cls = document.documentElement.className;
+    document.documentElement.className = (cls ? cls + " " : "") + "mc-boot";
+    el = document.createElement("div");
+    el.id = "mc-boot";
+    frame = document.createElement("iframe");
+    frame.setAttribute("src", entryURL());
+    // 只给 allow-scripts:主题读不到本地存储、拿不到 cookie、也开不了新窗口。
+    frame.setAttribute("sandbox", "allow-scripts");
+    frame.setAttribute("title", "开机动画");
+    frame.setAttribute("aria-hidden", "true");
+    el.appendChild(frame);
+    skipBtn = document.createElement("button");
+    skipBtn.id = "mc-boot-skip";
+    skipBtn.type = "button";
+    skipBtn.textContent = "跳过 Esc";
+    skipBtn.onclick = function () { finish(false); };
+    window.addEventListener("message", onMessage);
+    // 主题没能在 3 秒内报 ready(资源缺失、CSP 拦了、目录被删了)就别把界面挡住。
+    readyTimer = setTimeout(function () { finish(false); }, 3000);
+    var max = cfg.maxMs || 15000;
+    if (max < 1000) max = 1000;
+    timer = setTimeout(function () { finish(true); }, max + 400);
+    if (document.body) {
+      document.body.appendChild(el);
+      document.body.appendChild(skipBtn);
+    } else {
+      document.addEventListener("DOMContentLoaded", function () {
+        if (finished) return;
+        document.body.appendChild(el);
+        document.body.appendChild(skipBtn);
+      });
+    }
+    return true;
+  }
+  window.addEventListener("keydown", function (e) {
+    if (!finished && el && (e.key === "Escape" || e.key === "Esc")) {
+      finish(false);
+      // 别让"跳过动画"顺手把底下的配置弹窗也关掉
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
+  // 点击空白处也能跳过(主题自己声明 interactive 时不抢)
+  window.addEventListener("pointerdown", function (e) {
+    if (finished || !el) return;
+    if (cfg && cfg.interactive) return;
+    if (e.target === el || e.target === frame) finish(false);
+  }, true);
+
+  var api = {
+    get cfg() { return cfg; },
+    get playing() { return !!el && !finished; },
+    skip: function () { finish(false); },
+    // 设置页的「预览一次」:无视播放策略和开关立刻播一遍,也不写策略标记。
+    // over 覆盖本次要播的主题与参数(设置里改了还没保存也能所见即所得)。
+    play: function (over) {
+      finish(false);
+      if (el) clear();
+      if (!cfg) cfg = {};
+      if (over) {
+        for (var k in over) {
+          if (Object.prototype.hasOwnProperty.call(over, k)) cfg[k] = over[k];
+        }
+      }
+      if (!cfg.entry) return false;
+      cfg.enabled = true;
+      return start(true);
+    }
+  };
+  if (cfg && cfg.enabled) start(false);
+  return api;
+})();
+window.__mcBoot = __mcBoot;
+</script>
+<style>
 /* 浅色主题默认值(深色在下方 html[data-theme=dark] 覆盖)。
    风格参考 DeepSeek 桌面端:中性近黑底 + 半透明面板 + 大圆角 + 品牌蓝。
    对比度沿用原有 AAA 标准(正文/次级文字 ≥7:1,主色文字 ≥7:1)。 */
@@ -724,6 +904,93 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .think-pop .tp-scale span:last-child { text-align: right; }
 .think-pop .tp-note { font-size: 11px; color: var(--text3); line-height: 1.5; margin-top: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+/* ---------- 配置弹窗:左侧分类导航 + 右侧单页内容 ----------
+   一级 = .set-nav-item(左侧),二级 = .set-page(右侧,同时只显示一个)。
+   以前所有分区上下堆在一个滚动条里,想改个端口要滚过 4 张模型卡片,现在按分类直达。 */
+.modal.settings-modal {
+  width: 880px; max-width: 94vw; height: 86vh; max-height: 86vh;
+  padding: 0; overflow: hidden; display: flex; flex-direction: column;
+}
+.set-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  padding: 13px 16px; border-bottom: 1px solid var(--border);
+}
+.set-head h2 { font-size: 16px; margin: 0; }
+.set-close {
+  margin-left: auto; width: 28px; height: 28px; padding: 0; line-height: 1;
+  border: 1px solid transparent; border-radius: var(--r-sm); cursor: pointer;
+  background: transparent; color: var(--text2); font-size: 14px; font-family: inherit;
+  transition: background .15s ease, color .15s ease;
+}
+.set-close:hover { background: var(--hover); color: var(--text); }
+.set-body { flex: 1; display: flex; min-height: 0; }
+.set-nav {
+  flex: 0 0 176px; display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 8px; overflow-y: auto; min-height: 0;
+  background: var(--surface2); border-right: 1px solid var(--border);
+}
+.set-nav-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 8px 10px; border: none; border-radius: var(--r-sm); cursor: pointer;
+  background: transparent; color: var(--text2); font-size: 13px; font-family: inherit;
+  transition: background .15s ease, color .15s ease;
+}
+.set-nav-item:hover { background: var(--hover); color: var(--text); }
+/* 选中态用胶囊底 + 加粗(白字对 --hover-2 底实测 ≥10:1),不靠"变主色"表达状态 */
+.set-nav-item.active { background: var(--hover-2); color: var(--title); font-weight: 600; }
+.set-nav-item .ni { flex: 0 0 auto; width: 16px; text-align: center; font-size: 13px; }
+.set-nav-count {
+  margin-left: auto; font-size: 11px; color: var(--text3);
+  font-variant-numeric: tabular-nums; font-weight: 400;
+}
+.set-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.set-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px 8px; }
+.set-page { display: none; }
+.set-page.active { display: block; }
+.set-page > h3 {
+  margin: 0 0 4px; padding: 0; border: none;
+  font-size: 15px; font-weight: 600; color: var(--title);
+}
+.set-desc { margin: 0 0 16px; font-size: 12px; line-height: 1.6; color: var(--text3); }
+/* ---------- 配置:开机动画 ---------- */
+.set-sub { margin: 20px 0 8px; font-size: 12px; font-weight: 600; color: var(--text2); }
+.boot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px; }
+.boot-tile {
+  position: relative; border: 1px solid var(--border2); border-radius: var(--r-md);
+  padding: 11px 12px; background: var(--surface); cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+}
+.boot-tile:hover { border-color: var(--accent); }
+.boot-tile.sel { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(76,116,255,.12); }
+.boot-tile.bad { cursor: default; border-style: dashed; }
+.boot-tile .bt-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; font-weight: 600; color: var(--title); }
+.boot-tile .bt-badge {
+  font-size: 10px; font-weight: 500; padding: 1px 7px; border-radius: 999px;
+  background: var(--bg); color: var(--text2); border: 1px solid var(--border);
+}
+.boot-tile .bt-badge.cur { background: rgba(76,116,255,.14); color: var(--accent-t); border-color: transparent; }
+.boot-tile .bt-desc { margin-top: 6px; font-size: 11px; line-height: 1.55; color: var(--text3); }
+.boot-tile .bt-foot { display: flex; align-items: center; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
+.boot-tile .bt-err { margin-top: 6px; font-size: 11px; line-height: 1.5; color: var(--red-t); }
+.boot-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0 10px; }
+.boot-bar .hint { font-size: 11px; color: var(--text3); }
+.boot-empty { font-size: 12px; color: var(--text3); padding: 6px 0 2px; }
+.ck-row { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text2); cursor: pointer; }
+.ck-row input { margin: 0; cursor: pointer; }
+.settings-modal .modal-actions {
+  flex: 0 0 auto; margin: 0; padding: 12px 16px;
+  border-top: 1px solid var(--border); background: var(--surface);
+}
+@media (max-width: 760px) {
+  /* 窗口很窄时导航转成横排可滑动的标签行,别让左右分栏把内容压成一条 */
+  .set-body { flex-direction: column; }
+  .set-nav {
+    flex: 0 0 auto; flex-direction: row; border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .set-nav-item { width: auto; flex: 0 0 auto; white-space: nowrap; }
+}
 .btn {
   padding: 8px 18px; border-radius: var(--r-sm); border: 1px solid var(--border2);
   background: var(--surface); color: var(--text2); font-size: 13px; cursor: pointer;
@@ -1164,39 +1431,124 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
 <input type="file" id="ua-file" accept="image/jpeg,image/png,image/webp" hidden>
 
 <div class="modal-mask" id="settings-mask">
-  <div class="modal">
-    <h2>配置</h2>
-    <h3>外观</h3>
-    <div class="frow hinted"><label>主题</label>
-      <select id="c-theme">
-        <option value="system">跟随系统</option>
-        <option value="light">浅色</option>
-        <option value="dark">深色</option>
-      </select>
-      <span class="hint">立即生效并记住,不用点"保存配置"</span>
+  <div class="modal settings-modal">
+    <div class="set-head">
+      <h2>配置</h2>
+      <button class="set-close" id="btn-settings-close" title="关闭(Esc)" aria-label="关闭">&#10005;</button>
     </div>
+    <div class="set-body">
+      <!-- 一级导航:分类。二级:右侧当前分类的内容,切换只改 .active,不动表单 id -->
+      <nav class="set-nav" id="set-nav">
+        <button class="set-nav-item active" data-page="page-appearance"><span class="ni">🎨</span>外观</button>
+        <button class="set-nav-item" data-page="page-profile"><span class="ni">👤</span>个人信息</button>
+        <button class="set-nav-item" data-page="page-model"><span class="ni">🧠</span>模型<span class="set-nav-count" id="set-model-count"></span></button>
+        <button class="set-nav-item" data-page="page-web"><span class="ni">🌐</span>Web 服务</button>
+        <button class="set-nav-item" data-page="page-boot"><span class="ni">🎬</span>开机动画</button>
+      </nav>
+      <div class="set-main">
+        <div class="set-scroll">
+          <section class="set-page active" id="page-appearance">
+            <h3>外观</h3>
+            <p class="set-desc">主题立即生效并记在本地,与顶栏「🖥」按钮是同一个开关。</p>
+            <div class="frow hinted"><label>主题</label>
+              <select id="c-theme">
+                <option value="system">跟随系统</option>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+              </select>
+              <span class="hint">立即生效并记住,不用点"保存配置"</span>
+            </div>
+          </section>
 
-    <h3>个人信息</h3>
-    <div class="frow hinted"><label>用户头像</label>
-      <div style="display:flex;align-items:center;gap:10px">
-        <span id="c-user-ava"></span>
-        <button class="mode-btn" id="btn-user-ava">上传 / 更换头像</button>
+          <section class="set-page" id="page-profile">
+            <h3>个人信息</h3>
+            <p class="set-desc">头像显示在消息气泡旁和自己的会话入口;上传后立即写入配置。</p>
+            <div class="frow hinted"><label>用户头像</label>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span id="c-user-ava"></span>
+                <button class="mode-btn" id="btn-user-ava">上传 / 更换头像</button>
+              </div>
+              <span class="hint">jpg / png / webp,≤4MB,自动裁为 256×256;未设置时显示"首字 + 哈希色"</span>
+            </div>
+          </section>
+
+          <section class="set-page" id="page-model">
+            <h3>模型</h3>
+            <p class="set-desc">可配多个,会话里下拉切换;点卡片进入编辑,新增/删除都要点「保存配置」才生效。</p>
+            <div id="model-list" class="model-grid"></div>
+            <button class="add-model-btn" id="btn-add-model">＋ 新增模型</button>
+            <div id="model-edit"></div>
+            <div class="frow"><label>默认模型</label><select id="c-default-model"></select></div>
+          </section>
+
+          <section class="set-page" id="page-web">
+            <h3>Web 服务</h3>
+            <p class="set-desc">浏览器访问 http://本机地址:端口 用的监听端口。</p>
+            <div class="frow hinted"><label>Web 端口</label><input type="number" id="w-port"><span class="hint">修改需重启生效</span></div>
+          </section>
+
+          <section class="set-page" id="page-boot">
+            <h3>开机动画</h3>
+            <p class="set-desc">打开窗口时先播一段主题动画再交还界面。主题是本地目录里的一堆静态网页,也可从插件仓库在线下载。按 Esc 或点空白处随时跳过。</p>
+            <div class="frow hinted"><label>启用</label>
+              <label class="ck-row"><input type="checkbox" id="b-enabled">播放开机动画</label>
+              <span class="hint">没安装主题时不会播放</span>
+            </div>
+            <div class="frow"><label>播放时机</label>
+              <select id="b-mode">
+                <option value="session">每个浏览器会话一次</option>
+                <option value="always">每次打开窗口都播</option>
+                <option value="daily">每天一次</option>
+              </select>
+            </div>
+            <div class="frow hinted"><label>速度</label>
+              <select id="b-speed">
+                <option value="0.5">很慢 0.5×</option>
+                <option value="0.75">慢 0.75×</option>
+                <option value="1">正常 1×</option>
+                <option value="1.5">快 1.5×</option>
+                <option value="2">很快 2×</option>
+              </select>
+              <span class="hint">按比例加快/放慢主题自己的时间轴</span>
+            </div>
+            <div class="frow hinted"><label>身份名</label>
+              <input type="text" id="b-name" maxlength="48" placeholder="留空用主题默认">
+              <span class="hint">动画里显示的名字</span>
+            </div>
+            <div class="frow hinted"><label>片尾可交互</label>
+              <label class="ck-row"><input type="checkbox" id="b-interactive">动画结束后仍可动</label>
+              <span class="hint">只对声明支持的主题有效;开启后无法用点击跳过</span>
+            </div>
+            <div class="frow hinted"><label>主题目录</label>
+              <input type="text" id="b-dir" placeholder="~/.mini_code/boot-anim">
+              <span class="hint">留空用默认;可指到自己的 git 检出目录</span>
+            </div>
+            <div class="frow hinted"><label>插件仓库</label>
+              <input type="text" id="b-repo" placeholder="zhoujiannan-nb/mini_code-plugins">
+              <span class="hint">下载来源(GitHub owner/name)</span>
+            </div>
+
+            <div class="boot-bar" style="margin-top:14px">
+              <b style="font-size:12px;color:var(--text2)">已安装</b>
+              <span class="hint" id="b-dir-now"></span>
+              <button class="mode-btn" id="b-reload">重新扫描</button>
+              <button class="mode-btn" id="b-preview">&#9654; 预览一次</button>
+            </div>
+            <div id="b-local" class="boot-grid"></div>
+
+            <div class="boot-bar" style="margin-top:20px">
+              <b style="font-size:12px;color:var(--text2)">在线获取</b>
+              <button class="mode-btn" id="b-fetch">获取列表</button>
+              <span class="hint" id="b-remote-msg">点「获取列表」从插件仓库读取可下载的主题</span>
+            </div>
+            <div id="b-remote" class="boot-grid"></div>
+          </section>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" id="btn-cancel">取消</button>
+          <button class="btn primary" id="btn-save">保存配置</button>
+        </div>
       </div>
-      <span class="hint">jpg / png / webp,≤4MB,自动裁为 256×256;未设置时显示"首字 + 哈希色"</span>
-    </div>
-
-    <h3>模型(可配置多个,会话里下拉选择)</h3>
-    <div id="model-list" class="model-grid"></div>
-    <button class="add-model-btn" id="btn-add-model">＋ 新增模型</button>
-    <div id="model-edit"></div>
-    <div class="frow"><label>默认模型</label><select id="c-default-model"></select></div>
-
-    <h3>Web</h3>
-    <div class="frow hinted"><label>Web 端口</label><input type="number" id="w-port"><span class="hint">修改需重启生效</span></div>
-
-    <div class="modal-actions">
-      <button class="btn" id="btn-cancel">取消</button>
-      <button class="btn primary" id="btn-save">保存配置</button>
     </div>
   </div>
 </div>
@@ -2934,6 +3286,8 @@ function hostOf(u) {
 function renderModels() {
   if (modelEditing < 0) renderModelGrid(); else renderModelEditor();
   paintDefaultModelSelect();
+  const badge = $("#set-model-count"); // 左侧导航直接显示配了几个模型
+  if (badge) badge.textContent = modelDraft.length;
 }
 
 function renderModelGrid() {
@@ -3176,6 +3530,50 @@ function paintDefaultModelSelect() {
     '<option value="' + esc(m.name || "") + '">' + esc(m.name || "(未命名)") + '</option>').join("");
   if (modelDraft.some(m => m.name === cur)) sel.value = cur;
 }
+/* ---------------- 配置弹窗:左侧分类导航 ----------------
+   一级 = .set-nav-item(data-page 指向某个 .set-page),二级 = 右侧内容。
+   只切 .active,不搬动任何控件,所以 openSettings/saveSettings 的读写照旧。 */
+const LS_SETTAB_KEY = "mc-settab"; // 记住上次停在哪个分类,下次打开直接回到这里
+
+function settingsPages() {
+  return Array.prototype.slice.call(document.querySelectorAll("#settings-mask .set-page"));
+}
+function setPage(id) {
+  const pages = settingsPages();
+  if (!pages.some((p) => p.id === id)) return;
+  pages.forEach((p) => p.classList.toggle("active", p.id === id));
+  document.querySelectorAll("#settings-mask .set-nav-item").forEach(
+    (b) => b.classList.toggle("active", b.dataset.page === id));
+  try { localStorage.setItem(LS_SETTAB_KEY, id); } catch (e) {}
+  const box = document.querySelector("#settings-mask .set-scroll");
+  if (box) box.scrollTop = 0; // 换分类从顶部看起,别带着上一个分类的滚动位置
+}
+function currentSettingsPage() {
+  try {
+    const id = localStorage.getItem(LS_SETTAB_KEY);
+    if (id && settingsPages().some((p) => p.id === id)) return id;
+  } catch (e) {}
+  return "page-appearance";
+}
+function closeSettings() { $("#settings-mask").classList.remove("open"); }
+function initSettingsNav() {
+  document.querySelectorAll("#settings-mask .set-nav-item").forEach(
+    (b) => b.addEventListener("click", () => setPage(b.dataset.page)));
+  $("#btn-settings-close").addEventListener("click", closeSettings);
+  // Esc 关配置弹窗;但头像选择/审批这些叠在上面的弹窗优先(审批绝不能被 Esc 顺手关掉)
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const mask = $("#settings-mask");
+    if (!mask.classList.contains("open")) return;
+    const upper = ["avatar-mask", "user-avatar-mask", "approval-mask"];
+    for (let i = 0; i < upper.length; i++) {
+      const el = document.getElementById(upper[i]);
+      if (el && el.classList.contains("open")) return;
+    }
+    closeSettings();
+  });
+}
+
 async function openSettings() {
   let cfg;
   try { cfg = await api("/api/config"); } catch (e) { toast("读取配置失败:" + e.message, "err"); return; }
@@ -3194,6 +3592,9 @@ async function openSettings() {
   $("#c-default-model").value = cfg.default_model || modelDraft[0].name || "";
   renderModels();
   $("#w-port").value = cfg.web_port || "";
+  bootFillForm(cfg.boot_anim);
+  bootLoadLocal(); // 不 await:目录里没有主题/权限有问题都不能挡住配置弹窗打开
+  setPage(currentSettingsPage()); // 回到上次停着的分类
   $("#settings-mask").classList.add("open");
 }
 async function saveSettings() {
@@ -3216,18 +3617,26 @@ async function saveSettings() {
   for (const m of models) {
     if (!m.name || !m.provider || !m.base_url || !m.model_name) {
       toast("每个模型都要填:显示名 / Provider / Base URL / Model Name", "err");
+      setPage("page-model");
       return;
     }
   }
   const names = models.map(m => m.name);
-  if (new Set(names).size !== names.length) { toast("模型显示名不能重复", "err"); return; }
+  if (new Set(names).size !== names.length) { toast("模型显示名不能重复", "err"); setPage("page-model"); return; }
   let defModel = $("#c-default-model").value;
   if (!names.includes(defModel)) defModel = names[0];
+  const ba = bootForm();
+  if (ba.enabled && !ba.theme) {
+    toast("先选一个已安装的开机动画主题,或关掉「启用」", "err");
+    setPage("page-boot");
+    return;
+  }
   const cfg = {
     web_port: num($("#w-port").value),
     models,
     default_model: defModel,
     user_avatar: state.userAvatar, // 透传用户头像,避免整份配置保存时丢失
+    boot_anim: ba,
   };
   try {
     const r = await api("/api/config", {
@@ -3243,6 +3652,197 @@ async function saveSettings() {
   } catch (e) {
     toast("保存失败:" + e.message, "err");
   }
+}
+
+/* ---------------- 设置:开机动画 ---------------- */
+// 表单值只存在控件里,和模型区一样要点「保存配置」才写回服务端。
+// bootState 记的是"目录里有什么",picked 是当前选中的主题 id。
+const bootState = { dir: "", local: [], remote: null, picked: "" };
+
+function bootForm() {
+  return {
+    enabled: $("#b-enabled").checked,
+    theme: bootState.picked || "",
+    mode: $("#b-mode").value || "session",
+    speed: Number($("#b-speed").value) || 1,
+    name: $("#b-name").value.trim(),
+    interactive: $("#b-interactive").checked,
+    dir: $("#b-dir").value.trim(),
+    repo: $("#b-repo").value.trim(),
+  };
+}
+function bootFillForm(ba) {
+  ba = ba || {};
+  bootState.picked = ba.theme || "";
+  $("#b-enabled").checked = !!ba.enabled;
+  $("#b-mode").value = ba.mode || "session";
+  // 配置里可能是手写的任意倍速,下拉里没有就取最接近的一档
+  const sp = Number(ba.speed) > 0 ? Number(ba.speed) : 1;
+  const opts = Array.prototype.map.call($("#b-speed").options, (o) => Number(o.value));
+  let best = opts[0] || 1;
+  let dist = Infinity;
+  opts.forEach((v) => {
+    if (v <= 0) return;
+    const dv = Math.abs(Math.log(v / sp));
+    if (dv < dist) { dist = dv; best = v; }
+  });
+  $("#b-speed").value = String(best);
+  $("#b-name").value = ba.name || "";
+  $("#b-interactive").checked = !!ba.interactive;
+  $("#b-dir").value = ba.dir || "";
+  $("#b-repo").value = ba.repo || "";
+}
+// 已安装主题卡片:点卡片选中,卡片上的按钮各自处理(停止冒泡交给 dataset 判断)。
+function renderBootLocal() {
+  const box = $("#b-local");
+  box.innerHTML = "";
+  if (!bootState.local.length) {
+    box.innerHTML = '<div class="boot-empty">这个目录里还没有可用的主题。到下面「在线获取」下载一个,' +
+      "或把主题文件夹放进:<br>" + esc(bootState.dir) + "</div>";
+    return;
+  }
+  bootState.local.forEach((t) => {
+    const bad = !!t.error;
+    const sel = !bad && t.id === bootState.picked;
+    const d = document.createElement("div");
+    d.className = "boot-tile" + (bad ? " bad" : "") + (sel ? " sel" : "");
+    d.innerHTML =
+      '<div class="bt-name">' + esc(t.name || t.id) +
+      (sel ? '<span class="bt-badge cur">当前</span>' : "") +
+      (t.version ? '<span class="bt-badge">v' + esc(t.version) + "</span>" : "") +
+      (!bad && t.durationMs ? '<span class="bt-badge">' + (Math.round(t.durationMs / 100) / 10) + "s</span>" : "") +
+      (t.interactive ? '<span class="bt-badge">可交互</span>' : "") + "</div>" +
+      '<div class="bt-desc">' + esc(t.description || t.id) + "</div>" +
+      (bad
+        ? '<div class="bt-err">无法播放:' + esc(t.error) + "</div>"
+        : '<div class="bt-foot"><button class="mode-btn" data-act="preview">预览</button>' +
+          '<button class="mode-btn" data-act="del">卸载</button></div>');
+    if (!bad) {
+      d.addEventListener("click", (e) => {
+        const act = e.target && e.target.dataset ? e.target.dataset.act : "";
+        if (act === "preview") { bootPreview(t); return; }
+        if (act === "del") { bootDelete(t); return; }
+        bootState.picked = t.id;
+        renderBootLocal();
+      });
+    }
+    box.appendChild(d);
+  });
+}
+function renderBootRemote() {
+  const box = $("#b-remote");
+  box.innerHTML = "";
+  if (!bootState.remote) return;
+  const list = bootState.remote.themes || [];
+  if (!list.length) {
+    box.innerHTML = '<div class="boot-empty">插件仓库里没有可用的主题</div>';
+    return;
+  }
+  list.forEach((t) => {
+    const d = document.createElement("div");
+    d.className = "boot-tile";
+    d.innerHTML =
+      '<div class="bt-name">' + esc(t.name || t.id) +
+      (t.version ? '<span class="bt-badge">v' + esc(t.version) + "</span>" : "") +
+      (t.durationMs ? '<span class="bt-badge">' + (Math.round(t.durationMs / 100) / 10) + "s</span>" : "") +
+      (t.installed ? '<span class="bt-badge cur">' + (t.latest ? "已安装" : "已装旧版") + "</span>" : "") +
+      (t.interactive ? '<span class="bt-badge">可交互</span>' : "") + "</div>" +
+      '<div class="bt-desc">' + esc(t.description || t.id) +
+      (t.author ? "<br>by " + esc(t.author) : "") + "</div>" +
+      '<div class="bt-foot"><button class="mode-btn" data-act="ins">' + (t.installed ? "重新安装" : "下载") + "</button></div>";
+    d.addEventListener("click", (e) => {
+      const act = e.target && e.target.dataset ? e.target.dataset.act : "";
+      if (act === "ins") bootInstall(t, e.target);
+    });
+    box.appendChild(d);
+  });
+}
+async function bootLoadLocal(msg) {
+  try {
+    const r = await api("/api/bootanim");
+    bootState.dir = r.dir || "";
+    bootState.local = r.themes || [];
+    $("#b-dir-now").textContent = bootState.dir;
+    if (msg) $("#b-remote-msg").textContent = msg;
+    // 选中的主题被删掉了:回落到第一个还能播的,别留一个空选择。
+    if (bootState.picked && !bootState.local.some((t) => t.id === bootState.picked && !t.error)) {
+      bootState.picked = "";
+    }
+    if (!bootState.picked) {
+      const first = bootState.local.find((t) => !t.error);
+      if (first) bootState.picked = first.id;
+    }
+    renderBootLocal();
+  } catch (e) {
+    $("#b-local").innerHTML = '<div class="boot-empty">读取主题目录失败:' + esc(e.message) + "</div>";
+  }
+}
+async function bootFetchRemote() {
+  const msg = $("#b-remote-msg");
+  msg.textContent = "正在从插件仓库获取列表…";
+  try {
+    const r = await api("/api/bootanim/remote");
+    bootState.remote = r;
+    renderBootRemote();
+    msg.textContent = "共 " + (r.themes || []).length + " 个主题 · " + (r.repo || "");
+  } catch (e) {
+    bootState.remote = null;
+    renderBootRemote();
+    msg.textContent = "获取失败:" + e.message;
+  }
+}
+async function bootInstall(t, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "下载中…"; }
+  try {
+    const r = await api("/api/bootanim/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: t.id }),
+    });
+    toast(r.message || "已安装", "ok");
+    if (!bootState.picked) bootState.picked = t.id;
+    await bootLoadLocal();
+    if (bootState.remote) bootFetchRemote();
+  } catch (e) {
+    toast("安装失败:" + e.message, "err");
+    if (btn) { btn.disabled = false; btn.textContent = "下载"; }
+  }
+}
+async function bootDelete(t) {
+  if (!confirm("卸载主题「" + (t.name || t.id) + "」?会删除 " + bootState.dir + "\\" + t.id)) return;
+  try {
+    await api("/api/bootanim/" + encodeURIComponent(t.id), { method: "DELETE" });
+    if (bootState.picked === t.id) bootState.picked = "";
+    toast("已卸载", "ok");
+    await bootLoadLocal();
+    if (bootState.remote) bootFetchRemote();
+  } catch (e) {
+    toast("卸载失败:" + e.message, "err");
+  }
+}
+// 预览用当前表单值(还没保存的改动也立刻见效),无视播放策略与开关。
+function bootPlay(t) {
+  const f = bootForm();
+  const ok = window.__mcBoot && __mcBoot.play({
+    entry: "/bootanim/" + t.id + "/" + (t.entry || "index.html"),
+    speed: f.speed,
+    name: f.name,
+    interactive: f.interactive && !!t.interactive,
+    durationMs: t.durationMs,
+    maxMs: t.maxMs,
+    minViewport: t.minViewport,
+  });
+  if (!ok) toast("这个主题播不了(入口文件缺失)", "err");
+}
+function bootPreview(t) { bootPlay(t); }
+function initBootSettings() {
+  $("#b-reload").addEventListener("click", () => bootLoadLocal("已重新扫描"));
+  $("#b-fetch").addEventListener("click", bootFetchRemote);
+  $("#b-preview").addEventListener("click", () => {
+    const t = bootState.local.find((x) => x.id === bootState.picked && !x.error);
+    if (!t) { toast("先点一张卡片选一个已安装的主题", "err"); return; }
+    bootPlay(t);
+  });
 }
 
 /* ---------------- 输入框 ---------------- */
@@ -4292,6 +4892,8 @@ applySendMode();
     }
   });
   $("#btn-settings").addEventListener("click", openSettings);
+  initSettingsNav();
+  initBootSettings();
   $("#c-theme").addEventListener("change", (e) => {
     const m = e.target.value;
     setThemeMode(m);

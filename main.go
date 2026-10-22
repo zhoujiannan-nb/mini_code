@@ -231,9 +231,9 @@ func main() {
 // --- web.Backend ---
 
 func (rt *runtime) Hub() *channels.Hub            { return rt.hub }
-func (rt *runtime) Mgr() *session.SessionManager   { return rt.mgr }
-func (rt *runtime) Groups() *session.GroupService  { return rt.groups }
-func (rt *runtime) Approvals() *approval.Service   { return rt.approvals }
+func (rt *runtime) Mgr() *session.SessionManager  { return rt.mgr }
+func (rt *runtime) Groups() *session.GroupService { return rt.groups }
+func (rt *runtime) Approvals() *approval.Service  { return rt.approvals }
 
 func (rt *runtime) liveConfig() *config.AppConfig {
 	rt.cfgMu.RLock()
@@ -290,7 +290,7 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 	modelsChanged := string(oldModelsJSON) != string(newModelsJSON)
 
 	if !modelsChanged && old.WebPort == cfg.WebPort && old.Compaction() == cfg.Compaction() &&
-		old.UserAvatar == cfg.UserAvatar {
+		old.UserAvatar == cfg.UserAvatar && config.SameBootAnim(old.BootAnim, cfg.BootAnim) {
 		return &web.SaveResult{Message: "配置没有变化"}, nil
 	}
 
@@ -330,6 +330,11 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 	}
 	if old.WebPort != cfg.WebPort {
 		notes = append(notes, "web 端口将在下次启动时生效")
+	}
+	if !config.SameBootAnim(old.BootAnim, cfg.BootAnim) {
+		// The overlay is decided per page load, so the new choice needs a new
+		// window (or the "play once" button) to be seen.
+		notes = append(notes, "开机动画设置已保存,下次打开窗口时生效")
 	}
 
 	result.Message = "配置已保存"

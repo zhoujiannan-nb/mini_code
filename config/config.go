@@ -15,20 +15,25 @@ type AppConfig struct {
 	// Model is the legacy single-model config. On load it is wrapped into
 	// Models (see applyDefaults) and cleared, so saved configs only carry
 	// the models list.
-	Model        ModelConfig    `json:"model"`
-	Models       []ModelConfig  `json:"models"`
-	DefaultModel string         `json:"default_model"`
+	Model        ModelConfig   `json:"model"`
+	Models       []ModelConfig `json:"models"`
+	DefaultModel string        `json:"default_model"`
 
 	// CompactionEnabled is deprecated and ignored: automatic long-context
 	// compression is always on (applyDefaults clears this key), kept only so an
 	// older config file still unmarshals.
 	CompactionEnabled *bool `json:"compaction_enabled,omitempty"`
 
-	WebPort           int   `json:"web_port"`
+	WebPort int `json:"web_port"`
 	// UserAvatar is the web user's avatar: a data URL
 	// (data:image/jpeg|png|webp;base64,...) uploaded from the UI.
 	// Empty = the UI renders the first-character + hash-color fallback.
 	UserAvatar string `json:"user_avatar,omitempty"`
+
+	// BootAnim configures the startup animation overlay (see bootanim.go).
+	// An all-zero value from an older config file is filled with defaults
+	// (applyBootAnimDefaults), which is also where the fields get normalized.
+	BootAnim BootAnimConfig `json:"boot_anim"`
 }
 
 // Compaction reports whether automatic context compression is on. It is always
@@ -125,26 +130,26 @@ func (c *AppConfig) Validate() error {
 	if c.WebPort < 1 || c.WebPort > 65535 {
 		return fmt.Errorf("web_port must be between 1 and 65535")
 	}
-	return nil
+	return c.BootAnim.Validate()
 }
 
 type ModelConfig struct {
 	// Name is the short key the UI shows in the model dropdown and that
 	// sessions reference (empty = resolved to the model name on load).
-	Name            string  `json:"name,omitempty"`
-	Provider        string  `json:"provider"`
-	BaseURL         string  `json:"base_url"`
-	APIKey          string  `json:"api_key"`
-	ModelName       string  `json:"model_name"`
-	MaxTokens       int     `json:"max_tokens"`
-	ContextWindow   int     `json:"context_window"`
+	Name          string `json:"name,omitempty"`
+	Provider      string `json:"provider"`
+	BaseURL       string `json:"base_url"`
+	APIKey        string `json:"api_key"`
+	ModelName     string `json:"model_name"`
+	MaxTokens     int    `json:"max_tokens"`
+	ContextWindow int    `json:"context_window"`
 	// Sampling parameters are optional: 0 means "not set" and the field is then
 	// left out of the request entirely, so the serving framework applies its own
 	// (usually model-specific) default. Set a value only to override that.
-	Temperature     float64 `json:"temperature"`
-	TopP            float64 `json:"top_p"`
-	TopK            int     `json:"top_k,omitempty"`
-	ReserveTokens   int     `json:"reserve_tokens"`
+	Temperature   float64 `json:"temperature"`
+	TopP          float64 `json:"top_p"`
+	TopK          int     `json:"top_k,omitempty"`
+	ReserveTokens int     `json:"reserve_tokens"`
 
 	// Thinking and ReasoningEffort control the model's thinking depth. DeepSeek
 	// and SGLang (Qwen3-style) both honor them; other providers ignore them.
@@ -168,11 +173,11 @@ func (m ModelConfig) Compaction() bool { return true }
 // must replace with a real key.
 func DefaultModelConfig() ModelConfig {
 	return ModelConfig{
-		Name:          "Qwen3.8-27B-FP82",
-		Provider:      "sglang",
-		BaseURL:       "http://ubasic.yuanshi-sec.com:5708/proxy/model/qwen3.82",
-		APIKey:        "这里填你的key",
-		ModelName:     "Qwen3.8-27B-FP8",
+		Name:      "Qwen3.8-27B-FP82",
+		Provider:  "sglang",
+		BaseURL:   "http://ubasic.yuanshi-sec.com:5708/proxy/model/qwen3.82",
+		APIKey:    "这里填你的key",
+		ModelName: "Qwen3.8-27B-FP8",
 		// No max_tokens / context_window: filled by the user or by the "probe"
 		// button in the UI, never guessed (see applyDefaults).
 		// No temperature / top_p: left to the framework (see applyDefaults).
@@ -187,6 +192,7 @@ func DefaultAppConfig() *AppConfig {
 		Models:       []ModelConfig{m},
 		DefaultModel: m.Name,
 		WebPort:      7500,
+		BootAnim:     DefaultBootAnimConfig(),
 	}
 }
 
@@ -324,6 +330,5 @@ func applyDefaults(cfg *AppConfig) {
 	if cfg.WebPort == 0 {
 		cfg.WebPort = 7500
 	}
+	applyBootAnimDefaults(cfg)
 }
-
-

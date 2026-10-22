@@ -27,14 +27,20 @@ type fakeBackend struct {
 	hub *channels.Hub
 	mgr *session.SessionManager
 	ap  *approval.Service
+	// cfg overrides GetConfig for tests that care about the live config
+	// (nil = the canned test config below).
+	cfg *config.AppConfig
 }
 
 func (f *fakeBackend) Hub() *channels.Hub            { return f.hub }
-func (f *fakeBackend) Mgr() *session.SessionManager   { return f.mgr }
-func (f *fakeBackend) Groups() *session.GroupService  { return nil }
-func (f *fakeBackend) Approvals() *approval.Service   { return f.ap }
-func (f *fakeBackend) Status() StatusInfo          { return StatusInfo{} }
+func (f *fakeBackend) Mgr() *session.SessionManager  { return f.mgr }
+func (f *fakeBackend) Groups() *session.GroupService { return nil }
+func (f *fakeBackend) Approvals() *approval.Service  { return f.ap }
+func (f *fakeBackend) Status() StatusInfo            { return StatusInfo{} }
 func (f *fakeBackend) GetConfig() *config.AppConfig {
+	if f.cfg != nil {
+		return f.cfg
+	}
 	return &config.AppConfig{Model: config.ModelConfig{Provider: "vllm", ModelName: "test"}}
 }
 func (f *fakeBackend) SaveConfig(cfg *config.AppConfig) (*SaveResult, error) {
@@ -179,9 +185,9 @@ func TestSendMessageRejectsBadImages(t *testing.T) {
 	defer api.Close()
 
 	cases := []struct {
-		name  string
-		body  map[string]interface{}
-		want  int
+		name string
+		body map[string]interface{}
+		want int
 	}{
 		{"empty content and no images", map[string]interface{}{"content": ""}, http.StatusBadRequest},
 		{"image without data prefix", map[string]interface{}{"content": "x", "images": []string{"http://evil/img.png"}}, http.StatusBadRequest},
