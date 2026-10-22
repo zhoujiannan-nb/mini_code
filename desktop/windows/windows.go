@@ -180,13 +180,18 @@ func (p *platform) NewWindow(opts desktop.WindowOptions) (desktop.Window, error)
 		dataPath = ""
 	}
 
+	// 进程现在是 DPI-aware(dpi.go),CreateWindowExW 收的是物理像素,
+	// 所以先把设计尺寸按系统 DPI 换算,并夹到工作区 90% 以内。
+	winW, winH := scaledWindowSize(uint(opts.Width), uint(opts.Height))
+	slog.Debug("desktop: creating window", "logical", opts.Width, "w", winW, "h", winH, "dpi", systemDPI())
+
 	wv := webview2.NewWithOptions(webview2.WebViewOptions{
 		Debug:    true, // F12 devtools + right-click context menu
 		DataPath: dataPath,
 		WindowOptions: webview2.WindowOptions{
 			Title:  opts.Title,
-			Width:  uint(opts.Width),
-			Height: uint(opts.Height),
+			Width:  winW,
+			Height: winH,
 			IconId: 1, // app icon from rsrc resources, 0 = default
 			Center: true,
 		},
