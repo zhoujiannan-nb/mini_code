@@ -111,7 +111,7 @@ type bootAnimIndexItem struct {
 	Version     string   `json:"version"`
 	License     string   `json:"license"`
 	Description string   `json:"description"`
-	Path        string   `json:"path"` // repo-root relative, e.g. boot-anim/mc-minimal
+	Path        string   `json:"path"` // repo-root relative, e.g. boot-anim/mc-access
 	Entry       string   `json:"entry"`
 	Preview     string   `json:"preview"`
 	DurationMs  int      `json:"durationMs"`

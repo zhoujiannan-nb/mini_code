@@ -454,7 +454,7 @@ func TestBootAnimRelPathAndConfig(t *testing.T) {
 		id   string
 		want bool
 	}{
-		{"mc-minimal", true}, {"a1", true}, {"", false}, {"A1", false},
+		{"mc-access", true}, {"a1", true}, {"", false}, {"A1", false},
 		{"a..b", false}, {"../x", false}, {"a/b", false}, {"-a", false},
 	} {
 		if got := config.ValidBootAnimID(tc.id); got != tc.want {
@@ -511,7 +511,7 @@ func TestBootAnimBundleRelPath(t *testing.T) {
 }
 
 // TestBootAnimInstallFromRealRepo is the only test that touches the network: it
-// installs mc-minimal from the real plugin repo, which also proves index.json's
+// installs mc-access from the real plugin repo, which also proves index.json's
 // files[] (paths + sha256) and the raw URL layout match the host. Run with
 // MC_LIVE=1 go test -run RealRepo ./web/.
 func TestBootAnimInstallFromRealRepo(t *testing.T) {
@@ -520,14 +520,14 @@ func TestBootAnimInstallFromRealRepo(t *testing.T) {
 	}
 	dir := t.TempDir()
 	cfg := &config.AppConfig{BootAnim: config.BootAnimConfig{
-		Enabled: true, Theme: "mc-minimal", Mode: config.BootAnimModeSession,
+		Enabled: true, Theme: "mc-access", Mode: config.BootAnimModeSession,
 		Speed: 1, Dir: dir, Repo: "zhoujiannan-nb/mini_code-plugins",
 	}}
 	ts := httptest.NewServer(NewServer(&fakeBackend{cfg: cfg}))
 	t.Cleanup(ts.Close)
 	srv := ts
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/bootanim/install",
-		strings.NewReader(`{"id":"mc-minimal"}`))
+		strings.NewReader(`{"id":"mc-access"}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -539,11 +539,11 @@ func TestBootAnimInstallFromRealRepo(t *testing.T) {
 		t.Fatalf("install from github: %d %s", resp.StatusCode, body)
 	}
 	for _, f := range []string{"theme.json", "index.html"} {
-		if _, err := os.Stat(filepath.Join(dir, "mc-minimal", f)); err != nil {
+		if _, err := os.Stat(filepath.Join(dir, "mc-access", f)); err != nil {
 			t.Errorf("%s missing: %v", f, err)
 		}
 	}
-	r, err := http.Get(srv.URL + "/bootanim/mc-minimal/index.html")
+	r, err := http.Get(srv.URL + "/bootanim/mc-access/index.html")
 	if err != nil {
 		t.Fatal(err)
 	}

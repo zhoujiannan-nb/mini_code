@@ -75,7 +75,7 @@ const (
 	DefaultBootAnimRepo = "zhoujiannan-nb/mini_code-plugins"
 	// DefaultBootAnimTheme is played when the user has not picked one. It is
 	// just a name: it only takes effect once that theme is installed.
-	DefaultBootAnimTheme = "mc-tech-archive"
+	DefaultBootAnimTheme = "mc-access"
 	// DefaultBootAnimSpeed / limits for the speed multiplier.
 	DefaultBootAnimSpeed = 1.0
 	MinBootAnimSpeed     = 0.35
