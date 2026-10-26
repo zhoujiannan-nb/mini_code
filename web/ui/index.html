@@ -1671,6 +1671,117 @@ html[data-theme="dark"] .chat {
     #0d0e0c;
   box-shadow: 0 0 0 .5px rgba(236,232,220,.09), 0 10px 30px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
 }
+/* =====================================================================
+   ===== v5 顶部条带重做:一条线,三组东西 —— 身份 | 上下文 ......... 操作 =====
+   原来不协调的原因(逐条对上):
+     1) 品牌行是 padding 撑高的(13/9),顶栏控件是另一套 padding(9/16)撑高的,
+        两行的垂直中心差着 ~5px,所以 "Mini Code" 明显比右边的按钮矮半头。
+     2) pill 是 999px 胶囊 + 等宽字 + 有描边,按钮是 8px 方角 + 无底 + 有描边,
+        同一条带上两套形状语言 → 看着像两个团队的控件。
+     3) pill 左边在 x=296、页左边在 x=290;按钮右边和页右边也不齐 → 顶栏和
+        下面那张"页"没有共用网格。
+   做法:
+     a) 定高一条带 --band-h,内部一律垂直居中 → 品牌与控件同一条基线;
+     b) 条带左右内缩 = .chat 的 margin(10px) → pill 左沿压着页左沿、配置按钮
+        右沿压着页右沿,上下两张网格咬合;
+     c) pill 和按钮合并成同一族"安静控件":同高 28、同圆角 8、无边框、只留
+        极淡叠底;pill 用一颗状态点代替胶囊当标识;
+     d) 侧栏内部左内缩统一 12px(品牌 / 新建按钮 / 会话列表)。
+   ===================================================================== */
+:root { --band-h: 46px; --band-x: 10px; --side-x: 12px; --ctl-h: 28px; }
+
+/* ---------- a) 一条定高的带:品牌行与顶栏共用同一垂直中心 ---------- */
+.brand {
+  height: var(--band-h);
+  padding: 0 var(--side-x);
+  align-items: center;                 /* 原来是 baseline,和右侧控件对不齐 */
+  gap: 7px;
+  flex: 0 0 auto;
+}
+.brand .logo { font-size: 15px; }
+.brand .brand-sub { font-size: 9.5px; letter-spacing: .14em; }
+
+header {
+  height: var(--band-h);
+  padding: 0 var(--band-x);            /* 左右内缩 = 页的 margin,网格对齐 */
+  gap: 6px;
+  align-items: center;
+}
+
+/* ---------- b/c) 同一条带上的控件:pill 与按钮同一套尺寸语言 ---------- */
+.pill,
+header .icon-btn {
+  height: var(--ctl-h);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid transparent;       /* 描边一律去掉,靠叠底分层 */
+  border-radius: var(--r-sm);          /* 8px,和侧栏控件同族,不再用 999px */
+  background: rgba(38, 49, 42, .055);
+  color: var(--text2);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+html[data-theme="dark"] .pill,
+html[data-theme="dark"] header .icon-btn { background: rgba(255, 255, 255, .06); }
+
+/* 审批徽标:保持红色告警语义,但尺寸/圆角跟这条带对齐(仍然默认隐藏) */
+header .approval-badge {
+  height: var(--ctl-h);
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+}
+header .approval-badge.show { display: inline-flex; }
+
+header .icon-btn:hover {
+  background: rgba(38, 49, 42, .10);
+  color: var(--text);
+  border-color: transparent;
+}
+html[data-theme="dark"] header .icon-btn:hover {
+  background: rgba(255, 255, 255, .11);
+  color: var(--text);
+}
+header .icon-btn:active { transform: translateY(.5px); }
+
+/* 状态点代替"胶囊"做标识:一个亮点的存在感比一圈描边安静得多 */
+.pill { max-width: 420px; }
+.pill::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring-soft);
+}
+.pill b { color: var(--text); font-weight: 600; }
+/* 端口号比模型名退一档,信息有主次 */
+.pill { color: var(--text2); }
+
+/* ---------- d) 侧栏左内缩统一 12px,品牌/新建/列表同一条竖线 ---------- */
+.new-btn { margin: 4px var(--side-x) 6px; }
+.sec-head { padding-left: var(--side-x); padding-right: var(--side-x); }
+.sess-list { padding-left: var(--side-x); padding-right: var(--side-x); }
+.group-list { padding-left: var(--side-x); padding-right: var(--side-x); }
+/* 群区/归档区的分隔线也跟着内缩,不再横穿到侧栏两边 */
+.group-sec { border-top: none; position: relative; }
+.group-sec::before {
+  content: ""; position: absolute; left: var(--side-x); right: var(--side-x); top: 0;
+  height: 1px; background: var(--border); pointer-events: none;
+}
+.sess-item, .group-item { padding-left: 10px; padding-right: 10px; }
+
+@media (max-width: 760px) {
+  :root { --band-h: 42px; --band-x: 6px; }
+  .brand { padding-left: 10px; }
+}
 </style>
 </head>
 <body>
