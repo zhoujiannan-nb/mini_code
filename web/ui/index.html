@@ -1868,6 +1868,38 @@ aside {
 }
 /* 分区那条内缩的 hairline 也改成渐隐,别在渐变底上切一刀硬线 */
 .group-sec::before { background: linear-gradient(90deg, var(--border2), transparent 88%); }
+/* =====================================================================
+   ===== v7:① 侧栏与顶栏有色差 → 渐变改铺在整块"框"上 ② 会话头:模型标签在前
+            ③ 会话标题只留几个字(完整内容在 tooltip) =====
+   ===================================================================== */
+
+/* ---------- ① 一块连续的框:渐变从 aside 挪到 body ----------
+   v6 把绿光只画在 aside 上,于是"侧栏(带绿)"和"顶栏(frame 平色)"交界处
+   出现一条竖向色差。现在整块 frame(body)只画一层渐变,侧栏保持透明,
+   左上那道光从品牌一路铺到顶栏,不会再有两块颜色。 */
+aside { background: none; }
+body {
+  background:
+    radial-gradient(460px 250px at -5% -2%, var(--side-g1), transparent 64%),
+    radial-gradient(320px 300px at 2% 104%, var(--side-g2), transparent 70%),
+    linear-gradient(155deg, var(--side-sweep), transparent 40%),
+    linear-gradient(180deg, var(--side-wash), transparent 22%),
+    var(--frame);
+}
+
+/* ---------- ②③ 会话头:先模型标签,再头像 + 短标题 ---------- */
+/* 标签排在最前(DOM 已挪到 chat-ava 之前),这里把它做成一颗"前置徽标" */
+.chat-head .pill {
+  height: 22px; padding: 0 9px; gap: 6px;
+  font-size: 12px; border-radius: var(--r-xs);
+}
+/* 标题只留几个字,后面省略号;完整内容在 tooltip(见 setChatTitle 里的 title 属性) */
+.chat-head .title { max-width: 168px; }
+.chat-head .pill + .chat-ava { margin-left: 2px; }
+@media (max-width: 900px) {
+  .chat-head .title { max-width: 120px; }
+  .chat-head .pill { max-width: 220px; }
+}
 </style>
 </head>
 <body>
@@ -1907,7 +1939,7 @@ aside {
   <section class="chat">
     <div class="chat-head">
       <button class="back-btn" id="btn-back-parent" title="返回父会话">← 父会话</button>
-      <span class="chat-ava" id="chat-ava"></span><span class="title" id="chat-title" title="双击重命名">新会话</span><span id="chat-sub"></span><span class="pill" id="status-pill" title="当前模型 / 本地服务端口">状态加载中…</span>
+      <span class="pill" id="status-pill" title="当前模型 / 本地服务端口">状态加载中…</span><span class="chat-ava" id="chat-ava"></span><span class="title" id="chat-title" title="双击重命名">新会话</span><span id="chat-sub"></span>
       <span class="spacer"></span>
       <button class="tasks-btn" id="btn-tasks" title="查看该会话派遣的子代理任务">🧵 子任务 <span class="tasks-count" id="tasks-count">0</span></button>
       <button class="tasks-btn" id="btn-group-members" title="群成员(状态/改名/移出)">👥 成员 <span class="tasks-count" id="group-members-count">0</span></button>
@@ -4467,6 +4499,7 @@ function autoGrow() {
 }
 function setChatTitle(title, sub) {
   $("#chat-title").textContent = title;
+  $("#chat-title").title = title ? title + "(双击重命名)" : "双击重命名";
   $("#chat-sub").textContent = sub || "";
   paintChatAva(title);
 }
