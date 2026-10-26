@@ -213,149 +213,185 @@ window.__mcBoot = __mcBoot;
 /* 浅色主题默认值(深色在下方 html[data-theme=dark] 覆盖)。
    风格参考 DeepSeek 桌面端:中性近黑底 + 半透明面板 + 大圆角 + 品牌蓝。
    对比度沿用原有 AAA 标准(正文/次级文字 ≥7:1,主色文字 ≥7:1)。 */
-:root {
-  --edge: #dfe3ea;        /* 窗口四周:浅色下是一条中性灰边 */
-  --bg: #f5f6f8;          /* 聊天区/输入区底 */
-  --surface: #ffffff;     /* 面板:弹窗/输入框/下拉 */
-  --surface2: #f7f8fa;    /* 次级面板:工具卡/@ 选择器头部/群系统消息 */
-  /* 半透明面板:顶栏/侧边栏浮在页面内容之上,配 backdrop-filter 出毛玻璃层次 */
-  --surface-a: rgba(255,255,255,.74);
-  --side: #ebeff4;        /* 侧边栏不透明回退值 */
-  --side-a: rgba(233,237,243,.72);
-  --glow1: rgba(77,107,254,.10);  /* 背景光晕:让半透明面板"有东西可糊" */
-  --glow2: rgba(110,132,190,.09);
-  --border: #e6e9ee;
-  --border2: #ccd3dd;
-  --text: #1c2230;
-  --text2: #39435a;    /* AAA: ≥7:1 @ bg/surface/surface2/side */
-  --text3: #414b62;    /* 比初版深一档:小字(时间戳/提示)最差 7.6:1 */
-  --title: #0d1420;      /* 高强调标题 */
-  --title2: #33405a;     /* 次级小标题/工具名 */
-  /* 品牌主色(变量名保留历史 --accent* 族;参考图把绿色换成了 DeepSeek 蓝) */
-  --accent: #3b5bdb;      /* 强调/边框/图标(hover 边框 ≥3:1) */
-  --accent-btn: #1f3aa8;  /* 实心按钮底(白字 9.4:1) */
-  --accent-btn-h: #2a46b5;/* 按钮 hover(白字 8.0:1) */
-  --accent-t: #24409c;    /* 主色文字(AAA ≥7.9:1) */
-  --ok-dot: #15803d;      /* 状态"完成"圆点:保留绿色语义(≥3:1) */
-  --accent-l: #e6ebfb;
-  --accent-b: #b9c6f2;
-  --blue-l: #eff6ff;
-  --blue-t: #1e3a8a;      /* AAA */
-  --blue-btn: #1e3a8a;    /* 蓝色实心(白字 10.4:1) */
-  --amber: #d97706;
-  --amber-t: #78350f;    /* 谨慎模式文字(AAA) */
-  --amber-l: #fffbeb;    /* 谨慎模式底色 */
-  --amber-h: #d97706;    /* 谨慎模式 hover 边框 */
-  --amber-btn: #92400e;  /* 琥珀底白字(AAA) */
-  --red: #ef4444;
-  --red-t: #7f1d1d;      /* 错误文字(AAA) */
-  --red-l: #fef2f2;
-  --red-b: #fecaca;
-  --red-btn: #7f1d1d;    /* 红底白字(AAA) */
-  --ghost-bg: #eef1f5;          /* 幽灵按钮底(+) */
-  --ghost-bg-h: #e2e7ee;
-  --ghost-fg: #39435a;
-  --ghost-fg-h: #2b3046;
-  /* 列表/菜单项 hover:在半透明面板上叠一层中性色(比"换个底色"更贴合磨砂质感) */
-  --hover: rgba(100,116,139,.13);
-  --hover-2: rgba(100,116,139,.10);  /* 同上:选中项底色一深就会吃掉次级文字对比,别加太狠 */
-  --track: #dfe4ec;        /* 思考强度滑条未填充段 */
-  --code-bg: #0f1620;      /* 审批代码块 */
-  --code-fg: #e2e8f0;
-  --mask: rgba(13,20,32,.5);
-  --sh1: rgba(15,23,42,.05);
-  --sh2: rgba(15,23,42,.09);
-  --sh3: rgba(15,23,42,.14);
-  --sh4: rgba(15,23,42,.18);
-  --sh5: rgba(0,0,0,.3);
-  --scroll: #cfd6e1;
-  --scroll-h: #9aa6b8;
-  /* 圆角:全站统一节奏(参考图偏大圆角) */
-  --r-xs: 6px;    /* 小徽标/行内按钮 */
-  --r-sm: 9px;    /* 输入框/普通按钮/列表项 */
-  --r-md: 12px;   /* 下拉/浮层/卡片 */
-  --r-lg: 16px;   /* 弹窗/@ 选择器 */
-  --r-xl: 20px;   /* 输入卡片(最贴近参考图那颗圆角) */
-  /* 聊天风格统一变量:单聊与群聊共用同一套(头像/气泡/间距/字号/时间戳) */
-  /* 字体栈:装了就生效、没装自动回退,所以不依赖任何机器装没装字体。
-     --mono 首位放 JetBrains Mono(字形宽、x-height 大、笔画比 Consolas 粗,深色底上明显更"实"),
-     其次 Cascadia(装过 VS/终端的机器会有)、再兜底 Consolas(Windows 自带)。
-     中文在等宽字体里没有字形,会自动逐字回退到系统中文,不会出现方块。 */
-  --ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei",
-        "PingFang SC", "Noto Sans CJK SC", sans-serif;
-  --mono: "JetBrains Mono", "JetBrainsMono Nerd Font", "Cascadia Mono", "Cascadia Code",
-          Consolas, ui-monospace, monospace;
-  --msg-avatar: 30px;   /* 消息头像尺寸 */
-  --msg-gap: 8px;       /* 头像 ↔ 气泡间距 */
-  --msg-radius: 14px;   /* 气泡圆角 */
-  --msg-text: 14px;     /* 正文字号 */
-  --msg-time: 11px;     /* 时间戳字号 */
-  /* 界面密度:整体比初版紧一档。想放松/收紧只改这 4 个值,别处不用动。
-     正文字号 --msg-text 刻意不缩:小屏上清晰度比多塞两行重要。 */
-  --pad-x: 22px;        /* 消息区/输入区左右留白(初版 26px) */
-  --gap-msg: 10px;      /* 相邻消息块间距(初版 14px) */
-  --lh-text: 1.7;       /* 正文行高(初版 1.75) */
-  --aside-w: 252px;     /* 侧栏宽度(初版 290px) */
-  --head-h: 40px;       /* 聊天头高度(初版 44px) */
-}
-/* ---------- 深色主题(html[data-theme=dark] 覆盖,由 JS 按 浅色/深色/随系统 设置) ---------- */
-/* 参考图取色:聊天区近黑(#111214)、侧边栏比聊天区亮一档的半透明石板灰、四周纯黑。 */
-html[data-theme="dark"] {
-  color-scheme: dark; /* 原生控件(滚动条/勾选框/下拉)同步走深色 */
-  --edge: #000000;      /* 窗口四周压成纯黑 = 参考图那条黑边 */
-  --bg: #111214;
-  --surface: #1b1e23;
-  --surface2: #24282f;
-  --surface-a: rgba(24,27,32,.72);
-  --side: #2b303a;
-  --side-a: rgba(46,54,68,.74);
-  --glow1: rgba(77,107,254,.22);
-  --glow2: rgba(40,70,140,.16);
-  --border: #2b2f38;
-  --border2: #3d4450;
-  --text: #e9edf3;
-  --text2: #c9d0db;  /* AAA: ≥8.7:1 @ side, ≥9.6:1 @ surface2 */
-  --text3: #bec7d1;  /* 比初版亮一档:小字(时间戳/提示)最差 8.1:1(侧栏) */
-  --title: #f4f6fa;
-  --title2: #d6dce5;
-  --accent: #5b8cff;    /* 强调/边框(≥3:1) */
-  --accent-btn: #1f40b0;/* 白字 8.4:1 */
-  --accent-btn-h: #2447c8;/* 白字 7.5:1 */
-  --accent-t: #b5cbff;  /* 主色文字(AAA ≥7:1,含主色浅底/侧边栏底) */
-  --ok-dot: #22c55e;    /* 状态圆点(≥3:1) */
-  --accent-l: rgba(91,140,255,.14);
-  --accent-b: rgba(91,140,255,.5);
-  --blue-l: rgba(91,140,255,.12);
-  --blue-t: #b5cbff;     /* AAA */
-  --blue-btn: #1f40b0;   /* 白字 8.4:1 */
-  --amber: #f59e0b;
-  --amber-t: #fef3c7;    /* AAA */
-  --amber-l: rgba(245,158,11,.10);
-  --amber-h: #f59e0b;
-  --amber-btn: #78350f;  /* 白字 9.1:1 */
-  --red: #ef4444;
-  --red-t: #fecaca;      /* 错误文字(AAA) */
-  --red-l: rgba(239,68,68,.10);
-  --red-b: rgba(239,68,68,.42);
-  --red-btn: #991b1b;    /* 白字 8.3:1 */
-  --ghost-bg: #24282f;
-  --ghost-bg-h: #2b303a;
-  --ghost-fg: #b8c1cc;
-  --ghost-fg-h: #dbe2ec;
-  --hover: rgba(148,163,184,.12);
-  --hover-2: rgba(148,163,184,.10);  /* 选中项:比侧栏亮约 1.19 倍就够,再亮会吃掉次级文字对比 */
-  --track: #333a45;
-  --code-bg: #08090b;
-  --code-fg: #dfe6f0;
-  --mask: rgba(0,0,0,.62);
-  --sh1: rgba(0,0,0,.4);
-  --sh2: rgba(0,0,0,.5);
-  --sh3: rgba(0,0,0,.5);
-  --sh4: rgba(0,0,0,.55);
-  --sh5: rgba(0,0,0,.7);
-  --scroll: #333a45;
-  --scroll-h: #4a5464;
-}
+ /* ============ 设计令牌(v3 · Qoder 国际版取色 + DSH Desktop 结构) ============
+    一手依据(见 _work/design_refs.md):
+      · Qoder(qoder.com 的 --ant-* 令牌):主色绿 亮 #80C776 / 暗 #6AD86C,CTA 深绿
+        亮 #255A41 / 暗 #3D8C66;暗底是"暖黑" #090A0B→#171716→#1A1A17,边框带橄榄相;
+        亮底是"暖白" #FFF→#F3F3F3;radius 6。
+      · DSH(deepseek-harness ui-theme):主按钮用"墨色"而不是彩色,高饱和只给
+        链接/focus/发送钮;边框只用 alpha 阶梯(亮 黑 4/10/12/16%,暗 白 6/12/16/20%);
+        分层靠 0.5px 发丝描边 + 3~5% 双层柔光;气泡扁平无框 radius 20;
+        radius 阶梯 4/8/12/16/20/28 + superellipse;滚动条 5px;内容宽度主轴
+        clamp(680px, 列宽×.64, 920px);动效 .1/.2/.3s + cubic-bezier(.4,0,.2,1)。
+    落到本项目的规则:
+      ① 大面积中性(暖黑/暖白 + 墨色主按钮),小面积彩色(绿)只给强调/链接/发送/状态
+      ② 边框全部走 alpha 阶梯,hover/active 用同族 6%/10%(亮)、7%/5%(暗)
+      ③ 分层去投影:1px 发丝描边 + ≤5% 柔光
+      ④ 圆角阶梯 6/8/12/16/20,气泡 18 扁平,支持引擎下走 superellipse
+      ⑤ 消息列与输入卡共用一根宽度主轴
+    对比度仍按原作者 AAA 口径:正文/次级 ≥7:1,主色文字 ≥7:1。 */
+ :root {
+   --edge: #e7e7e3;        /* 窗口四周:暖灰边 */
+   --bg: #fbfbfa;          /* 聊天区/输入区底(Qoder 暖白) */
+   --surface: #ffffff;     /* 面板:弹窗/输入框/下拉 */
+   --surface2: #f3f4f1;    /* 次级面板:工具卡/@ 选择器头部/群系统消息 */
+   /* 半透明面板:顶栏/侧边栏浮在内容上,backdrop-filter 出层次(强度比 v1 收敛) */
+   --surface-a: rgba(255,255,255,.80);
+   --side: #f4f5f2;        /* 侧边栏不透明回退值 */
+   --side-a: rgba(244,245,242,.84);
+   --glow1: rgba(106,190,124,.05);  /* 背景光晕压到若有若无:Qoder 基本不用光晕 */
+   --glow2: rgba(120,130,120,.04);
+   /* 边框:alpha 阶梯(DSH l2 / l3),叠在任何底色上都自动协调 */
+   --border: rgba(20,20,18,.09);
+   --border2: rgba(20,20,18,.17);
+   --text: #141412;
+   --text2: #3a3b37;    /* AAA: ≥9.5:1 */
+   --text3: #4b4c47;    /* 小字(时间戳/提示)≥8:1 */
+   --title: #0a0a09;      /* 高强调标题 */
+   --title2: #2b2c28;     /* 次级小标题/工具名 */
+   /* 强调色:绿色只用于"小面积";主按钮走墨色(--ink),这是 Qoder/DSH 的配方 */
+   --accent: #2e7d4f;      /* 强调/边框/图标(对白底 ≥4.9:1) */
+   --accent-btn: #255a41;  /* 主色实心(白字 7.4:1) */
+   --accent-btn-h: #2e6c50;/* hover(白字 6.2:1) */
+   --accent-t: #1f5138;    /* 主色文字(AAA ≥8.6:1) */
+   --ok-dot: #2f8f56;      /* 状态"完成"圆点 */
+   --accent-l: #eaf7e7;    /* 主色极浅底(Qoder 亮色 primary-bg) */
+   --accent-b: #bfe3c6;
+   --ink: #141412;         /* 墨色实心按钮(发送/新建/确认) */
+   --ink-h: #2a2b28;
+   --ink-fg: #fbfbfa;
+   --blue-l: #eaf1fc;
+   --blue-t: #1b5fb0;      /* AAA:info 蓝(Qoder info #3B81E9 压深) */
+   --blue-btn: #1b5fb0;
+   --amber: #b46b0a;
+   --amber-t: #713f12;    /* 谨慎模式文字(AAA) */
+   --amber-l: #fdf3e0;    /* 谨慎模式底色 */
+   --amber-h: #b46b0a;
+   --amber-btn: #854f0b;
+   --red: #d5493f;
+   --red-t: #8c1f1a;      /* 错误文字(AAA) */
+   --red-l: #fdf0ef;
+   --red-b: #f0c4c0;
+   --red-btn: #8c1f1a;
+   --ghost-bg: #eef0ec;          /* 幽灵按钮底(+) */
+   --ghost-bg-h: #e3e6e0;
+   --ghost-fg: #3a3b37;
+   --ghost-fg-h: #141412;
+   /* 列表/菜单项 hover:同族中性叠色(亮 6%/10%,对应 DSH interactive-bg-hover) */
+   --hover: rgba(38,49,42,.07);
+   --hover-2: rgba(38,49,42,.05);  /* 选中项:再深会吃掉次级文字对比 */
+   --track: #dde0d9;        /* 思考强度滑条未填充段 */
+   --code-bg: #16181a;      /* 代码块:亮色下也用深色卡(Qoder/DSH 一致) */
+   --code-fg: #e6ebe6;
+   --mask: rgba(18,18,16,.42);
+   --sh1: rgba(18,20,16,.035);   /* 分层主要交给发丝描边,投影只留 3~5% */
+   --sh2: rgba(18,20,16,.05);
+   --sh3: rgba(18,20,16,.07);
+   --sh4: rgba(18,20,16,.10);
+   --sh5: rgba(0,0,0,.22);
+   --scroll: #d6d8d1;
+   --scroll-h: #9aa094;
+   /* 焦点环:绿色高饱和只在这里 + 链接 + 发送钮上出现 */
+   --ring: rgba(46,125,79,.30);
+   --ring-soft: rgba(46,125,79,.14);
+   --grad: linear-gradient(180deg, #1c1c1a, #101010);
+   --grad-h: linear-gradient(180deg, #2f302c, #1d1d1b);
+   --grad-text: linear-gradient(96deg, #1f5138 0%, #2e7d4f 46%, #4b8f6a 100%);
+   --hairline: rgba(255,255,255,.55);   /* 面板顶部 1px 高光 */
+   --dur: .12s;
+   --ease: cubic-bezier(.4,0,.2,1);
+   /* 圆角阶梯(DSH 4/8/12/16/20/28 的本地化,支持引擎下走 superellipse) */
+   --r-xs: 6px;    /* 小徽标/行内按钮 */
+   --r-sm: 8px;    /* 输入框/普通按钮/列表项 */
+   --r-md: 12px;   /* 下拉/浮层/卡片 */
+   --r-lg: 16px;   /* 弹窗/@ 选择器 */
+   --r-xl: 20px;   /* 输入卡片 */
+   /* 聊天风格统一变量 */
+   --ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei",
+         "PingFang SC", "Noto Sans CJK SC", sans-serif;
+   --mono: "JetBrains Mono", "JetBrainsMono Nerd Font", "Cascadia Mono", "Cascadia Code",
+           Consolas, ui-monospace, monospace;
+   --msg-avatar: 30px;
+   --msg-gap: 10px;
+   --msg-radius: 18px;   /* 扁空气泡:DSH radius-xl(20) 略收 */
+   --msg-text: 14px;
+   --msg-time: 11px;
+   --pad-x: 22px;
+   --gap-msg: 12px;
+   --lh-text: 1.7;
+   --aside-w: 280px;     /* 侧栏宽度(DSH 默认 280) */
+   --head-h: 44px;
+   /* 内容宽度主轴:消息列/输入卡共用同一根脊柱(DSH --dsh-chat-content-width) */
+   --col-w: clamp(680px, 88%, 940px);
+ }
+ /* ---------- 深色主题(html[data-theme=dark] 覆盖,由 JS 按 浅色/深色/随系统 设置) ---------- */
+ /* Qoder 暗色:暖黑 #090A0B → 面板 #171716 → 抬升 #1A1A17,边框带橄榄相,
+    几乎不用投影,靠"每层 +2~3 亮度 + 发丝描边"分层;主色绿 #6AD86C 只点关键处。 */
+ html[data-theme="dark"] {
+   color-scheme: dark;
+   --edge: #000000;
+   --bg: #0b0b0a;
+   --surface: #171716;
+   --surface2: #1f1f1d;
+   --surface-a: rgba(23,23,22,.80);
+   --side: #131312;
+   --side-a: rgba(19,19,18,.86);
+   --glow1: rgba(106,216,108,.05);
+   --glow2: rgba(90,110,95,.04);
+   --border: rgba(236,232,220,.075);
+   --border2: rgba(236,232,220,.15);
+   --text: #eeeeeb;
+   --text2: #c7c8c2;  /* AAA: ≥10:1 */
+   --text3: #b3b4ae;  /* 小字 ≥8.6:1 */
+   --title: #f7f7f4;
+   --title2: #dadcD5;
+   --accent: #6ad86c;    /* Qoder 暗色 primary(对暗底 ≥7:1) */
+   --accent-btn: #3d8c66;/* Qoder 暗色 CTA(白字 4.9:1,13px/600 达标) */
+   --accent-btn-h: #4aa377;/* hover */
+   --accent-t: #a0eb9d;  /* 主色文字(AAA ≥9:1) */
+   --ok-dot: #4ed17e;
+   --accent-l: rgba(106,216,108,.13);
+   --accent-b: rgba(106,216,108,.42);
+   --ink: #f2f2ef;       /* 暗色下的主按钮 = 近白墨色 + 深色字(DSH 配方) */
+   --ink-h: #ffffff;
+   --ink-fg: #101110;
+   --blue-l: rgba(77,127,226,.14);
+   --blue-t: #9dc0ff;     /* AAA */
+   --blue-btn: #2f62d8;
+   --amber: #e5b357;
+   --amber-t: #f6e0b0;
+   --amber-l: rgba(229,179,87,.12);
+   --amber-h: #e5b357;
+   --amber-btn: #7a4c07;
+   --red: #f0605a;
+   --red-t: #ffd2cf;
+   --red-l: rgba(219,101,92,.13);
+   --red-b: rgba(219,101,92,.42);
+   --red-btn: #a3272c;
+   --ghost-bg: #212120;
+   --ghost-bg-h: #2b2b29;
+   --ghost-fg: #c2c3bd;
+   --ghost-fg-h: #e9e9e5;
+   --hover: rgba(255,255,255,.07);
+   --hover-2: rgba(255,255,255,.05);
+   --track: #2c2c2a;
+   --code-bg: #0a0a09;
+   --code-fg: #dfe5df;
+   --mask: rgba(0,0,0,.62);
+   --sh1: rgba(0,0,0,.36);
+   --sh2: rgba(0,0,0,.44);
+   --sh3: rgba(0,0,0,.48);
+   --sh4: rgba(0,0,0,.54);
+   --sh5: rgba(0,0,0,.72);
+   --scroll: #2b2b29;
+   --scroll-h: #4a4a46;
+   --ring: rgba(106,216,108,.36);
+   --ring-soft: rgba(106,216,108,.18);
+   --grad: linear-gradient(180deg, #f4f4f1, #e2e2de);
+   --grad-h: linear-gradient(180deg, #ffffff, #ececea);
+   --grad-text: linear-gradient(96deg, #a0eb9d 0%, #6ad86c 48%, #7fd0b0 100%);
+   --hairline: rgba(255,255,255,.05);
+ }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 /* 滚动条:跟随主题。mac 式细滚动条——轨道透明、滑块靠内缩变细、hover 才变亮 */
 * { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
@@ -673,7 +709,7 @@ details.m-think[open] summary { margin-bottom: 6px; }
 }
 .composer-box:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 8px 26px var(--sh2), 0 0 0 3px rgba(76,116,255,.14);
+  box-shadow: 0 8px 26px var(--sh2), 0 0 0 3px var(--ring-soft);
 }
 
 /* @ 文件夹选择器(弹出在输入框上方) */
@@ -794,7 +830,7 @@ details.m-think[open] summary { margin-bottom: 6px; }
    单列对齐的,那里的数字框继续跟文本框同宽。 */
 .frow input[type=number] { flex: 1 1 120px; max-width: 180px; }
 .model-editor .frow input[type=number] { max-width: none; }
-.frow input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(76,116,255,.12); }
+.frow input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring-soft); }
 /* 说明文字永远占住"剩下的那一栏":它参与收缩但不被压成一竖条,控件也不与它抢宽度。 */
 .frow .hint { font-size: 11px; color: var(--text3); line-height: 1.5; flex: 1 1 0; min-width: 0; }
 /* 按钮/头像这类控件按自身内容排版,绝不参与压缩(否则会被压成竖排"上传/更/换头/像")。 */
@@ -827,13 +863,13 @@ details.m-think[open] summary { margin-bottom: 6px; }
   position: relative; border: 1px solid var(--border2); border-radius: var(--r-md); padding: 12px 12px 26px;
   background: var(--surface); cursor: pointer; transition: border-color .15s, box-shadow .15s;
 }
-.model-tile:hover { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(76,116,255,.08); }
+.model-tile:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring-soft); }
 .model-tile .mt-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; font-weight: 600; color: var(--title); }
 .model-tile .mt-badge {
   font-size: 10px; font-weight: 500; padding: 1px 7px; border-radius: 999px;
   background: var(--bg); color: var(--text2); border: 1px solid var(--border);
 }
-.model-tile .mt-def { background: rgba(76,116,255,.14); color: var(--accent-t); border-color: transparent; }
+.model-tile .mt-def { background: var(--ring-soft); color: var(--accent-t); border-color: transparent; }
 .model-tile .mt-sub {
   margin-top: 6px; font-size: 11px; color: var(--text3); word-break: break-all;
   font-family: var(--mono);
@@ -892,23 +928,23 @@ details.m-think[open] summary { margin-bottom: 6px; }
   -webkit-appearance: none; appearance: none;
   width: 100%; height: 8px; border-radius: 999px; outline: none; cursor: pointer; margin: 0;
   background: linear-gradient(90deg,
-    var(--accent, #4d79ff) 0%, var(--accent, #4d79ff) var(--tp-pct, 0%),
+    var(--accent, #2e7d4f) 0%, var(--accent, #2e7d4f) var(--tp-pct, 0%),
     var(--track, #e2e8f0) var(--tp-pct, 0%), var(--track, #e2e8f0) 100%);
 }
 .think-pop input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
   width: 18px; height: 18px; border-radius: 50%;
-  background: var(--surface); border: 2px solid var(--accent, #4d79ff);
+  background: var(--surface); border: 2px solid var(--accent, #2e7d4f);
   box-shadow: 0 1px 5px rgba(15,23,42,.28);
   transition: transform .12s ease, box-shadow .12s ease;
 }
 .think-pop input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.12); }
 .think-pop input[type=range]:active::-webkit-slider-thumb {
-  transform: scale(1.22); box-shadow: 0 0 0 7px rgba(76,116,255,.15);
+  transform: scale(1.22); box-shadow: 0 0 0 7px var(--ring-soft);
 }
 .think-pop input[type=range]::-moz-range-thumb {
   width: 16px; height: 16px; border-radius: 50%; background: var(--surface);
-  border: 2px solid var(--accent, #4d79ff); box-shadow: 0 1px 5px rgba(15,23,42,.28);
+  border: 2px solid var(--accent, #2e7d4f); box-shadow: 0 1px 5px rgba(15,23,42,.28);
 }
 .think-pop .tp-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--text3); margin: 8px 0 0; padding: 0 1px; }
 .think-pop .tp-scale span { flex: 1; text-align: center; }
@@ -974,14 +1010,14 @@ details.m-think[open] summary { margin-bottom: 6px; }
   transition: border-color .15s, box-shadow .15s;
 }
 .boot-tile:hover { border-color: var(--accent); }
-.boot-tile.sel { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(76,116,255,.12); }
+.boot-tile.sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring-soft); }
 .boot-tile.bad { cursor: default; border-style: dashed; }
 .boot-tile .bt-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; font-weight: 600; color: var(--title); }
 .boot-tile .bt-badge {
   font-size: 10px; font-weight: 500; padding: 1px 7px; border-radius: 999px;
   background: var(--bg); color: var(--text2); border: 1px solid var(--border);
 }
-.boot-tile .bt-badge.cur { background: rgba(76,116,255,.14); color: var(--accent-t); border-color: transparent; }
+.boot-tile .bt-badge.cur { background: var(--ring-soft); color: var(--accent-t); border-color: transparent; }
 .boot-tile .bt-desc { margin-top: 6px; font-size: 11px; line-height: 1.55; color: var(--text3); }
 .boot-tile .bt-foot { display: flex; align-items: center; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
 .boot-tile .bt-err { margin-top: 6px; font-size: 11px; line-height: 1.5; color: var(--red-t); }
@@ -1270,6 +1306,262 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
 @media (max-width: 760px) {
   /* 窄窗口再窄一截,跟着 --aside-w 走,别改一处漏一处 */
   aside { width: calc(var(--aside-w) - 40px); flex-basis: calc(var(--aside-w) - 40px); }
+}
+
+/* =====================================================================
+   ===== 视觉润色层 v3(Qoder 国际版取色 + DSH Desktop 结构) =====
+   只覆盖已有选择器,不改 DOM/JS。整体回退:git checkout main
+   ① 大面积中性、小面积绿(强调/链接/发送钮/状态)
+   ② 分层靠发丝描边 + ≤5% 柔光,不靠厚投影
+   ③ 消息列与输入卡共用一根宽度主轴 --col-w
+   ④ 统一 120ms / cubic-bezier(.4,0,.2,1) + 键盘焦点环
+   ===================================================================== */
+body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+/* 支持的引擎里把圆角变成"苹果式方圆"(superellipse),不支持自动忽略,零成本 */
+@supports (corner-shape: superellipse(1.5)) {
+  :root { --corner: superellipse(1.5); }
+  *, *::before, *::after { corner-shape: superellipse(1.5); }
+}
+
+/* 焦点环:键盘导航看得见,鼠标点击不骚扰 */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--ring-soft);
+}
+html[data-input-modality="pointer"] :where(button, a):focus-visible { outline-color: transparent; }
+
+/* 统一过渡 + 0.5px 按压反馈 */
+.btn, .icon-btn, .mode-btn, .compact-btn, .send-btn, .stop-btn, .tasks-btn,
+.plus-btn, .new-btn, .set-close, .set-nav-item, .cb-copy, .task-stop, .mc-fetch,
+.model-inline-btn, .sess-item, .group-item, .model-tile, .boot-tile {
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
+              color var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+              transform var(--dur) var(--ease);
+}
+.btn:active:not(:disabled), .icon-btn:active, .send-btn:active:not(:disabled),
+.plus-btn:active:not(:disabled), .new-btn:active, .mode-btn:active,
+.compact-btn:active:not(:disabled) { transform: translateY(.5px); }
+
+/* ---------- 顶栏:更薄更安静,品牌名渐变字,工作目录用等宽小徽标 ---------- */
+header { position: relative; padding: 8px 14px; gap: 10px; }
+header::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1px;
+  background: var(--hairline); pointer-events: none;
+}
+.logo { font-size: 15px; font-weight: 800; letter-spacing: -.015em; }
+.logo span {
+  background: var(--grad-text); -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+}
+.pill {
+  font-family: var(--mono); font-size: 11.5px; padding: 3px 10px;
+  background: var(--surface2); border-color: transparent; color: var(--text2);
+}
+.pill b { color: var(--title); }
+.icon-btn { background: transparent; border-color: var(--border2); color: var(--text2); padding: 5px 11px; }
+.icon-btn:hover { background: var(--hover); border-color: var(--border2); color: var(--accent-t); }
+
+/* ---------- 侧栏:墨色"新建"按钮 + 微型分区标签 + 选中项左侧主色条 ---------- */
+.new-btn {
+  margin: 10px 10px 4px; padding: 9px 10px;
+  background: var(--ink); color: var(--ink-fg);
+  box-shadow: 0 1px 2px var(--sh2), inset 0 0 0 .5px rgba(0,0,0,.06);
+  font-weight: 600; letter-spacing: .005em;
+}
+.new-btn:hover { background: var(--ink-h); box-shadow: 0 3px 10px var(--sh2); }
+.sec-head {
+  font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--text3); padding: 10px 12px 5px; font-weight: 700;
+}
+.sess-list { padding: 0 8px 10px; }
+.sess-item, .group-item { padding: 8px 10px; margin-bottom: 1px; }
+.sess-item:hover, .group-item:hover { background: var(--hover); }
+.sess-item.active, .group-item.active {
+  background: var(--hover-2); border-color: transparent;
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
+.sess-title { font-weight: 600; letter-spacing: -.005em; }
+.del-btn:hover { background: var(--red); color: #fff; }
+.rename-btn:hover { background: var(--ink); color: var(--ink-fg); }
+.gh-add:hover { background: var(--ink); color: var(--ink-fg); }
+
+/* ---------- 聊天头 ---------- */
+.chat-head { max-width: var(--col-w); width: 100%; margin: 0 auto; }
+.chat-head .title { font-size: 13.5px; font-weight: 700; color: var(--title); letter-spacing: -.01em; }
+.chat-head .title:hover { color: var(--accent-t); }
+.tasks-btn { background: transparent; }
+.tasks-count { background: var(--ink); color: var(--ink-fg); }
+
+/* ---------- 消息:宽度主轴 + 扁空气泡 + 工具卡发丝描边 ---------- */
+.messages { max-width: var(--col-w); margin: 0 auto; width: 100%; }
+.m-tag {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em; padding: 2px 8px;
+  border: 1px solid transparent;
+}
+.m-tag.user { border-color: var(--accent-b); }
+.m-tag.ai, .m-tag.member { border-color: var(--border); }
+/* 用户气泡:扁平、无框、右下角收尖朝头像(DSH UserMessageBubble) */
+.msg.user .m-card {
+  background: var(--accent-l); border-color: transparent; padding: 10px 14px;
+  border-radius: var(--msg-radius) var(--msg-radius) 6px var(--msg-radius);
+}
+.msg.user .m-card { max-width: min(calc(var(--col-w) * .702), 82%); }
+.msg.tool .m-card {
+  background: var(--surface2); border-color: transparent; padding: 8px 11px;
+  box-shadow: inset 2px 0 0 0 var(--border2), 0 0 0 .5px var(--border);
+}
+.msg.tool .m-card:hover { box-shadow: inset 2px 0 0 0 var(--accent), 0 0 0 .5px var(--border2); }
+.t-name { font-weight: 700; color: var(--title2); font-size: 11.5px; letter-spacing: .02em; }
+.t-args, .t-res { font-size: 11.5px; line-height: 1.6; }
+details.m-think summary {
+  font-size: 11.5px; font-weight: 600; color: var(--text3);
+  padding: 2px 6px; margin-left: -6px; border-radius: var(--r-xs);
+}
+details.m-think summary:hover { color: var(--accent-t); background: var(--hover); }
+.think-body, .m-think-live { border-top: 1px solid var(--border); font-size: 12.5px; }
+
+/* Markdown 节奏(DSH 字号阶梯:h1-h3 全 700,正文 14/24) */
+.md p { margin: 6px 0; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
+  margin: 14px 0 6px; letter-spacing: -.015em; font-weight: 700;
+}
+.md h1 { font-size: 1.24em; } .md h2 { font-size: 1.14em; } .md h3 { font-size: 1.07em; }
+.md blockquote { border-left: 2px solid var(--accent-b); background: var(--surface2); }
+.md :not(pre) > code {
+  background: var(--surface2); border-color: var(--border); color: var(--title2);
+  font-size: .87em; padding: 1.5px 5px;
+}
+.md th, .md td { border-color: var(--border); padding: 5px 11px; }
+.md th { background: var(--surface2); }
+.md a { color: var(--accent-t); text-decoration: none; border-bottom: 1px solid var(--accent-b); }
+.md a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* 代码块:深色卡 + 更矮的语言条,复制按钮 hover 才亮 */
+.codeblock { border-color: var(--border); box-shadow: 0 1px 2px var(--sh1); }
+.cb-head { background: rgba(148,163,184,.05); border-bottom-color: var(--border); padding: 5px 8px 5px 11px; }
+.cb-lang { color: #83907f; font-size: 10.5px; letter-spacing: .07em; }
+.cb-copy { opacity: .65; background: rgba(148,163,184,.10); }
+.codeblock:hover .cb-copy { opacity: 1; }
+.cb-pre { padding: 11px 12px; font-size: 12.5px; line-height: 1.62; }
+
+/* 状态/错误/等待 */
+.msg.error .m-card { border-color: transparent; border-radius: var(--r-sm); }
+.msg.pending .m-card {
+  background: var(--surface2); border-color: transparent; border-radius: var(--r-sm);
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
+.spinner { border-color: var(--accent-b); border-top-color: var(--accent); }
+
+/* ---------- 输入区:共用主轴、聚焦才"点亮" ---------- */
+.composer { padding: 8px var(--pad-x) 10px; }
+.composer-box {
+  max-width: calc(var(--col-w) + 32px); margin: 0 auto; width: 100%;
+  border-radius: var(--r-xl); border-color: transparent; padding: 11px 13px;
+  box-shadow: 0 0 0 .5px var(--border2), 0 4px 16px var(--sh1), 0 0 24px var(--sh1);
+}
+.composer-box:hover { box-shadow: 0 0 0 .5px var(--border2), 0 6px 20px var(--sh2); }
+.composer-box:focus-within {
+  border-color: transparent;
+  box-shadow: 0 0 0 1.5px var(--accent), 0 4px 18px var(--sh2);
+}
+/* 原生控件跟着主色走(否则复选框/滑条是刺眼的系统蓝) */
+input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
+input[type=range] { accent-color: var(--accent); }
+.composer textarea { font-size: 14.5px; line-height: 1.55; }
+.composer textarea::placeholder { color: var(--text3); opacity: .9; }
+/* 发送钮是全界面少数"彩色"之一:走品牌绿 */
+.send-btn {
+  height: 32px; padding: 0 16px; background: var(--accent-btn);
+  border-color: transparent; box-shadow: 0 1px 2px var(--sh2), inset 0 1px 0 rgba(255,255,255,.12);
+}
+.send-btn:hover:not(:disabled) { background: var(--accent-btn-h); box-shadow: 0 3px 12px var(--sh2); }
+.send-btn:disabled { opacity: .5; box-shadow: none; }
+.stop-btn { border-color: var(--red-b); background: transparent; }
+.stop-btn:hover { background: var(--red-l); border-color: var(--red); }
+.plus-btn { background: transparent; border: 1px solid var(--border2); }
+.plus-btn:hover:not(:disabled) { background: var(--hover); color: var(--accent-t); }
+.model-inline-btn { border: 1px solid transparent; padding: 5px 9px; }
+.model-inline-btn:hover { background: var(--hover); }
+.composer-foot { margin-top: 7px; font-size: 11px; }
+.foot-hint:hover { background: var(--hover); color: var(--accent-t); }
+.compact-btn, .mode-btn { background: transparent; }
+.compact-btn:hover:not(:disabled), .mode-btn:hover { background: var(--hover); }
+.think-badge { background: var(--accent-l); border: 1px solid var(--accent-b); }
+
+/* 浮层统一:发丝描边 + 极淡柔光(DSH elevation-panel) */
+.model-menu, .think-pop, .tasks-panel, .fs-picker {
+  border-color: transparent; border-radius: var(--r-md);
+  box-shadow: 0 0 0 .5px var(--border2), 0 3px 8px var(--sh2), 0 0 16px var(--sh1);
+}
+.fs-head { background: var(--surface2); }
+.model-menu .mm-item.cur { background: var(--accent-l); }
+.task-item:hover { background: var(--hover); }
+
+/* ---------- 弹窗:遮罩更强、卡片靠描边分层 ---------- */
+.modal-mask { backdrop-filter: blur(6px) saturate(1.1); -webkit-backdrop-filter: blur(6px) saturate(1.1); }
+.modal {
+  border-color: transparent; border-radius: var(--r-lg); padding: 18px;
+  box-shadow: 0 0 0 .5px var(--border2), 0 18px 50px var(--sh4), 0 0 24px var(--sh2);
+  animation: pop .18s var(--ease);
+}
+.modal h2 { font-size: 16px; letter-spacing: -.015em; }
+.modal h3 { font-size: 12.5px; }
+.set-head { padding: 12px 16px; }
+.set-head h2 { font-size: 15.5px; }
+.set-nav { background: var(--surface2); }
+.set-nav-item.active { background: var(--hover-2); color: var(--title); box-shadow: inset 2px 0 0 0 var(--accent); }
+.set-page > h3 { font-size: 14.5px; letter-spacing: -.01em; }
+.frow input[type=text], .frow input[type=password], .frow input[type=number],
+.frow select, .g-bg-input { background: var(--bg); }
+.frow input:focus, .frow select:focus, .g-bg-input:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring-soft); background: var(--surface);
+}
+.btn { background: var(--surface); }
+.btn:hover { background: var(--hover); }
+.btn.primary {
+  background: var(--ink); color: var(--ink-fg); border-color: transparent;
+  box-shadow: 0 1px 2px var(--sh2), inset 0 0 0 .5px rgba(0,0,0,.06);
+}
+.btn.primary:hover { background: var(--ink-h); color: var(--ink-fg); }
+.model-tile, .boot-tile { background: var(--surface); }
+.model-tile:hover, .boot-tile:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring-soft); }
+.model-tile .mt-badge, .boot-tile .bt-badge { background: var(--surface2); }
+.add-model-btn:hover { background: var(--hover); }
+
+/* ---------- 提示条:滑入 ---------- */
+#toast {
+  border-color: var(--border2); border-radius: var(--r-md);
+  box-shadow: 0 8px 24px var(--sh3);
+  transform: translate(-50%, 8px); opacity: 0;
+  transition: opacity .2s var(--ease), transform .2s var(--ease);
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast.ok { background: var(--accent-l); color: var(--accent-t); border-color: var(--accent-b); }
+
+/* ---------- 空状态 ---------- */
+.placeholder .big {
+  font-size: 30px; width: 54px; height: 54px; display: flex; align-items: center;
+  justify-content: center; border-radius: var(--r-lg);
+  background: var(--accent-l); border: 1px solid var(--accent-b);
+}
+.placeholder p { font-size: 13px; max-width: 440px; text-align: center; line-height: 1.7; }
+
+/* ---------- 滚动条:细胶囊 + 透明轨道(DSH 5px,Windows 上留 6px 好点) ---------- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll); border-radius: 999px;
+  border: 1px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-h); background-clip: padding-box; }
+::selection { background: var(--accent-b); }
+
+/* 无障碍:要求减少动效时全停 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important; scroll-behavior: auto !important;
+  }
 }
 </style>
 </head>
