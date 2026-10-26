@@ -1323,12 +1323,15 @@ body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; 
   *, *::before, *::after { corner-shape: superellipse(1.5); }
 }
 
-/* 焦点环:键盘导航看得见,鼠标点击不骚扰 */
-:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+/* 焦点环只给按钮/链接。文本框一律不加光环:Chromium 里文本框永远匹配
+   :focus-visible,给它加环会在输入卡里再套一个"框中框"(v3 的翻车点)。
+   文本框的焦点由输入卡自己的描边表达。 */
+:where(button, a, [tabindex]):focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
   box-shadow: 0 0 0 4px var(--ring-soft);
 }
 html[data-input-modality="pointer"] :where(button, a):focus-visible { outline-color: transparent; }
+input, select, textarea { outline: none; }
 
 /* 统一过渡 + 0.5px 按压反馈 */
 .btn, .icon-btn, .mode-btn, .compact-btn, .send-btn, .stop-btn, .tasks-btn,
@@ -1452,23 +1455,26 @@ details.m-think summary:hover { color: var(--accent-t); background: var(--hover)
 }
 .spinner { border-color: var(--accent-b); border-top-color: var(--accent); }
 
-/* ---------- 输入区:共用主轴、聚焦才"点亮" ---------- */
+/* ---------- 输入区:一体大圆角卡(DSH InputBar),聚焦只换描边、不叠第二层环 ---------- */
 .composer { padding: 8px var(--pad-x) 10px; }
 .composer-box {
   max-width: calc(var(--col-w) + 32px); margin: 0 auto; width: 100%;
-  border-radius: var(--r-xl); border-color: transparent; padding: 11px 13px;
+  border-radius: var(--r-xl); border-color: transparent; padding: 12px 14px 10px;
   box-shadow: 0 0 0 .5px var(--border2), 0 4px 16px var(--sh1), 0 0 24px var(--sh1);
 }
 .composer-box:hover { box-shadow: 0 0 0 .5px var(--border2), 0 6px 20px var(--sh2); }
 .composer-box:focus-within {
   border-color: transparent;
-  box-shadow: 0 0 0 1.5px var(--accent), 0 4px 18px var(--sh2);
+  box-shadow: 0 0 0 1.5px var(--accent), 0 6px 20px var(--sh2);
 }
+.composer textarea {
+  font-size: 15px; line-height: 1.6; padding: 6px 2px 2px;
+  color: var(--text); caret-color: var(--accent);
+}
+.composer textarea::placeholder { color: var(--text2); opacity: .8; }
 /* 原生控件跟着主色走(否则复选框/滑条是刺眼的系统蓝) */
 input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
 input[type=range] { accent-color: var(--accent); }
-.composer textarea { font-size: 14.5px; line-height: 1.55; }
-.composer textarea::placeholder { color: var(--text3); opacity: .9; }
 /* 发送钮是全界面少数"彩色"之一:走品牌绿 */
 .send-btn {
   height: 32px; padding: 0 16px; background: var(--accent-btn);
@@ -1563,22 +1569,114 @@ input[type=range] { accent-color: var(--accent); }
     transition-duration: .001ms !important; scroll-behavior: auto !important;
   }
 }
+
+/* =====================================================================
+   ===== v4 追加:① 顶栏与侧栏一体(DSH 骨架) ② 可读性提档 =====
+   ===================================================================== */
+
+/* ---------- ① 一体骨架:侧栏贯通到顶,顶栏只压在聊天列上 ---------- */
+/* DOM 已改为 body > [aside, main],main 内部是 header + section.chat */
+body { flex-direction: row; }
+aside { height: 100%; }
+main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+header { padding: 9px 16px; gap: 8px; }
+header::after { display: none; }           /* 顶栏不再横跨整宽,顶部高光改由侧栏承担 */
+aside { position: relative; }
+aside::after {                             /* 侧栏顶部一条极淡高光,和顶栏连成一块"框" */
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1px;
+  background: var(--hairline); pointer-events: none;
+}
+/* 品牌挪进侧栏顶部(DSH/Qoder 都是品牌在左栏,不横跨整条顶栏) */
+.brand { display: flex; align-items: baseline; gap: 8px; padding: 13px 14px 9px; }
+.brand .logo { font-size: 15.5px; }
+.brand .brand-sub {
+  font-size: 10.5px; color: var(--text3); letter-spacing: .08em; text-transform: uppercase;
+}
+
+/* ---------- ② 可读性:11px 一档的小字整体抬到 11.5~12px,并改用次级文本色 ---------- */
+:root { --msg-text: 15px; --msg-time: 11.5px; }
+.composer-foot { font-size: 12px; color: var(--text2); }
+.composer-foot .token-usage { color: var(--text2); }
+.mode-btn, .compact-btn { font-size: 12px; color: var(--text2); }
+.foot-hint { font-size: 11.5px; color: var(--text2); }
+.t-args, .t-res { font-size: 12px; }
+.sess-meta, .group-item .g-count, .set-nav-count, .empty-hint { font-size: 11.5px; }
+.sec-head { font-size: 11px; }
+.m-tag { font-size: 11px; }
+.pill { font-size: 12px; }
+details.m-think summary { font-size: 12px; }
+.think-body, .m-think-live { font-size: 13px; }
+.cb-pre { font-size: 13px; }
+.cb-lang { font-size: 11px; }
+.cb-copy { font-size: 11.5px; }
+.md :not(pre) > code { font-size: .9em; }
+.boot-tile .bt-desc, .model-tile .mt-sub, .model-tile .mt-stats { font-size: 11.5px; }
+.fs-name { font-size: 13.5px; }
+.fs-head { font-size: 12.5px; }
+.msg.status .m-text { font-size: 12.5px; }
+.chat-head .title { font-size: 14px; }
+
+/* ---------- v4.1:输入卡再圆一点(DSH radius-panel 28 的本地化),聚焦环收到 1px ---------- */
+.composer-box { border-radius: 24px; }
+.composer-box:focus-within { box-shadow: 0 0 0 1px var(--accent), 0 6px 20px var(--sh2); }
+
+/* =====================================================================
+   ===== v4.2 分层骨架(DSH / Arc 式):侧栏+顶栏=一块"框",聊天区=叠上去的圆角"页" =====
+   原来界面是"三块":① 侧栏 ② 顶栏 ③ 聊天区,各画各的底色和分隔线。
+   现在:① ② 合成一块 frame(同一底色、中间不再画线),③ 是一张圆角页,
+   浮在 frame 上(投影 + 发丝描边),四边留白让框透出来 —— 一眼就是"页叠在框上"。
+   ===================================================================== */
+:root { --frame: #eceee8; }
+html[data-theme="dark"] { --frame: #040404; }
+
+/* 框:整个窗口底 = frame;侧栏与顶栏都不再画自己的底色/分隔线 */
+body { background: var(--frame); }
+aside { background: transparent; border-right: none; }
+aside::after { display: none; }
+header { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; border-bottom: none; }
+main { background: transparent; }
+
+/* 页:聊天区是一张圆角纸,浮起来 */
+.chat {
+  background:
+    radial-gradient(760px 460px at 10% -6%, var(--glow1), transparent 62%),
+    radial-gradient(680px 460px at 92% 106%, var(--glow2), transparent 60%),
+    var(--bg);
+  border-radius: 16px;
+  margin: 0 10px 10px 10px;
+  box-shadow: 0 0 0 .5px var(--border), 0 10px 30px var(--sh2), 0 2px 6px var(--sh1);
+  overflow: hidden;                 /* 内部滚动条/浮层不溢出圆角 */
+  position: relative; z-index: 1;
+}
+/* 页内的顶栏分隔线取消后,聊天头与页边之间留一点呼吸 */
+.chat-head { padding-top: 2px; }
+/* 侧栏现在坐在框上:选中/hover 的中性叠色要稍微加重一点点才看得出来 */
+.sess-item:hover, .group-item:hover { background: rgba(38,49,42,.09); }
+.sess-item.active, .group-item.active { background: rgba(38,49,42,.07); }
+html[data-theme="dark"] .sess-item:hover, html[data-theme="dark"] .group-item:hover { background: rgba(255,255,255,.08); }
+html[data-theme="dark"] .sess-item.active, html[data-theme="dark"] .group-item.active { background: rgba(255,255,255,.06); }
+/* 框上的小控件描边略加重,免得在 frame 上"洗白" */
+header .icon-btn { border-color: var(--border2); background: transparent; }
+.pill { background: rgba(38,49,42,.06); }
+html[data-theme="dark"] .pill { background: rgba(255,255,255,.07); }
+@media (max-width: 760px) {
+  .chat { margin: 0 6px 6px 6px; border-radius: 12px; }
+}
+
+/* v4.3:暗色下"页"比"框"更亮一档,分离感补齐 */
+html[data-theme="dark"] .chat {
+  background:
+    radial-gradient(760px 460px at 10% -6%, var(--glow1), transparent 62%),
+    radial-gradient(680px 460px at 92% 106%, var(--glow2), transparent 60%),
+    #0d0e0c;
+  box-shadow: 0 0 0 .5px rgba(236,232,220,.09), 0 10px 30px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
+}
 </style>
 </head>
 <body>
 
-<header>
-  <div class="logo">Mini <span>Code</span></div>
-  <div class="pill" id="status-pill">状态加载中…</div>
-  <div class="spacer"></div>
-  <button class="approval-badge" id="btn-approval-badge" title="有待审批的危险操作">🔔 审批 <span id="approval-count">0</span></button>
-  <!-- 主题快捷切换:浅色 → 深色 → 跟随系统 循环(配置里的下拉框同步) -->
-  <button class="icon-btn theme-btn" id="btn-theme" title="切换主题:浅色 / 深色 / 跟随系统">🖥 跟随系统</button>
-  <button class="icon-btn" id="btn-settings">⚙ 配置</button>
-</header>
-
-<main>
   <aside>
+  <div class="brand"><div class="logo">Mini <span>Code</span></div><span class="brand-sub">agent</span></div>
     <button class="new-btn" id="btn-new" title="开始新会话">＋ 新建会话</button>
     <div class="sec-head">会话 <span class="sec-count" id="sess-count"></span></div>
     <div class="sess-list" id="sess-list"></div>
@@ -1600,6 +1698,16 @@ input[type=range] { accent-color: var(--accent); }
       <div class="group-list" id="archive-list"></div>
     </div>
   </aside>
+<main>
+<header>
+  <div class="pill" id="status-pill">状态加载中…</div>
+  <div class="spacer"></div>
+  <button class="approval-badge" id="btn-approval-badge" title="有待审批的危险操作">🔔 审批 <span id="approval-count">0</span></button>
+  <!-- 主题快捷切换:浅色 → 深色 → 跟随系统 循环(配置里的下拉框同步) -->
+  <button class="icon-btn theme-btn" id="btn-theme" title="切换主题:浅色 / 深色 / 跟随系统">🖥 跟随系统</button>
+  <button class="icon-btn" id="btn-settings">⚙ 配置</button>
+</header>
+
   <section class="chat">
     <div class="chat-head">
       <button class="back-btn" id="btn-back-parent" title="返回父会话">← 父会话</button>
