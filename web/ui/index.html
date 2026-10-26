@@ -1917,6 +1917,33 @@ header .icon-btn:hover .ico { opacity: 1; }
 /* ---------- ② 会话头只要标题 ---------- */
 /* paintChatAva() 会写行内 display:flex,所以这里用 !important 压住 */
 .chat-head .chat-ava { display: none !important; }
+/* =====================================================================
+   ===== v9:会话头里"模型标签"与"标题组"之间拉开距离 + 一条渐隐竖线 ----------
+   原来两者只靠 flex gap 8px 挨着,标签(带底色)和标题(粗体)挤成一坨。
+   现在:标签 → 16px → 一条 16px 高的渐隐竖线 → 13px → 标题,
+   和侧栏里 "Mini Code | AGENT" 用的是同一种分隔语言。
+   ===================================================================== */
+.chat-head { gap: 10px; }
+.chat-head .pill { margin-right: 6px; }          /* 6 + gap10 = 16px */
+
+/* 标题是标签之后的第二个兄弟(中间那个头像已隐藏),用相邻兄弟定位它 */
+.chat-head .pill + .chat-ava + .title {
+  position: relative;
+  padding-left: 13px;
+}
+.chat-head .pill + .chat-ava + .title::before {
+  content: "";
+  position: absolute; left: 0; top: 50%;
+  width: 1px; height: 16px;
+  transform: translateY(-50%);
+  background: linear-gradient(180deg, transparent, var(--border2) 38%, var(--border2) 62%, transparent);
+}
+
+@media (max-width: 900px) {
+  .chat-head { gap: 8px; }
+  .chat-head .pill { margin-right: 2px; }
+  .chat-head .pill + .chat-ava + .title { padding-left: 10px; }
+}
 </style>
 </head>
 <body>
