@@ -1944,6 +1944,80 @@ header .icon-btn:hover .ico { opacity: 1; }
   .chat-head .pill { margin-right: 2px; }
   .chat-head .pill + .chat-ava + .title { padding-left: 10px; }
 }
+/* =====================================================================
+   ===== v10「执行过程」折叠条:没有正文的思考 + 工具调用,默认收进一条摘要 =====
+   一条横在正文上方的窄条:执行过程 · 5 步 · 2 次思考      展开/收起
+   展开后是一条"时间轴":每一步左边一根细轨,参数/结果都缩一级字号。
+   ===================================================================== */
+
+/* 独立成卡时不要气泡的底(它只是条窄条) */
+.msg.steps { margin-left: calc(var(--msg-avatar) + var(--msg-gap)); }
+.msg.steps .m-card {
+  background: transparent; border: none; box-shadow: none; padding: 0; max-width: none;
+}
+
+details.m-steps {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-a, var(--surface2));
+  overflow: hidden;
+  transition: border-color var(--dur) var(--ease);
+}
+details.m-steps:hover { border-color: var(--border2); }
+details.m-steps[open] { border-color: var(--border2); }
+
+details.m-steps > summary {
+  display: flex; align-items: center; gap: 8px;
+  height: 30px; padding: 0 10px;
+  font-size: 12px; color: var(--text2); cursor: pointer; user-select: none;
+  list-style: none;
+}
+details.m-steps > summary::-webkit-details-marker { display: none; }
+details.m-steps > summary:hover { background: var(--hover); color: var(--text); }
+details.m-steps > summary::before {
+  content: ""; width: 5px; height: 5px; flex: 0 0 5px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg); opacity: .7; margin-left: 2px;
+  transition: transform var(--dur) var(--ease);
+}
+details.m-steps[open] > summary::before { transform: rotate(45deg); }
+details.m-steps[open] > summary { border-bottom: 1px solid var(--border); }
+.ms-t { font-weight: 600; color: var(--title2); letter-spacing: .01em; }
+.ms-n {
+  font-size: 11px; color: var(--text3);
+  padding: 1px 6px; border-radius: 999px; background: var(--hover);
+}
+.ms-hint { margin-left: auto; font-size: 11px; color: var(--text3); }
+
+/* 展开后的时间轴 */
+.m-steps-body {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px 11px 12px;
+  /* 步数多时在自己肚子里滚,别把正文顶出屏幕 */
+  max-height: 46vh; overflow: auto;
+}
+.ms-step {
+  position: relative;
+  padding-left: 11px;
+  border-left: 1px solid var(--border2);
+  font-size: 12px; color: var(--text2);
+  word-break: break-word;
+}
+.ms-step:last-child { border-left-color: transparent; }
+.ms-step > .t-name { display: inline-block; font-size: 11.5px; }
+.ms-step > .t-args, .ms-step > .t-res { font-size: 11.5px; line-height: 1.62; }
+.ms-step .t-res {
+  margin-top: 3px; padding: 5px 8px;
+  border-radius: var(--r-xs); background: var(--hover);
+  max-height: 190px; overflow: auto;
+}
+/* 步骤里的思考块:比正文里那个再收一点,别抢戏 */
+.ms-step details.m-think { margin: 0; }
+.ms-step details.m-think summary { padding: 2px 4px; }
+.ms-step .think-body { border-top: none; padding-top: 4px; font-size: 12.5px; color: var(--text2); }
+
+/* 并进正文卡片里时:贴在标题行下方,和答案之间留一口呼吸 */
+.m-card details.m-steps.ms-inline { margin: 2px 0 10px; }
 </style>
 </head>
 <body>
@@ -3084,6 +3158,7 @@ const HIST_PAGE = 10;
 let histFull = [];        // 当前会话完整消息列表(已滤掉 system)
 let histStart = 0;        // 已渲染第一条在 histFull 中的下标
 let histRendering = false; // 批量渲染历史期间,addCard 不触发智能滚动
+var histBatch = null; // 批量渲染期间新建的卡片清单(loadOlder 用它精确搬移)
 function hidePlaceholder() {
   const p = $("#placeholder");
   if (p) p.style.display = "none";
@@ -3102,6 +3177,7 @@ function addCard(cls, inner) {
   div.className = "msg " + cls;
   div.innerHTML = "<div class=\"m-card\">" + inner + "</div>";
   m.appendChild(div);
+  if (histRendering && histBatch) histBatch.push(div);
   if (stick) scrollBottom(false, true);
   return div;
 }
@@ -3128,16 +3204,120 @@ document.addEventListener("click", (e) => {
   ov.addEventListener("click", () => ov.remove());
   document.body.appendChild(ov);
 });
- function addAssistant(text, reasoning) {
-   let inner = '<div class="m-head"><span class="m-tag ai">Mini Code</span></div>';
-   if (reasoning) {
-     inner += '<details class="m-think"><summary>💭 思考过程(' + reasoning.length + ' 字)</summary><div class="think-body md">' + mdToHtml(reasoning) + "</div></details>";
-   }
-   if (text) inner += '<div class="m-text md">' + mdToHtml(text) + "</div>";
+ /* ---------------- 执行过程归并(steps) ----------------
+   agent 一轮任务常常是:思考 → 调工具 → 思考 → 调工具 → …… → 最后一段正文。
+   中间这些"只有思考、没有正文"的步骤若一条条平铺,屏幕全是工具卡(刷屏)。
+   这里把它们收进一条「执行过程」折叠条:平时只有一行摘要(N 步 · M 次思考),
+   点开才见每一步(参数 + 结果 + 该步思考);等真正有正文的回复出现,这条折叠条
+   会被并进那张卡片的正文上方。整轮都没有正文时,折叠条独立成卡,信息不丢。
+   流式期间同样用这条折叠条:它是活的,步数实时往上加,想看就点开。 */
+var STEPS = { card: null, det: null, body: null, n: 0, th: 0 };
+
+function stepsReset() {            // 消息容器被清空(renderHistory)后丢掉引用
+  STEPS.card = null; STEPS.det = null; STEPS.body = null; STEPS.n = 0; STEPS.th = 0;
+}
+function stepsStrip() {            // 懒创建折叠条(一张独立卡,逐步往里加)
+  if (STEPS.det && STEPS.det.isConnected) return STEPS.det;
+  stepsReset();
+  const div = addCard("steps",
+    '<div class="m-card"><details class="m-steps"><summary></summary><div class="m-steps-body"></div></details></div>');
+  STEPS.card = div;
+  STEPS.det = div.querySelector("details");
+  STEPS.body = div.querySelector(".m-steps-body");
+  // <details> 被浏览器原生开合时不会走我们的重绘,这里挂个 toggle 只改右侧提示字
+  STEPS.det.addEventListener("toggle", function () {
+    const h = this.querySelector(".ms-hint");
+    if (h) h.textContent = this.open ? "收起" : "展开";
+  });
+  stepsPaint();
+  return STEPS.det;
+}
+function stepsPaint() {
+  if (!STEPS.det) return;
+  STEPS.det.querySelector("summary").innerHTML =
+    '<span class="ms-t">执行过程</span>' +
+    '<span class="ms-n">' + STEPS.n + ' 步</span>' +
+    (STEPS.th ? '<span class="ms-n">' + STEPS.th + ' 次思考</span>' : '') +
+    '<span class="ms-hint">' + (STEPS.det.open ? "收起" : "展开") + '</span>';
+}
+function stepsPush(html, isThink) {
+  const body = stepsStrip().querySelector(".m-steps-body");
+  const d = document.createElement("div");
+  d.className = "ms-step";
+  d.innerHTML = html;
+  body.appendChild(d);
+  STEPS.n++;
+  if (isThink) STEPS.th++;
+  stepsPaint();
+  if (!histRendering && nearBottom()) scrollBottom(false, true);
+  return d;
+}
+function stepsAddThink(reasoning) {
+  return stepsPush('<details class="m-think"><summary>💭 思考过程(' + reasoning.length + ' 字)</summary>'
+    + '<div class="think-body md">' + mdToHtml(reasoning) + "</div></details>", true);
+}
+function stepsAddTool(name, args, result) {
+  const a = args ? ' <span class="t-args">' + esc(String(args).slice(0, 240)) + "</span>" : "";
+  const r = result == null
+    ? '<span class="live-ind"><span class="pulse gray"></span>运行中…</span>'
+    : '<div class="t-res">✓ ' + esc(String(result).slice(0, 420)) + "</div>";
+  const st = stepsPush('<span class="t-name">⚙ ' + esc(name) + "</span>" + a + r);
+  st.dataset.name = name || "";
+  // "(历史)" 是占位结果:真结果(随后的 tool 消息)到达时替换掉它
+  st.dataset.soft = (result == null || String(result) === "(历史)") ? "1" : "0";
+  return st;
+}
+// 还没拿到真结果的步骤:优先按工具名配对(并行调用时结果可能乱序回来),否则按先后顺序
+function stepsSoft(name) {
+  if (!STEPS.body) return null;
+  if (name) {
+    const hit = [].slice.call(STEPS.body.querySelectorAll('.ms-step[data-soft="1"]'))
+      .filter(s => s.dataset.name === name);
+    if (hit.length) return hit[0];
+  }
+  return STEPS.body.querySelector('.ms-step[data-soft="1"]');
+}
+function stepsResult(text, name) {
+  const s = stepsSoft(name);
+  if (!s) return false;
+  const ind = s.querySelector(".live-ind");
+  if (ind) ind.remove();
+  const html = '<div class="t-res">✓ ' + esc(String(text).slice(0, 420)) + "</div>";
+  const old = s.querySelector(".t-res");
+  if (old) old.outerHTML = html; else s.insertAdjacentHTML("beforeend", html);
+  s.dataset.soft = "0";
+  return true;
+}
+function stepsClose() {            // 收尾:折叠条原位留着(独立卡),下一轮另起一条
+  stepsPaint();
+  STEPS.card = null; STEPS.det = null; STEPS.body = null;
+}
+function stepsMergeInto(card) {    // 并进"有正文"的那张卡片:放在标题行之下、正文之上
+  if (!card || !STEPS.det) return;
+  const head = card.querySelector(".m-head");
+  STEPS.det.classList.add("ms-inline");
+  if (head && head.parentNode === card) card.insertBefore(STEPS.det, head.nextSibling);
+  else card.insertBefore(STEPS.det, card.firstChild);
+  stepsPaint();
+  if (STEPS.card) STEPS.card.remove();   // 独立外壳去掉,折叠条已住进卡片
+  stepsClose();
+}
+
+function addAssistant(text, reasoning) {
+  // 没有正文 = 这一轮只是过程(思考/准备调工具)→ 收进折叠条,不平铺成卡
+  if (!text) { if (reasoning) stepsAddThink(reasoning); return null; }
+  let inner = '<div class="m-head"><span class="m-tag ai">Mini Code</span></div>';
+  if (reasoning) {
+    inner += '<details class="m-think"><summary>💭 思考过程(' + reasoning.length + ' 字)</summary><div class="think-body md">' + mdToHtml(reasoning) + "</div></details>";
+  }
+  inner += '<div class="m-text md">' + mdToHtml(text) + "</div>";
   // 单聊:agent 消息靠左,头像在左(首字+哈希色,每 agent 固定)
   const div = addCard("ai", inner);
   div.insertAdjacentHTML("afterbegin", agentAvatarBox("c-avatar"));
+  stepsMergeInto(div.querySelector(".m-card"));
+  return div;
 }
+
 function addError(text) {
   addCard("error", '<div class="m-text">⚠ 任务失败:' + esc(text) + "</div>");
 }
@@ -3145,22 +3325,26 @@ function addStatus(text) {
   addCard("status", '<div class="m-text">' + esc(text) + "</div>");
 }
 function addToolLine(name, args, result) {
-  const a = args ? ' <span class="t-args">' + esc(String(args).slice(0, 160)) + "</span>" : "";
-  const r = result != null
-    ? '<div class="t-res">✓ ' + esc(String(result).slice(0, 300)) + "</div>"
-    : '<span class="live-ind"><span class="pulse gray"></span>运行中…</span>';
-  addCard("tool", '<span class="t-name">⚙ ' + esc(name) + "</span>" + a + r);
+  // 工具步骤一律进「执行过程」折叠条;紧随其后的"结果"消息合并进同一步,不再另起一张卡
+  if (result != null && String(result) !== "(历史)" && stepsResult(result, name)) return;
+  stepsAddTool(name, args, result);
 }
-function markToolPendingDone(result) {
+function markToolPendingDone(result, name) {
+  if (stepsResult(result, name)) {
+    if (!histRendering && nearBottom()) scrollBottom(false, true);
+    return;
+  }
+  // 兜底:折叠条不在(旧数据/异常路径)时,退回"最后一张工具卡"的老逻辑
   const cards = messagesEl().querySelectorAll(".msg.tool .m-card");
   if (cards.length === 0) return;
   const last = cards[cards.length - 1];
   const stick = nearBottom();
   const ind = last.querySelector(".live-ind");
   if (ind) ind.remove();
-  last.insertAdjacentHTML("beforeend", '<div class="t-res">✓ ' + esc(String(result).slice(0, 300)) + "</div>");
+  last.insertAdjacentHTML("beforeend", '<div class="t-res">✓ ' + esc(String(result).slice(0, 420)) + "</div>");
   scrollBottom(false, stick);
 }
+
 function renderHistory(messages) {
   const m = messagesEl();
   m.innerHTML = "";
@@ -3175,9 +3359,12 @@ function renderHistory(messages) {
     m.appendChild(box);
   }
   histRendering = true;
+  histBatch = [];
+  stepsReset();
   try {
     for (let i = histStart; i < histFull.length; i++) appendHistoryMsg(histFull[i]);
-  } finally { histRendering = false; }
+    stepsClose();   // 整段没有正文时,攒下的过程步骤独立成一张折叠卡收尾
+  } finally { histRendering = false; histBatch = null; }
   scrollBottom(true); // 初始视图直接落在最新一条,不做平滑动画
 }
 function appendHistoryMsg(msg) {
@@ -3210,12 +3397,15 @@ function loadOlder() {
   const count = histStart - next;
   const prevH = m.scrollHeight, prevTop = m.scrollTop;
   histRendering = true;
+  histBatch = [];
+  stepsReset();
   try {
     for (let i = next; i < histStart; i++) appendHistoryMsg(histFull[i]);
+    stepsClose();
   } finally { histRendering = false; }
-  // 刚追加的 count 条卡片在容器尾部,整体移到 anchor 之前
-  const nodes = [];
-  for (let n = m.lastChild, k = 0; n && k < count; n = n.previousSibling, k++) nodes.unshift(n);
+  // 归并后「一条消息 ≠ 一张卡」,按本批新建清单精确搬移
+  const nodes = histBatch || [];
+  histBatch = null;
   for (const n of nodes) m.insertBefore(n, anchor);
   histStart = next;
   if (next === 0) box.remove();
@@ -3479,7 +3669,7 @@ async function stop() {
       addToolLine(m.tool_name, m.tool_args);
       break;
     case "tool_end":
-      markToolPendingDone(m.tool_result);
+      markToolPendingDone(m.tool_result, m.tool_name);
       break;
     case "context_usage":
       // 每轮 loop 开头(压缩检查后)后端推送的上下文 token 数,直接画,不走 HTTP
@@ -3496,6 +3686,7 @@ async function stop() {
       liveRemove();
       speedStopTicker(); // 任务结束:保留最后一次的展示值
       if (m.content || m.reasoning) addAssistant(m.content, m.reasoning);
+      stepsClose(); // 收尾:没被并进去的过程步骤独立成卡
       setRunning(false);
       updateTokenUsage();
       loadSessions();
@@ -3504,6 +3695,7 @@ async function stop() {
       pendingRemove();
       liveRemove();
       speedStopTicker();
+      stepsClose();
       addError(m.content);
       clearSending(); // 任务没起来:结束 sending 保护期,允许降级
       setRunning(false);
