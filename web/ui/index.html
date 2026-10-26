@@ -2004,13 +2004,49 @@ details.m-steps[open] > summary { border-bottom: 1px solid var(--border); }
   word-break: break-word;
 }
 .ms-step:last-child { border-left-color: transparent; }
-.ms-step > .t-name { display: inline-block; font-size: 11.5px; }
-.ms-step > .t-args, .ms-step > .t-res { font-size: 11.5px; line-height: 1.62; }
+.ms-step .t-name { display: inline-block; font-size: 11.5px; }
+.ms-step .t-args, .ms-step .t-res { font-size: 11.5px; line-height: 1.62; }
+
+/* 每个工具步骤自己也是一层折叠:常态只有一行"⚙ 名字 + 参数一行 + 状态",
+   点开才见参数全文和返回结果 —— 后期回看时整屏是目录,不是一大坨输出。 */
+details.ms-step > summary {
+  display: flex; align-items: center; gap: 7px;
+  min-width: 0; padding: 1px 0; cursor: pointer; user-select: none;
+  list-style: none; color: var(--text2);
+}
+details.ms-step > summary::-webkit-details-marker { display: none; }
+details.ms-step > summary::before {
+  content: ""; flex: 0 0 4px; width: 4px; height: 4px;
+  border-right: 1.4px solid currentColor; border-bottom: 1.4px solid currentColor;
+  transform: rotate(-45deg); opacity: .5;
+  transition: transform var(--dur) var(--ease);
+}
+details.ms-step[open] > summary::before { transform: rotate(45deg); }
+details.ms-step > summary:hover { color: var(--text); }
+details.ms-step[open] > summary { color: var(--text); margin-bottom: 3px; }
+.ms-step .ms-arg1 {
+  flex: 1 1 auto; min-width: 0;
+  font-family: var(--mono); font-size: 11px; color: var(--text3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ms-tag {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; line-height: 16px; height: 16px; padding: 0 6px;
+  border-radius: 999px; background: var(--hover); color: var(--text3);
+}
+.ms-tag.ok { color: var(--accent-t); background: var(--accent-l); }
+.ms-tag.run { color: var(--text2); }
+.ms-step-body { padding: 0 0 2px 12px; min-width: 0; }
+.ms-step .ms-args {
+  font-family: var(--mono); font-size: 11px; line-height: 1.6; color: var(--text3);
+  white-space: pre-wrap; word-break: break-all; margin-bottom: 4px;
+}
 .ms-step .t-res {
   margin-top: 3px; padding: 5px 8px;
   border-radius: var(--r-xs); background: var(--hover);
-  max-height: 190px; overflow: auto;
+  max-height: 240px; overflow: auto; white-space: pre-wrap;
 }
+.ms-cut { display: block; margin-top: 4px; color: var(--text3); font-size: 11px; }
 /* 步骤里的思考块:比正文里那个再收一点,别抢戏 */
 .ms-step details.m-think { margin: 0; }
 .ms-step details.m-think summary { padding: 2px 4px; }
@@ -3240,9 +3276,9 @@ function stepsPaint() {
     (STEPS.th ? '<span class="ms-n">' + STEPS.th + ' 次思考</span>' : '') +
     '<span class="ms-hint">' + (STEPS.det.open ? "收起" : "展开") + '</span>';
 }
-function stepsPush(html, isThink) {
+function stepsPush(html, isThink, tag) {
   const body = stepsStrip().querySelector(".m-steps-body");
-  const d = document.createElement("div");
+  const d = document.createElement(tag || "div");
   d.className = "ms-step";
   d.innerHTML = html;
   body.appendChild(d);
@@ -3256,16 +3292,38 @@ function stepsAddThink(reasoning) {
   return stepsPush('<details class="m-think"><summary>💭 思考过程(' + reasoning.length + ' 字)</summary>'
     + '<div class="think-body md">' + mdToHtml(reasoning) + "</div></details>", true);
 }
+// 工具步骤:标题行(名字 + 一行参数 + 状态徽标)常态可见,参数全文与返回结果默认折起
 function stepsAddTool(name, args, result) {
-  const a = args ? ' <span class="t-args">' + esc(String(args).slice(0, 240)) + "</span>" : "";
-  const r = result == null
-    ? '<span class="live-ind"><span class="pulse gray"></span>运行中…</span>'
-    : '<div class="t-res">✓ ' + esc(String(result).slice(0, 420)) + "</div>";
-  const st = stepsPush('<span class="t-name">⚙ ' + esc(name) + "</span>" + a + r);
+  const a = args == null ? "" : String(args);
+  const st = stepsPush(
+    '<summary><span class="t-name">⚙ ' + esc(name) + '</span>' +
+    '<span class="ms-arg1">' + esc(a) + '</span><span class="ms-tag"></span></summary>' +
+    '<div class="ms-step-body">' +
+      (a ? '<div class="ms-args">' + esc(a.slice(0, 2000)) + (a.length > 2000 ? " …" : "") + "</div>" : "") +
+      '<div class="ms-res-slot"></div>' +
+    "</div>", false, "details");
+  stepsTag(st, result == null ? "run" : "dim", result == null ? "运行中" : "待返回");
   st.dataset.name = name || "";
   // "(历史)" 是占位结果:真结果(随后的 tool 消息)到达时替换掉它
   st.dataset.soft = (result == null || String(result) === "(历史)") ? "1" : "0";
+  if (result != null && String(result) !== "(历史)") stepsFill(st, result);
   return st;
+}
+function stepsTag(st, kind, text) {
+  const t = st.querySelector(".ms-tag");
+  if (!t) return;
+  t.className = "ms-tag " + kind;
+  t.innerHTML = kind === "run" ? '<span class="pulse gray"></span>运行中' : esc(text);
+}
+function stepsFill(st, result) {   // 真结果写进步骤内部(折起时看不到,点开才展开)
+  const s = String(result == null ? "" : result);
+  const shown = s.slice(0, 4000);
+  const cut = s.length > shown.length ? '<span class="ms-cut">… 共 ' + s.length + " 字,已截断</span>" : "";
+  const slot = st.querySelector(".ms-res-slot");
+  const html = '<div class="t-res">✓ ' + esc(shown) + cut + "</div>";
+  if (slot) slot.innerHTML = html; else st.insertAdjacentHTML("beforeend", html);
+  stepsTag(st, "ok", "✓ " + s.length + " 字");
+  st.dataset.soft = "0";
 }
 // 还没拿到真结果的步骤:优先按工具名配对(并行调用时结果可能乱序回来),否则按先后顺序
 function stepsSoft(name) {
@@ -3280,12 +3338,7 @@ function stepsSoft(name) {
 function stepsResult(text, name) {
   const s = stepsSoft(name);
   if (!s) return false;
-  const ind = s.querySelector(".live-ind");
-  if (ind) ind.remove();
-  const html = '<div class="t-res">✓ ' + esc(String(text).slice(0, 420)) + "</div>";
-  const old = s.querySelector(".t-res");
-  if (old) old.outerHTML = html; else s.insertAdjacentHTML("beforeend", html);
-  s.dataset.soft = "0";
+  stepsFill(s, text);
   return true;
 }
 function stepsClose() {            // 收尾:折叠条原位留着(独立卡),下一轮另起一条
