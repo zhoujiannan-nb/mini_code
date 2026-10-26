@@ -1900,6 +1900,23 @@ body {
   .chat-head .title { max-width: 120px; }
   .chat-head .pill { max-width: 220px; }
 }
+/* =====================================================================
+   ===== v8:① 顶栏按钮换细线 SVG 图标(去掉彩色 emoji) ② 会话头不放头像 =====
+   ===================================================================== */
+
+/* ---------- ① 图标:和徽标同一套线宽语言,颜色跟文字走(currentColor) ---------- */
+.icon-btn .ico {
+  width: 14px; height: 14px; flex: 0 0 14px;
+  fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+header .icon-btn { gap: 7px; }
+header .icon-btn .ico { opacity: .85; }
+header .icon-btn:hover .ico { opacity: 1; }
+
+/* ---------- ② 会话头只要标题 ---------- */
+/* paintChatAva() 会写行内 display:flex,所以这里用 !important 压住 */
+.chat-head .chat-ava { display: none !important; }
 </style>
 </head>
 <body>
@@ -1932,8 +1949,8 @@ body {
   <div class="spacer"></div>
   <button class="approval-badge" id="btn-approval-badge" title="有待审批的危险操作">🔔 审批 <span id="approval-count">0</span></button>
   <!-- 主题快捷切换:浅色 → 深色 → 跟随系统 循环(配置里的下拉框同步) -->
-  <button class="icon-btn theme-btn" id="btn-theme" title="切换主题:浅色 / 深色 / 跟随系统">🖥 跟随系统</button>
-  <button class="icon-btn" id="btn-settings">⚙ 配置</button>
+  <button class="icon-btn theme-btn" id="btn-theme" title="切换主题:浅色 / 深色 / 跟随系统"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/></svg><span class="lbl">跟随系统</span></button>
+  <button class="icon-btn" id="btn-settings"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5h8M16.6 8.5H20M4 15.5h3.4M11.6 15.5H20"/><circle cx="14" cy="8.5" r="2.4"/><circle cx="9.6" cy="15.5" r="2.4"/></svg><span class="lbl">配置</span></button>
 </header>
 
   <section class="chat">
@@ -2260,7 +2277,9 @@ function refreshThemeUI() {
   const suffix = m === "system" ? "(" + eff + ")" : "";
   const btn = document.getElementById("btn-theme");
   if (btn) {
-    btn.textContent = ui.icon + " " + ui.label + suffix;
+    const _lbl = btn.querySelector(".lbl");
+    if (_lbl) _lbl.textContent = ui.label + suffix;
+    else btn.textContent = ui.icon + " " + ui.label + suffix;
     btn.title = "当前:" + ui.label + suffix + " · 点击切换(浅色 / 深色 / 跟随系统)";
   }
   const sel = document.getElementById("c-theme");
