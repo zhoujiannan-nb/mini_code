@@ -1020,12 +1020,18 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .c-avatar {
   width: var(--msg-avatar); height: var(--msg-avatar); flex: 0 0 var(--msg-avatar);
   border-radius: var(--r-sm); overflow: hidden;
-  border: 1px solid var(--border); background: var(--surface); padding: 3px;
+  /* 描边用 box-shadow 画在盒子外:border/padding 会占掉 30px 里的空间,
+     图片只剩 28px 甚至 22px,和左边实心的 agent 头像一比就明显小一圈、还偏。
+     现在图片正好铺满 30×30,两侧头像视觉尺寸完全一致。 */
+  box-shadow: inset 0 0 0 1px var(--border); background: var(--surface);
 }
-.c-avatar img { width: 100%; height: 100%; display: block; }
+.c-avatar img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .c-avatar-fallback {
   width: var(--msg-avatar); height: var(--msg-avatar); flex: 0 0 var(--msg-avatar);
-  border-radius: var(--r-sm); border: 1px solid transparent;
+  /* 与 .c-avatar 同一套盒子:无 border/padding,彩色铺满 30×30。
+     左侧 agent 与右侧"你"必须一样大,1px 的 border 都会让人看出偏差。 */
+  box-sizing: border-box;
+  border-radius: var(--r-sm); border: none;
   display: flex; align-items: center; justify-content: center;
   font-size: 15px; font-weight: 700; color: #fff;
 }
