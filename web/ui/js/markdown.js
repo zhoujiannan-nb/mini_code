@@ -4,8 +4,67 @@
     - 代码块:深色底 + 语言标签 + 复制按钮;json 自动美化 + 高亮
     - 整条消息就是 JSON(无围栏)时,也直接按 json 代码块渲染
     - 安全:所有文本先转义再插 HTML;未闭合的代码围栏(流式输出中)也能正确兜底 */
- function escFast(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
- function mdEscRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+  function escFast(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function mdEscRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+  // mdUnescape 把 escFast 的三个实体还原:检测路径用原文更准,
+  // 写进 data-* 时再由 esc() 统一转义。
+  function mdUnescape(s) {
+    return String(s).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  }
+
+  /* ---------------- 聊天里的文件路径:点了就打开 ---------------- */
+  // 模型经常把产物路径直接写进回复("改好了:D:\proj\index.html"),
+  // 以前只能自己复制到资源管理器。这里把这种路径变成可点的链接,
+  // 点击交给 /api/fs/open,由服务端用系统默认程序打开。
+  const MD_FILE_EXT = /\.(html?|xhtml|css|scss|sass|less|js|mjs|cjs|jsx|ts|tsx|json|jsonc|ya?ml|toml|ini|cfg|conf|xml|svg|md|markdown|txt|log|csv|tsv|pdf|docx?|xlsx?|pptx?|png|jpe?g|gif|webp|bmp|ico|avif|mp4|webm|mov|mp3|wav|ogg|flac|zip|rar|7z|gz|tar|exe|msi|dll|go|py|rb|rs|java|kt|c|h|cpp|hpp|cs|php|lua|sh|bat|cmd|ps1|sql|db|sqlite3?|vue|svelte|astro)$/i;
+
+  // mdIsFilePath 判断一段文本是不是"用户可以点开"的路径。
+  // 判据刻意保守 —— 宁可漏一个,也别把 `and/or`、`1/2`、`2026/10/27`
+  // 变成点一下就报错的红字:
+  //   绝对(盘符/UNC//x/./x/../x/~/x)一律算;
+  //   带分隔符的相对路径必须落在已知扩展名上(web/ui/index.html);
+  //   单个文件名(README.md)也必须带已知扩展名。
+  function mdIsFilePath(raw) {
+    const p = mdUnescape(String(raw == null ? "" : raw)).trim();
+    if (!p || p.length > 260) return false;
+    if (/^[a-z][a-z0-9+.\-]*:\/\//i.test(p)) return false; // http/https/... 交给 URL 逻辑
+    if (/[\s<>"\u0000|]/.test(p)) return false;            // 有空格/标签残留:不是单个路径
+    if (/[?*]/.test(p)) return false;                      // 通配符/疑问,不是具体文件
+    if (/^[a-z]:[\\/]/i.test(p)) return true;              // D:\... / D:/...
+    if (/^(\\\\|\/|\.{1,2}[\\/]|~[\\/])/.test(p)) return true; // UNC、/abs、./、../、~/
+    // 其余按相对路径:有分隔符的靠扩展名区分,单文件名必须带扩展名
+    return MD_FILE_EXT.test(p);
+  }
+
+  // fileOpenLinkHTML 生成一个可点路径的链接。asCode=true 时在链接里套 <code>,
+  // 让 `反引号里的路径` 保持原来的等宽观感。
+  function fileOpenLinkHTML(raw, wrapOpen, labelText) {
+    const path = mdUnescape(String(raw == null ? "" : raw)).trim();
+    const shown = labelText != null ? mdUnescape(labelText) : path;
+    const inner = wrapOpen ? wrapOpen + escFast(shown) + "</code>" : escFast(shown);
+    return '<a class="md-file" role="button" tabindex="0" title="点击打开 ' + esc(path) +
+      '" data-file="' + esc(path) + '">' + inner + "</a>";
+  }
+
+  // mdLinkifyPaths 在已转义的纯文本里把裸路径替换成链接。
+  // 只在"还没有标签"的阶段调用(行内代码/图片/链接已进 stash),所以不会咬到 HTML。
+  // 裸文本只认"明确像路径"的写法:盘符/UNC/绝对/./../~/ 开头,
+  // 或带分隔符的相对路径(web/ui/index.html)。单个文件名(main.go)不动 ——
+  // 正文里提到 main.go 太常见,全变红字反而吵;要打开就包反引号或用链接。
+  function mdLinkifyPaths(s, keep) {
+    if (s.indexOf(":") < 0 && s.indexOf("/") < 0 && s.indexOf("\\") < 0) return s;
+    const re = /(?:[a-z]:[\\/]|\\\\|\/|\.{1,2}[\\/]|~[\\/])[^\s<>"'`|]*[^\s<>"'`|.,;:!?)\]}]|[\w.\-]+[\\/][^\s<>"'`|]*[^\s<>"'`|.,;:!?)\]}]/gi;
+    return s.replace(re, (m, off, str) => {
+      // 前面紧贴字母数字或冒号的内容不是路径起点(a/b 里的 /、http: 后的 //)
+      const prev = off > 0 ? str[off - 1] : "";
+      if (/[0-9a-z_\-:.]/i.test(prev)) return m;
+      if (!mdIsFilePath(m)) return m;
+      const trail = /[.,;:!?]$/.exec(m);
+      const path = trail ? m.slice(0, -1) : m;
+      return keep(fileOpenLinkHTML(path, null)) + (trail ? trail[0] : "");
+    });
+  }
+
  // 语言别名归一(代码块高亮用)
  const MD_LANG_ALIAS = {
    javascript: "js", jsx: "js", typescript: "ts", tsx: "ts", python: "py", python3: "py",
@@ -91,18 +150,26 @@
      '<button type="button" class="cb-copy">复制</button></div>' +
      '<pre class="cb-pre"><code>' + body + "</code></pre></div>";
  }
- // 行内 Markdown:先转义,再 行内代码→图片→链接→加粗→斜体→删除线→裸 URL
- function inlineMd(raw) {
-   let s = escFast(raw);
-   const stash = [];
-   const keep = (html) => { stash.push(html); return "\u0000" + (stash.length - 1) + "\u0000"; };
-   s = s.replace(/``([\s\S]+?)``|`([^`\n]+)`/g, (m, a, b) => keep("<code>" + (a != null ? a : b) + "</code>"));
+  // 行内 Markdown:先转义,再 行内代码→图片→链接→加粗→斜体→删除线→裸路径→裸 URL
+  function inlineMd(raw) {
+    let s = escFast(raw);
+    const stash = [];
+    const keep = (html) => { stash.push(html); return "\u0000" + (stash.length - 1) + "\u0000"; };
+    // `反引号里的路径` 也做成可点:模型几乎总把路径包在反引号里,
+    // 只给裸路径加链接的话,最常见的那种写法反而点不了。
+    s = s.replace(/``([\s\S]+?)``|`([^`\n]+)`/g, (m, a, b) => {
+      const code = a != null ? a : b;
+      return keep(mdIsFilePath(code) ? fileOpenLinkHTML(code, "<code>") : "<code>" + code + "</code>");
+    });
    s = s.replace(/!\[([^\]]*)\]\(\s*(https?:[^)\s"']+)(?:\s+\"[^\"]*\")?\s*\)/g,
      (m, alt, url) => keep('<img class="md-img" src="' + url + '" alt="' + alt + '">'));
    s = s.replace(/\[([^\]]+)\]\(\s*([^)\s"']+)(?:\s+\"[^\"]*\")?\s*\)/g, (m, txt, url) => {
      if (/^\s*(javascript|data|vbscript):/i.test(url)) return m; // 危险协议不转链接
+     // [在浏览器打开](D:\proj\index.html):本地路径同样是"点了就打开"
+     if (mdIsFilePath(url)) return keep(fileOpenLinkHTML(url, null, txt));
      return '<a href="' + url + '" target="_blank" rel="noopener">' + txt + "</a>";
    });
+   s = mdLinkifyPaths(s, keep);
    s = s.replace(/\*\*([^\s*](?:[^*]*[^\s*])?)\*\*/g, "<strong>$1</strong>");
    s = s.replace(/(^|[^_])__(?!_)([^\s_](?:[^_]*[^\s_])?)__(?![\w])/g, (m, p, c) => p + "<strong>" + c + "</strong>");
    s = s.replace(/(^|[^*\w])\*(?!\s)([^*\n]*?[^\s*])\*(?![\w*])/g, (m, p, c) => p + "<em>" + c + "</em>");
@@ -308,6 +375,37 @@
     btn.classList.add("ok");
     clearTimeout(btn._t);
     btn._t = setTimeout(() => { btn.textContent = old; btn.classList.remove("ok"); }, 1200);
+  });
+
+  /* ---------------- 聊天里的文件路径:点了就用系统程序打开 ---------------- */
+  // 相对路径按当前会话的工作目录解析(对话说的项目 ≠ 服务进程的 cwd)。
+  async function openFilePath(path) {
+    const p = String(path || "").trim();
+    if (!p) return;
+    try {
+      await api("/api/fs/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: p, base: state.workDir || "" }),
+      });
+      toast("已打开 " + p, "ok");
+    } catch (e) {
+      toast("打开失败:" + e.message, "err");
+    }
+  }
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest(".md-file");
+    if (!a) return;
+    e.preventDefault();
+    openFilePath(a.dataset.file || a.textContent);
+  });
+  // 键盘同样可用:它是一个 role=button 的链接
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const a = e.target.closest && e.target.closest(".md-file");
+    if (!a) return;
+    e.preventDefault();
+    openFilePath(a.dataset.file || a.textContent);
   });
 function toast(msg, kind) {
   const t = $("#toast");

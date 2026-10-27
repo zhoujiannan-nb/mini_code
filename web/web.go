@@ -22,6 +22,7 @@ import (
 	"github.com/user/mini_code/approval"
 	"github.com/user/mini_code/channels"
 	"github.com/user/mini_code/config"
+	"github.com/user/mini_code/plugin"
 	"github.com/user/mini_code/provider"
 	"github.com/user/mini_code/session"
 	"github.com/user/mini_code/util"
@@ -79,6 +80,11 @@ type server struct {
 func NewServer(be Backend) http.Handler {
 	s := &server{be: be, static: embeddedPage, dirs: NewDirIndex()}
 	go s.dirs.Run(context.Background())
+	// Start the process plugins that asked for autostart. It runs in the
+	// background so a slow plugin (a python service taking 3s to bind its port)
+	// never delays the UI from coming up. A failure is logged and ignored: a
+	// broken plugin must not stop the agent from starting.
+	go plugin.DefaultProcs().StartAutostart()
 	mux := http.NewServeMux()
 
 	// --- web UI ---
@@ -89,14 +95,31 @@ func NewServer(be Backend) http.Handler {
 
 	// --- plugins (file-based drop-ins under ~/.mini_code/plugins) ---
 	mux.HandleFunc("GET /plugins/", s.handlePluginAsset)
-	mux.HandleFunc("GET /api/plugins", s.handlePluginsList)
+	// Plugin centre: one list for the settings page (installed + switched off),
+	// plus toggles, uninstall and process control for kind-1 plugins.
+	mux.HandleFunc("GET /api/plugins", s.handlePluginCentreList)
+	mux.HandleFunc("POST /api/plugins/{id}/toggle", s.handlePluginToggle)
+	mux.HandleFunc("DELETE /api/plugins/{id}", s.handlePluginUninstall)
+	mux.HandleFunc("GET /api/plugins/processes", s.handlePluginProcessList)
+	mux.HandleFunc("POST /api/plugins/{id}/process", s.handlePluginProcessAction)
+	mux.HandleFunc("GET /api/plugins/{id}/logs", s.handlePluginProcessLogs)
+	mux.HandleFunc("GET /api/plugins/catalog", s.handlePluginCatalog)
+	mux.HandleFunc("POST /api/plugins/install", s.handlePluginInstall)
+	mux.HandleFunc("GET /api/plugins/prompt", s.handlePluginMakePrompt)
 
-	// --- startup animation themes (untrusted third-party HTML, see bootanim.go) ---
+	// --- startup animation clips (untrusted third-party HTML, see bootanim.go) ---
+	//
+	// A clip IS an appearance plugin with a "boot" block, so there is no separate
+	// installer here anymore: clips are installed, toggled and uninstalled
+	// through /api/plugins/*. Only the document route and the "what is
+	// installed" list survive.
 	mux.HandleFunc("GET /bootanim/", s.handleBootAnimAsset)
 	mux.HandleFunc("GET /api/bootanim", s.handleBootAnimList)
-	mux.HandleFunc("GET /api/bootanim/remote", s.handleBootAnimRemote)
-	mux.HandleFunc("POST /api/bootanim/install", s.handleBootAnimInstall)
-	mux.HandleFunc("DELETE /api/bootanim/{id}", s.handleBootAnimDelete)
+	// The play settings (on/off, when, speed, mute) are edited from a boot
+	// plugin's detail pane, so they get their own tiny endpoint: posting the
+	// whole config from there would mean shipping the model list and the API
+	// keys just to turn a checkbox.
+	mux.HandleFunc("PUT /api/bootanim", s.handleBootAnimSave)
 
 	// --- API ---
 	mux.HandleFunc("GET /api/healthz", s.handleHealthz)
@@ -134,6 +157,9 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("POST /api/llm/models", s.handleListModels)
 	mux.HandleFunc("POST /api/llm/probe", s.handleProbeModel)
 	mux.HandleFunc("GET /api/fs/search", s.handleFsSearch)
+	// A path in a chat message is clickable: the UI posts it here and the OS
+	// opens it with its default application (see fsopen.go).
+	mux.HandleFunc("POST /api/fs/open", s.handleFsOpen)
 	mux.HandleFunc("GET /api/approvals", s.handleListApprovals)
 	mux.HandleFunc("POST /api/approvals/{id}/decision", s.handleApprovalDecision)
 

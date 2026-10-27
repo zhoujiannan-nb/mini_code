@@ -71,6 +71,7 @@ const state = {
   sessions: [],
   archived: [],     // 已归档会话(不在主会话列表显示;侧边栏"已归档"分区,平常收起)
   current: null,      // 当前会话 id,null = 新会话
+  workDir: "",        // 当前会话的工作目录(聊天里的相对路径按它解析)
   userAvatar: "",     // 用户头像 data URL(全局,存服务端配置;"" = 首字+哈希色回退)
   running: false,     // 当前会话是否有活动任务(以服务端为准)
    pendingTask: null,  // 等待 session_created 的 task_id

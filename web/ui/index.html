@@ -84,10 +84,9 @@ var __mcBoot = (function () {
   function entryURL() {
     // 宿主说了算的参数放前面,主题自己的 options 只补缺:同名键不重复拼,
     // 免得 URLSearchParams.get(取第一个)读到两份值。
-    var q = "?speed=" + encodeURIComponent(cfg.speed || 1) +
-      "&interactive=" + (cfg.interactive ? 1 : 0) + "&mute=" + (cfg.mute ? 1 : 0);
+    var q = "?interactive=" + (cfg.interactive ? 1 : 0) + "&mute=" + (cfg.mute ? 1 : 0);
     if (cfg.name) q += "&name=" + encodeURIComponent(cfg.name);
-    var seen = { speed: 1, interactive: 1, mute: 1, name: 1 };
+    var seen = { interactive: 1, mute: 1, name: 1 };
     var o = cfg.options || {};
     Object.keys(o).sort().forEach(function (k) {
       if (seen[k]) return;
@@ -215,6 +214,7 @@ window.__mcBoot = __mcBoot;
 <style>
 @import url("/css/base.css");
 @import url("/css/layers.css");
+@import url("/css/plugins.css");
 </style>
 <!--mc-plugin-assets-->
 </head>
@@ -395,39 +395,52 @@ window.__mcBoot = __mcBoot;
     <div class="set-body">
       <!-- 一级导航:分类。二级:右侧当前分类的内容,切换只改 .active,不动表单 id -->
       <nav class="set-nav" id="set-nav">
-        <button class="set-nav-item active" data-page="page-appearance"><span class="ni">🎨</span>外观</button>
-        <button class="set-nav-item" data-page="page-profile"><span class="ni">👤</span>个人信息</button>
+        <button class="set-nav-item active" data-page="page-appearance"><span class="ni">🎨</span>外观与启动</button>
         <button class="set-nav-item" data-page="page-model"><span class="ni">🧠</span>模型<span class="set-nav-count" id="set-model-count"></span></button>
-        <button class="set-nav-item" data-page="page-web"><span class="ni">🌐</span>Web 服务</button>
-        <button class="set-nav-item" data-page="page-plugins"><span class="ni">🧩</span>插件</button>
-        <button class="set-nav-item" data-page="page-boot"><span class="ni">🎬</span>开机动画</button>
+        <button class="set-nav-item" data-page="page-plugins"><span class="ni">🧩</span>插件中心</button>
       </nav>
-      <div class="set-main">
-        <div class="set-scroll">
+        <div class="set-main">
+          <div class="set-scroll">
           <section class="set-page active" id="page-appearance">
-            <h3>外观</h3>
-            <p class="set-desc">主题立即生效并记在本地,与顶栏「🖥」按钮是同一个开关。</p>
-            <div class="frow hinted"><label>主题</label>
-              <select id="c-theme">
-                <option value="system">跟随系统</option>
-                <option value="light">浅色</option>
-                <option value="dark">深色</option>
-              </select>
-              <span class="hint">立即生效并记住,不用点"保存配置"</span>
+            <h3>外观与启动</h3>
+
+            <div class="pl-sec">
+              <div class="pl-sec-title">主题</div>
+              <div class="frow hinted"><label>主题</label>
+                <select id="c-theme">
+                  <option value="system">跟随系统</option>
+                  <option value="light">浅色</option>
+                  <option value="dark">深色</option>
+                </select>
+                <span class="hint">立即生效,不用保存</span>
+              </div>
+              <div class="frow hinted"><label>用户头像</label>
+                <div class="u-flex u-gap10">
+                  <span id="c-user-ava"></span>
+                  <button class="mode-btn" id="btn-user-ava">上传 / 更换头像</button>
+                </div>
+                <span class="hint">jpg / png / webp,≤4MB,裁成方形</span>
+              </div>
+            </div>
+
+            <div class="pl-sec">
+              <div class="pl-sec-title">启动</div>
+              <div class="frow hinted"><label>Web 端口</label>
+                <input type="number" id="w-port">
+                <span class="hint">改完需重启</span>
+              </div>
+              <div id="w-url-line" class="pl-url-line"></div>
+            </div>
+
+            <div class="pl-sec">
+              <div class="pl-sec-title">开机动画</div>
+              <div class="frow"><label>当前</label>
+                <span id="a-boot-summary" class="hint">—</span>
+              </div>
+              <button class="mode-btn" id="a-boot-goto">去插件中心设置 →</button>
             </div>
           </section>
 
-          <section class="set-page" id="page-profile">
-            <h3>个人信息</h3>
-            <p class="set-desc">头像显示在消息气泡旁和自己的会话入口;上传后立即写入配置。</p>
-            <div class="frow hinted"><label>用户头像</label>
-              <div class="u-flex u-gap10">
-                <span id="c-user-ava"></span>
-                <button class="mode-btn" id="btn-user-ava">上传 / 更换头像</button>
-              </div>
-              <span class="hint">jpg / png / webp,≤4MB,自动裁为 256×256;未设置时显示"首字 + 哈希色"</span>
-            </div>
-          </section>
 
           <section class="set-page" id="page-model">
             <h3>模型</h3>
@@ -438,98 +451,79 @@ window.__mcBoot = __mcBoot;
             <div class="frow"><label>默认模型</label><select id="c-default-model"></select></div>
           </section>
 
-          <section class="set-page" id="page-web">
-            <h3>Web 服务</h3>
-            <p class="set-desc">浏览器访问 http://本机地址:端口 用的监听端口。</p>
-            <div class="frow hinted"><label>Web 端口</label><input type="number" id="w-port"><span class="hint">修改需重启生效</span></div>
-          </section>
-
           <section class="set-page" id="page-plugins">
-            <h3>插件</h3>
-            <p class="set-desc">
-              插件是放在 <code>~/.mini_code/plugins/&lt;id&gt;/</code> 里的一个目录,里面放一个
-              <code>plugin.json</code> 即可。装好后点「重新扫描」立即生效,不用重启、不用改页面。
-              核心保持在核心:agent 循环、权限闸门、上下文压缩、内置工具都不能被插件替换,
-              插件只能<b>追加</b>工具和外观。
-            </p>
-            <div class="boot-bar u-mt14">
-              <b class="boot-bar-label">已安装</b>
-              <span class="hint" id="pl-dir-now"></span>
-              <button class="mode-btn" id="pl-reload">重新扫描</button>
+            <h3>插件中心</h3>
+
+            <!-- 统一页签:只有"装了什么"和"能装什么",没有按类型分的第四、第五个页签。
+                 三类插件用同一种卡片,区别只在卡片上的 tag —— 分类是标签,不是布局。 -->
+            <div class="pl-tabs">
+              <button class="pl-tab active" data-tab="installed">已安装</button>
+              <button class="pl-tab" data-tab="market">插件市场</button>
             </div>
-            <div id="pl-list" class="boot-grid"></div>
-            <div class="boot-bar u-mt20">
-              <b class="boot-bar-label">可放的内容</b>
+
+            <!-- ========== 已安装 ========== -->
+            <div class="pl-pane active" id="pl-pane-installed">
+              <!-- 造一个:三类插件各自的入口。默认收起 —— 已经装好插件的人每次进来
+                   都要先滚过这块,才看得到自己的列表;要造的时候点一下展开。 -->
+              <details class="pl-make" id="pl-make-box">
+                <summary class="pl-make-title">＋ 造一个插件
+                  <span class="pl-make-sub">让 agent 按标准契约给你写</span>
+                </summary>
+                <div class="pl-make-body">
+                  <div class="pl-make-sub">点一下会新建会话并把提示词填进输入框,你改完再发。</div>
+                  <div class="pl-make-row">
+                    <button class="pl-make-btn" data-make="process">
+                      <span class="pm-icon">⚙️</span>
+                      <span class="pm-name">程序插件</span>
+                      <span class="pm-hint">启动外部 exe / python 服务,可暴露给模型查状态</span>
+                    </button>
+                    <button class="pl-make-btn" data-make="tool">
+                      <span class="pm-icon">🔧</span>
+                      <span class="pm-name">工具插件</span>
+                      <span class="pm-hint">给模型追加一个工具(像网页搜索那样)</span>
+                    </button>
+                    <button class="pl-make-btn" data-make="appearance">
+                      <span class="pm-icon">🎨</span>
+                      <span class="pm-name">外观插件</span>
+                      <span class="pm-hint">皮肤 / 壁纸 / 插槽 / 动画 / 开机画面</span>
+                    </button>
+                  </div>
+                </div>
+              </details>
+
+              <!-- 已装:一个插件一张卡(和「模型」页同一套卡片),点进去看详情。
+                   卡片上只有:图标 + 名字 + 分类 tag + 一行描述 + 一行状态。
+                   状态/按钮/播放设置/目录都在详情那一屏,所以网格永远是一屏。 -->
+              <div class="pl-bar">
+                <span class="pl-bar-title">已安装 <b id="pl-count">0</b></span>
+                <select id="pl-filter" class="pl-filter">
+                  <option value="">全部</option>
+                  <option value="process">程序</option>
+                  <option value="tool">工具</option>
+                  <option value="appearance">外观</option>
+                </select>
+                <button class="mode-btn" id="pl-reload">重新扫描</button>
+              </div>
+              <div class="pl-dirbar">目录 <code id="pl-dir-now"></code></div>
+              <div id="pl-list" class="pl-grid" role="list"></div>
+              <div id="pl-detail" class="pl-detail" hidden></div>
             </div>
-            <div class="pl-hint">
-              <div><code>tools</code> — 追加工具(命令 + stdin 传 JSON 参数)</div>
-              <div><code>styles</code> — 皮肤 CSS,注入在内置样式之后</div>
-              <div><code>wallpaper</code> — 聊天区背景图</div>
-              <div><code>memory</code> — 追加到系统提示的备注(markdown)</div>
-              <div><code>bootanim</code> — 开机动画主题,见上一栏</div>
+
+            <!-- ========== 插件市场 ========== -->
+            <div class="pl-pane" id="pl-pane-market">
+              <div class="pl-bar">
+                <span class="pl-bar-title">插件市场</span>
+                <select id="pl-market-kind" class="pl-filter">
+                  <option value="">全部</option>
+                </select>
+                <button class="mode-btn" id="pl-market-fetch">刷新</button>
+              </div>
+              <div class="pl-dirbar" id="pl-market-msg">从插件仓库读取可下载的插件</div>
+              <div id="pl-market-list" class="pl-grid" role="list"></div>
+              <div id="pl-market-detail" class="pl-detail" hidden></div>
             </div>
           </section>
 
-          <section class="set-page" id="page-boot">
-            <h3>开机动画</h3>
-            <p class="set-desc">打开窗口时先播一段主题动画再交还界面。主题是本地目录里的一堆静态网页,也可从插件仓库在线下载。按 Esc 或点空白处随时跳过。</p>
-            <div class="frow hinted"><label>启用</label>
-              <label class="ck-row"><input type="checkbox" id="b-enabled">播放开机动画</label>
-              <span class="hint">没安装主题时不会播放</span>
-            </div>
-            <div class="frow"><label>播放时机</label>
-              <select id="b-mode">
-                <option value="session">每个浏览器会话一次</option>
-                <option value="always">每次打开窗口都播</option>
-                <option value="daily">每天一次</option>
-              </select>
-            </div>
-            <div class="frow hinted"><label>速度</label>
-              <select id="b-speed">
-                <option value="0.5">很慢 0.5×</option>
-                <option value="0.75">慢 0.75×</option>
-                <option value="1">正常 1×</option>
-                <option value="1.5">快 1.5×</option>
-                <option value="2">很快 2×</option>
-              </select>
-              <span class="hint">按比例加快/放慢主题自己的时间轴</span>
-            </div>
-            <div class="frow hinted"><label>身份名</label>
-              <input type="text" id="b-name" maxlength="48" placeholder="留空用主题默认">
-              <span class="hint">动画里显示的名字</span>
-            </div>
-            <div class="frow hinted"><label>片尾可交互</label>
-              <label class="ck-row"><input type="checkbox" id="b-interactive">动画结束后仍可动</label>
-              <span class="hint">只对声明支持的主题有效;开启后无法用点击跳过</span>
-            </div>
-            <div class="frow hinted"><label>声音</label>
-              <label class="ck-row"><input type="checkbox" id="b-mute">静默</label>
-              <span class="hint">带语音的主题(如「接入序列」)默认出声;勾上后连音频都不会加载</span>
-            </div>
-            <div class="frow hinted"><label>主题目录</label>
-              <input type="text" id="b-dir" placeholder="~/.mini_code/boot-anim">
-              <span class="hint">留空用默认;可指到自己的 git 检出目录</span>
-            </div>
-            <div class="frow hinted"><label>插件仓库</label>
-              <input type="text" id="b-repo" placeholder="zhoujiannan-nb/mini_code-plugins">
-              <span class="hint">下载来源(GitHub owner/name)</span>
-            </div>
-
-            <div class="boot-bar u-mt14">
-              <b class="boot-bar-label">已安装</b>
-              <span class="hint" id="b-dir-now"></span>
-              <button class="mode-btn" id="b-reload">重新扫描</button>
-              <button class="mode-btn" id="b-preview">&#9654; 预览一次</button>
-            </div>
-            <div id="b-local" class="boot-grid"></div>
-
-            <div class="boot-bar u-mt20">
-              <b class="boot-bar-label">在线获取</b>
-              <button class="mode-btn" id="b-fetch">获取列表</button>
-              <span class="hint" id="b-remote-msg">点「获取列表」从插件仓库读取可下载的主题</span>
-            </div>
-            <div id="b-remote" class="boot-grid"></div>
-          </section>
         </div>
         <div class="modal-actions">
           <button class="btn" id="btn-cancel">取消</button>
@@ -572,7 +566,9 @@ window.__mcBoot = __mcBoot;
 <script src="/js/tasks.js"></script>
 <script src="/js/status.js"></script>
 <script src="/js/settings.js"></script>
+<script src="/js/plugevents.js"></script>
 <script src="/js/plugins.js"></script>
+<script src="/js/pluginruntime.js"></script>
 <script src="/js/bootanim.js"></script>
 <script src="/js/usage.js"></script>
 <script src="/js/fspicker.js"></script>

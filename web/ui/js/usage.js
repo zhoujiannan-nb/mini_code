@@ -142,6 +142,7 @@ async function updateTokenUsage() {
 }
   function resetToNew() {
     state.current = null;
+    state.workDir = "";   // 新会话还没有目录:相对路径的链接会提示缺少基准目录
     state.pendingTask = null;
     clearSending();
     saveSession(null);
@@ -172,6 +173,7 @@ async function updateTokenUsage() {
   renderTasksPanel();
 }
 async function selectSession(id) {
+  mcEmit("session");
   if (state.currentGroup) exitGroupView();
   state.current = id;
   liveRemove();
@@ -180,6 +182,8 @@ async function selectSession(id) {
     const data = await api("/api/sessions/" + id);
     if (state.current !== id) return; // 等待期间又切走了,丢弃过期响应
     const s = data.session;
+    // 工作目录:聊天里的相对路径要按它解析(不是服务进程的 cwd)
+    state.workDir = s.work_dir || "";
     setChatTitle(s.title || "会话 " + id.slice(0, 8), (s.work_dir || "").slice(0, 60));
     // await 期间该会话若在运行,delta 可能已建好流式块/转圈——renderHistory
     // 会清空整个容器使引用悬空,重绘前再清一次(流式是累积下发,下个 delta 自动补齐)

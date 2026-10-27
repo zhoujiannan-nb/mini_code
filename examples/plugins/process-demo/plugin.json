@@ -1,0 +1,26 @@
+{
+  "id": "process-demo",
+  "name": "本地小服务(程序插件示例)",
+  "version": "1.0.0",
+  "author": "mini_code",
+  "description": "第一类(程序)示例:mini_code 启动并保活一个 python HTTP 服务,带健康检查,并把它暴露给模型 —— 模型可以用 plugin_proc__process_demo 查它的状态、PID、日志尾巴。",
+  "enabled": false,
+  "kind": "process",
+  "process": {
+    "command": "python",
+    "args": ["server.py"],
+    "autostart": true,
+    "restart": "on-failure",
+    "ready_timeout_seconds": 20,
+    "description": "一个演示用的小 HTTP 服务,/healthz 与 /info",
+    "env": ["PORT=8731"],
+    "health_check": {
+      "type": "http",
+      "url": "http://127.0.0.1:8731/healthz"
+    },
+    "expose": {
+      "tool": true,
+      "endpoint": "http://127.0.0.1:8731"
+    }
+  }
+}

@@ -1,193 +1,124 @@
-/* ---------------- 设置:开机动画 ---------------- */
-// 表单值只存在控件里,和模型区一样要点「保存配置」才写回服务端。
-// bootState 记的是"目录里有什么",picked 是当前选中的主题 id。
-const bootState = { dir: "", local: [], remote: null, picked: "" };
+/* ---------------- 开机动画(设置侧) ----------------
+   开机动画是一个「外观插件」多声明一个 `boot` 字段(见 plugin/boot.go 与
+   web/bootanim.go)。所以设置页里它不再有自己的表单:装、选、开、调全在
+   插件中心那张卡的详情里,外观页只留一句状态 + 一个跳转。
 
-function bootForm() {
+   这里剩下的是三件纯数据的事:
+     1. bootLoadLocal()  读"装了哪些、当前是哪个、当前怎么播"(GET /api/bootanim);
+     2. bootPick(id)     把某个动画设为当前(CONFIG → 插件详情里的那一下);
+     3. bootPlay/Preview 立刻播一遍,不用等下次启动。
+
+   注意 play 设置(启用/时机/静默)走 PUT /api/bootanim 的**局部更新**接口,
+   而不是 PUT /api/config —— 后者要求整份配置(含模型与 API key),在插件详情里
+   提交它既不必要也不安全。 */
+
+const bootState = { dir: "", legacyDir: "", themes: [], picked: "", play: null };
+
+// bootPlaySettings 返回当前播放设置(服务端为准,拿不到就用保守默认值)。
+function bootPlaySettings() {
+  const p = bootState.play || {};
   return {
-    enabled: $("#b-enabled").checked,
-    theme: bootState.picked || "",
-    mode: $("#b-mode").value || "session",
-    speed: Number($("#b-speed").value) || 1,
-    name: $("#b-name").value.trim(),
-    interactive: $("#b-interactive").checked,
-    mute: $("#b-mute").checked,
-    dir: $("#b-dir").value.trim(),
-    repo: $("#b-repo").value.trim(),
+    enabled: !!p.enabled,
+    mode: p.mode || "session",
+    mute: !!p.mute,
   };
 }
-function bootFillForm(ba) {
-  ba = ba || {};
-  bootState.picked = ba.theme || "";
-  $("#b-enabled").checked = !!ba.enabled;
-  $("#b-mode").value = ba.mode || "session";
-  // 配置里可能是手写的任意倍速,下拉里没有就取最接近的一档
-  const sp = Number(ba.speed) > 0 ? Number(ba.speed) : 1;
-  const opts = Array.prototype.map.call($("#b-speed").options, (o) => Number(o.value));
-  let best = opts[0] || 1;
-  let dist = Infinity;
-  opts.forEach((v) => {
-    if (v <= 0) return;
-    const dv = Math.abs(Math.log(v / sp));
-    if (dv < dist) { dist = dv; best = v; }
-  });
-  $("#b-speed").value = String(best);
-  $("#b-name").value = ba.name || "";
-  $("#b-interactive").checked = !!ba.interactive;
-  $("#b-mute").checked = !!ba.mute;
-  $("#b-dir").value = ba.dir || "";
-  $("#b-repo").value = ba.repo || "";
+
+// bootApplyPlay 清空播放设置并让所有相关视图重画。
+function bootApplyPlay(play) {
+  bootState.play = play || null;
+  if (typeof renderPluginCentre === "function") renderPluginCentre();
+  if (typeof paintBootSummary === "function") paintBootSummary();
 }
-// 已安装主题卡片:点卡片选中,卡片上的按钮各自处理(停止冒泡交给 dataset 判断)。
-function renderBootLocal() {
-  const box = $("#b-local");
-  box.innerHTML = "";
-  if (!bootState.local.length) {
-    box.innerHTML = '<div class="boot-empty">这个目录里还没有可用的主题。到下面「在线获取」下载一个,' +
-      "或把主题文件夹放进:<br>" + esc(bootState.dir) + "</div>";
-    return;
-  }
-  bootState.local.forEach((t) => {
-    const bad = !!t.error;
-    const sel = !bad && t.id === bootState.picked;
-    const d = document.createElement("div");
-    d.className = "boot-tile" + (bad ? " bad" : "") + (sel ? " sel" : "");
-    d.innerHTML =
-      '<div class="bt-name">' + esc(t.name || t.id) +
-      (sel ? '<span class="bt-badge cur">当前</span>' : "") +
-      (t.version ? '<span class="bt-badge">v' + esc(t.version) + "</span>" : "") +
-      (!bad && t.durationMs ? '<span class="bt-badge">' + (Math.round(t.durationMs / 100) / 10) + "s</span>" : "") +
-      (t.interactive ? '<span class="bt-badge">可交互</span>' : "") + "</div>" +
-      '<div class="bt-desc">' + esc(t.description || t.id) + "</div>" +
-      (bad
-        ? '<div class="bt-err">无法播放:' + esc(t.error) + "</div>"
-        : '<div class="bt-foot"><button class="mode-btn" data-act="preview">预览</button>' +
-          '<button class="mode-btn" data-act="del">卸载</button></div>');
-    if (!bad) {
-      d.addEventListener("click", (e) => {
-        const act = e.target && e.target.dataset ? e.target.dataset.act : "";
-        if (act === "preview") { bootPreview(t); return; }
-        if (act === "del") { bootDelete(t); return; }
-        bootState.picked = t.id;
-        renderBootLocal();
-      });
-    }
-    box.appendChild(d);
-  });
-}
-function renderBootRemote() {
-  const box = $("#b-remote");
-  box.innerHTML = "";
-  if (!bootState.remote) return;
-  const list = bootState.remote.themes || [];
-  if (!list.length) {
-    box.innerHTML = '<div class="boot-empty">插件仓库里没有可用的主题</div>';
-    return;
-  }
-  list.forEach((t) => {
-    const d = document.createElement("div");
-    d.className = "boot-tile";
-    d.innerHTML =
-      '<div class="bt-name">' + esc(t.name || t.id) +
-      (t.version ? '<span class="bt-badge">v' + esc(t.version) + "</span>" : "") +
-      (t.durationMs ? '<span class="bt-badge">' + (Math.round(t.durationMs / 100) / 10) + "s</span>" : "") +
-      (t.installed ? '<span class="bt-badge cur">' + (t.latest ? "已安装" : "已装旧版") + "</span>" : "") +
-      (t.interactive ? '<span class="bt-badge">可交互</span>' : "") + "</div>" +
-      '<div class="bt-desc">' + esc(t.description || t.id) +
-      (t.author ? "<br>by " + esc(t.author) : "") + "</div>" +
-      '<div class="bt-foot"><button class="mode-btn" data-act="ins">' + (t.installed ? "重新安装" : "下载") + "</button></div>";
-    d.addEventListener("click", (e) => {
-      const act = e.target && e.target.dataset ? e.target.dataset.act : "";
-      if (act === "ins") bootInstall(t, e.target);
+
+// bootSavePlay 局部保存播放设置:只发这几个开关,不动模型配置。
+async function bootSavePlay(patch, msg) {
+  try {
+    const r = await api("/api/bootanim", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
     });
-    box.appendChild(d);
-  });
+    if (r && r.play) bootState.play = r.play;
+    if (msg) toast(msg, "ok");
+  } catch (e) {
+    toast("保存失败:" + e.message, "err");
+  }
+  await bootLoadLocal();
 }
+
+// bootLoadLocal 读"装了什么"(即启用的 boot 插件)+ 当前播放设置。
+// 插件中心的行、插件详情、外观页的摘要共用这一份数据,读一次就够。
 async function bootLoadLocal(msg) {
   try {
     const r = await api("/api/bootanim");
     bootState.dir = r.dir || "";
-    bootState.local = r.themes || [];
-    $("#b-dir-now").textContent = bootState.dir;
-    if (msg) $("#b-remote-msg").textContent = msg;
-    // 选中的主题被删掉了:回落到第一个还能播的,别留一个空选择。
-    if (bootState.picked && !bootState.local.some((t) => t.id === bootState.picked && !t.error)) {
+    bootState.legacyDir = r.legacy_dir || "";
+    bootState.themes = r.themes || [];
+    bootState.play = r.play || null;
+    // 选中的动画被删/被停用了:回落到第一个还能播的,别留一个空选择。
+    const play = bootPlaySettings();
+    if (play.theme !== undefined) bootState.picked = play.theme || bootState.picked;
+    if (bootState.picked && !bootState.themes.some((t) => t.id === bootState.picked && !t.error)) {
       bootState.picked = "";
     }
     if (!bootState.picked) {
-      const first = bootState.local.find((t) => !t.error);
+      const first = bootState.themes.find((t) => !t.error);
       if (first) bootState.picked = first.id;
     }
-    renderBootLocal();
+    paintBootSummary();
+    if (typeof renderPluginCentre === "function") renderPluginCentre();
+    if (msg) toast(msg, "ok");
   } catch (e) {
-    $("#b-local").innerHTML = '<div class="boot-empty">读取主题目录失败:' + esc(e.message) + "</div>";
+    bootState.themes = [];
+    bootState.play = null;
+    paintBootSummary();
+    toast("读取开机动画失败:" + e.message, "err");
   }
 }
-async function bootFetchRemote() {
-  const msg = $("#b-remote-msg");
-  msg.textContent = "正在从插件仓库获取列表…";
-  try {
-    const r = await api("/api/bootanim/remote");
-    bootState.remote = r;
-    renderBootRemote();
-    msg.textContent = "共 " + (r.themes || []).length + " 个主题 · " + (r.repo || "");
-  } catch (e) {
-    bootState.remote = null;
-    renderBootRemote();
-    msg.textContent = "获取失败:" + e.message;
-  }
+
+// bootPick 把某个 boot 插件设成当前播放的开机动画。
+// 这是"选动画"的唯一入口:插件详情里的那一下点击,等于写配置 + 记住选择。
+async function bootPick(id) {
+  bootState.picked = id;
+  await bootSavePlay({ theme: id, enabled: true }, "已设为开机动画");
 }
-async function bootInstall(t, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = "下载中…"; }
-  try {
-    const r = await api("/api/bootanim/install", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: t.id }),
-    });
-    toast(r.message || "已安装", "ok");
-    if (!bootState.picked) bootState.picked = t.id;
-    await bootLoadLocal();
-    if (bootState.remote) bootFetchRemote();
-  } catch (e) {
-    toast("安装失败:" + e.message, "err");
-    if (btn) { btn.disabled = false; btn.textContent = "下载"; }
-  }
+
+// 详情里的"启用"开关:关掉它等于"别播",动画本身还留着。
+async function bootSetEnabled(on) {
+  await bootSavePlay({ enabled: !!on }, on ? "已启用" : "已关闭");
 }
-async function bootDelete(t) {
-  if (!confirm("卸载主题「" + (t.name || t.id) + "」?会删除 " + bootState.dir + "\\" + t.id)) return;
-  try {
-    await api("/api/bootanim/" + encodeURIComponent(t.id), { method: "DELETE" });
-    if (bootState.picked === t.id) bootState.picked = "";
-    toast("已卸载", "ok");
-    await bootLoadLocal();
-    if (bootState.remote) bootFetchRemote();
-  } catch (e) {
-    toast("卸载失败:" + e.message, "err");
-  }
+
+// 播放时机:每个会话一次 / 每次都播 / 每天一次。
+async function bootSetMode(mode) {
+  await bootSavePlay({ mode: mode }, "播放时机已更新");
 }
-// 预览用当前表单值(还没保存的改动也立刻见效),无视播放策略与开关。
+
+// 静默:勾上以后主题连音频文件都不会请求。
+async function bootSetMute(on) {
+  await bootSavePlay({ mute: !!on }, on ? "已静音" : "已开启声音");
+}
+
+// bootPlay 立刻播一遍(不做播放策略判断)。
 function bootPlay(t) {
-  const f = bootForm();
-  const ok = window.__mcBoot && __mcBoot.play({
+  if (!window.__mcBoot || !t || t.error) return;
+  const play = bootPlaySettings();
+  const ok = window.__mcBoot.play({
     entry: "/bootanim/" + t.id + "/" + (t.entry || "index.html"),
-    speed: f.speed,
-    name: f.name,
-    interactive: f.interactive && !!t.interactive,
+    mute: play.mute,
+    interactive: false,
     durationMs: t.durationMs,
     maxMs: t.maxMs,
     minViewport: t.minViewport,
   });
-  if (!ok) toast("这个主题播不了(入口文件缺失)", "err");
+  if (!ok) toast("这个动画播不了(入口文件缺失)", "err");
 }
-function bootPreview(t) { bootPlay(t); }
-function initBootSettings() {
-  $("#b-reload").addEventListener("click", () => bootLoadLocal("已重新扫描"));
-  $("#b-fetch").addEventListener("click", bootFetchRemote);
-  $("#b-preview").addEventListener("click", () => {
-    const t = bootState.local.find((x) => x.id === bootState.picked && !x.error);
-    if (!t) { toast("先点一张卡片选一个已安装的主题", "err"); return; }
-    bootPlay(t);
-  });
+function bootPreview(id) {
+  bootPlay(bootState.themes.find((t) => t.id === id));
 }
 
+// initBootSettings 不再绑表单(外观页只剩摘要),保留这个入口是因为
+// settings.js 会调用它;真正的事件绑定在插件详情里。
+function initBootSettings() {
+  if (typeof paintBootSummary === "function") paintBootSummary();
+}

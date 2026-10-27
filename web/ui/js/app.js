@@ -225,4 +225,7 @@
     syncApprovals();
   }, 30000);
   $("#input").focus();
+  // 第三类插件:把 slot 摆到位、把宠物画出来、把动效绑上。
+  // 放在最后是因为它要读已经渲染好的 DOM 锚点;没装插件时整体是空操作。
+  if (typeof pluginRuntimeInit === "function") pluginRuntimeInit();
 })();

@@ -1,0 +1,24 @@
+{
+  "id": "skin-aurora",
+  "name": "极光(外观示例)",
+  "version": "1.0.0",
+  "author": "mini_code",
+  "description": "第三类(外观)完整示例:一个 CSS 皮肤 + 一条输入框下方的 HTML 条 + 强调色。演示 styles / ui.slots / ui.accent 三个字段可以同时用,全程没有一行 JavaScript。",
+  "enabled": false,
+  "kind": "appearance",
+  "styles": ["skin.css"],
+  "ui": {
+    "accent": "#6be3b0",
+    "slots": [
+      {
+        "slot": "composer-bar",
+        "html": "bar.html",
+        "height": 40
+      }
+    ],
+    "motion": [
+      { "event": "send", "class": "flash" },
+      { "event": "error", "class": "shake" }
+    ]
+  }
+}

@@ -398,6 +398,16 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .md hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 .md a { color: var(--accent-t); text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
 .md a:hover { color: var(--accent); }
+/* 聊天里的文件路径:看上去像链接,点一下用系统默认程序打开 */
+.md a.md-file {
+  color: var(--accent-t);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.md a.md-file:hover { color: var(--accent); text-decoration-style: solid; }
+.md a.md-file > code { color: inherit; background: var(--accent-l); }
 .md del { color: var(--text3); }
 .md :not(pre) > code {
   font-family: var(--mono); font-variant-ligatures: none; font-size: .9em;
@@ -743,9 +753,20 @@ details.m-think[open] summary { margin-bottom: 6px; }
 
 /* ---------- 配置弹窗:左侧分类导航 + 右侧单页内容 ----------
    一级 = .set-nav-item(左侧),二级 = .set-page(右侧,同时只显示一个)。
-   以前所有分区上下堆在一个滚动条里,想改个端口要滚过 4 张模型卡片,现在按分类直达。 */
+   以前所有分区上下堆在一个滚动条里,想改个端口要滚过 4 张模型卡片,现在按分类直达。
+
+   尺寸:比外层窗口小一圈,而不是"一个固定的小盒子"。
+   桌面窗口默认 1280x800,弹窗原来是 880px × 86vh —— 插件中心的左右分栏挤在
+   880 里,列表只能给 260,详情缩得很窄。现在按视口算:
+   宽 = 100vw - 96px(四周各留 48px 让遮罩露出来),高 = 100vh - 72px,
+   再钳一个下限/上限,保证窄窗不会把弹窗压成一条、超宽屏也不会拉成一片。
+   用 calc(100vw - …) 而不是 94vw:后者在大屏上会大得离谱,
+   而"略小于外面的大窗"要的是固定的那圈留白。 */
 .modal.settings-modal {
-  width: 880px; max-width: 94vw; height: 86vh; max-height: 86vh;
+  width: clamp(680px, calc(100vw - 96px), 1320px);
+  height: clamp(460px, calc(100vh - 72px), 960px);
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
   padding: 0; overflow: hidden; display: flex; flex-direction: column;
 }
 .set-head {

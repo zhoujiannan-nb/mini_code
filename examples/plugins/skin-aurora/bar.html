@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<!-- 这一段跑在 sandbox iframe 里:没有 script 权限,拿不到父页面的 DOM。
+     所以它只能纯 CSS 做动画,也**只能**做外观 —— 这是设计上的边界。 -->
+<style>
+  :root { color-scheme: light dark; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: #4b5563;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #b6c2d2; }
+  }
+  .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #6be3b0;
+    box-shadow: 0 0 0 0 rgba(107, 227, 176, .55);
+    animation: pulse 2s ease-out infinite;
+    flex: 0 0 auto;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(107, 227, 176, .5); }
+    70%  { box-shadow: 0 0 0 7px rgba(107, 227, 176, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(107, 227, 176, 0); }
+  }
+  .bar {
+    flex: 1 1 auto;
+    height: 3px;
+    border-radius: 2px;
+    background: linear-gradient(90deg,
+      rgba(107,227,176,0) 0%,
+      rgba(107,227,176,.85) 35%,
+      rgba(94,168,255,.85) 65%,
+      rgba(94,168,255,0) 100%);
+    background-size: 200% 100%;
+    animation: slide 3.4s linear infinite;
+  }
+  @keyframes slide {
+    from { background-position: 100% 0; }
+    to   { background-position: -100% 0; }
+  }
+  .label { flex: 0 0 auto; letter-spacing: .02em; opacity: .85; }
+  @media (prefers-reduced-motion: reduce) {
+    .dot, .bar { animation: none; }
+  }
+</style>
+</head>
+<body>
+  <span class="dot" aria-hidden="true"></span>
+  <span class="label">极光模式</span>
+  <span class="bar" role="presentation"></span>
+</body>
+</html>

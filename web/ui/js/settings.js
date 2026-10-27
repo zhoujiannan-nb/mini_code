@@ -317,6 +317,17 @@ function initSettingsNav() {
   document.querySelectorAll("#settings-mask .set-nav-item").forEach(
     (b) => b.addEventListener("click", () => setPage(b.dataset.page)));
   $("#btn-settings-close").addEventListener("click", closeSettings);
+  // 外观页的"去插件中心选/装动画"按钮:动画的选择和安装都住在插件中心。
+  const gotoBoot = $("#a-boot-goto");
+  if (gotoBoot) {
+    gotoBoot.addEventListener("click", () => {
+      setPage("page-plugins");
+      if (typeof plShowTab === "function") plShowTab("installed");
+    });
+  }
+  // 端口一改就把地址行刷新,别让人对着旧地址重启。
+  const port = $("#w-port");
+  if (port) port.addEventListener("input", paintWebURL);
   // Esc 关配置弹窗;但头像选择/审批这些叠在上面的弹窗优先(审批绝不能被 Esc 顺手关掉)
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
@@ -349,11 +360,45 @@ async function openSettings() {
   $("#c-default-model").value = cfg.default_model || modelDraft[0].name || "";
   renderModels();
   $("#w-port").value = cfg.web_port || "";
-  bootFillForm(cfg.boot_anim);
+  paintWebURL();
+  // 开机动画的播放设置不再有表单,全部由 bootLoadLocal 读回来(含 play 段),
+  // 再由插件中心的详情渲染;外观页只留一句摘要。
   bootLoadLocal(); // 不 await:目录里没有主题/权限有问题都不能挡住配置弹窗打开
-  loadPlugins();   // 同上:插件列表读失败也不挡弹窗
+  loadPluginCentre(); // 同上:插件列表读失败也不挡弹窗
   setPage(currentSettingsPage()); // 回到上次停着的分类
   $("#settings-mask").classList.add("open");
+}
+
+// paintWebURL 把"浏览器该访问哪个地址"直接写出来。
+// 桌面端窗口本身就是用这个地址加载界面的(desktop/desktop.go),所以这里只让改
+// 端口、不提供"关闭 Web 服务":关掉它等于让桌面窗口没有内容可加载。
+function paintWebURL() {
+  const el = $("#w-url-line");
+  if (!el) return;
+  const port = $("#w-port").value || "?";
+  el.innerHTML = "当前地址 <code>http://127.0.0.1:" + esc(String(port)) + "</code>" +
+    ' · 桌面窗口也是通过它加载界面';
+}
+
+// paintBootSummary 在外观页写一句开机动画的现状(选了哪个、装了几个)。
+// 选择和播放设置都在插件中心那张卡的详情里,这里只回答"现在是什么状态"。
+function paintBootSummary() {
+  const el = $("#a-boot-summary");
+  if (!el) return;
+  if (typeof bootState === "undefined") { el.textContent = "—"; return; }
+  const ok = (bootState.themes || []).filter((t) => !t.error);
+  const play = (typeof bootPlaySettings === "function")
+    ? bootPlaySettings() : { enabled: false, mode: "session" };
+  const cur = ok.find((t) => t.id === bootState.picked);
+  if (!ok.length) {
+    el.textContent = "没有装 —— 去插件市场挑一个";
+    return;
+  }
+  const modes = { session: "每个会话一次", always: "每次都播", daily: "每天一次" };
+  el.textContent = (play.enabled ? "已启用" : "已关闭") +
+    " · " + (cur ? cur.name || cur.id : "未选择") +
+    (play.enabled ? " · " + (modes[play.mode] || play.mode) : "") +
+    " · 已装 " + ok.length + " 个";
 }
 async function saveSettings() {
   // 空 / 非数字一律按 0 提交,0 在服务端表示"未设置" → 请求里不带该字段
@@ -383,18 +428,14 @@ async function saveSettings() {
   if (new Set(names).size !== names.length) { toast("模型显示名不能重复", "err"); setPage("page-model"); return; }
   let defModel = $("#c-default-model").value;
   if (!names.includes(defModel)) defModel = names[0];
-  const ba = bootForm();
-  if (ba.enabled && !ba.theme) {
-    toast("先选一个已安装的开机动画主题,或关掉「启用」", "err");
-    setPage("page-boot");
-    return;
-  }
+  // boot_anim 故意不在这份 body 里:它的开关由插件详情单独走 PUT /api/bootanim,
+  // 而这个弹窗从来没有展示过那些设置。服务端对"零值 boot_anim"的处理是
+  // 保留当前值,所以不传 = 不动它(见 web.handleSaveConfig)。
   const cfg = {
     web_port: num($("#w-port").value),
     models,
     default_model: defModel,
     user_avatar: state.userAvatar, // 透传用户头像,避免整份配置保存时丢失
-    boot_anim: ba,
   };
   try {
     const r = await api("/api/config", {

@@ -1,0 +1,36 @@
+/* 极光皮肤:把强调色和几处表面换成偏青的色调。
+   规则:
+   - 只用主题既有的 CSS 变量,不写死颜色(深浅两色都能用);
+   - 不碰布局的关键尺寸,只改颜色和圆角,避免把界面挤坏;
+   - 覆盖 load 顺序在 base.css / layers.css 之后,所以能盖住它们。 */
+
+:root {
+  --accent: #6be3b0;
+  --accent-b: #47c894;
+  --accent-l: rgba(107, 227, 176, .16);
+  --accent-t: #0d5c42;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #7df0bd;
+    --accent-b: #4fdc9f;
+    --accent-l: rgba(125, 240, 189, .14);
+    --accent-t: #06251a;
+  }
+}
+
+/* 送信按钮用强调色渐变,顺带验证变量覆盖确实生效 */
+#btn-send {
+  background: linear-gradient(160deg, var(--accent), var(--accent-b)) !important;
+}
+
+/* 用户消息气泡也沾一点极光 */
+.msg.user .bubble {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border)) !important;
+}
+
+/* 侧边栏当前会话的左侧高亮条 */
+.sess.active::before {
+  background: var(--accent) !important;
+}

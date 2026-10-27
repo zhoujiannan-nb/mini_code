@@ -644,15 +644,18 @@ header .icon-btn:hover .ico { opacity: 1; }
   background: transparent; border: none; box-shadow: none; padding: 0; max-width: none;
 }
 
+/* 执行过程是"过程",不是"答案":整体比正文淡一档,鼠标悬停才回到正常色。
+   这样一屏里第一眼落在正文上,需要时再看过程。 */
 details.m-steps {
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--surface-a, var(--surface2));
   overflow: hidden;
-  transition: border-color var(--dur) var(--ease);
+  transition: border-color var(--dur) var(--ease), opacity .18s var(--ease);
+  opacity: .78;
 }
-details.m-steps:hover { border-color: var(--border2); }
-details.m-steps[open] { border-color: var(--border2); }
+details.m-steps:hover { border-color: var(--border2); opacity: 1; }
+details.m-steps[open] { border-color: var(--border2); opacity: 1; }
 
 details.m-steps > summary {
   display: flex; align-items: center; gap: 8px;
@@ -677,12 +680,24 @@ details.m-steps[open] > summary { border-bottom: 1px solid var(--border); }
 }
 .ms-hint { margin-left: auto; font-size: 11px; color: var(--text3); }
 
-/* 展开后的时间轴 */
+/* 展开后的时间轴。
+   折叠用 max-height:0 → 46vh 的过渡(不是 0fr→1fr 的网格轨道:实测轨道压到 0
+   之后,网格项自己的最小内容高度仍把整条顶到 21px,折叠时白占一行)。
+   这里外层是一块普通容器:折叠高度精确为 0,展开时长到 46vh,内容多得滚动
+   交给里面的 body。同时配一点淡入,点开是"长出来"而不是"啪一下出现"。
+   prefers-reduced-motion 下这段过渡被关掉(见文件末尾)。 */
+.m-steps-wrap {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height .2s var(--ease), opacity .16s var(--ease);
+}
+details.m-steps[open] > .m-steps-wrap { max-height: 46vh; opacity: 1; }
 .m-steps-body {
   display: flex; flex-direction: column; gap: 8px;
   padding: 10px 12px 11px 12px;
   /* 步数多时在自己肚子里滚,别把正文顶出屏幕 */
-  max-height: 46vh; overflow: auto;
+  max-height: 46vh; overflow-y: auto;
 }
 .ms-step {
   position: relative;
@@ -716,6 +731,15 @@ details.ms-step[open] > summary { color: var(--text); margin-bottom: 3px; }
   flex: 1 1 auto; min-width: 0;
   font-family: var(--mono); font-size: 11px; color: var(--text3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* 参数永远是"一行配角":单行省略,绝不换行、绝不把工具名挤下去。
+     (以前整段 JSON 塞进来,长命令会把 ⚙ exec 和参数黏成两行。) */
+  display: block;
+}
+/* 新步骤淡入一次(只在追加当下,历史重绘不播) */
+.ms-step.ms-in { animation: ms-step-in .2s var(--ease) both; }
+@keyframes ms-step-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
 }
 .ms-tag {
   flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
@@ -742,3 +766,28 @@ details.ms-step[open] > summary { color: var(--text); margin-bottom: 3px; }
 
 /* 并进正文卡片里时:贴在标题行下方,和答案之间留一口呼吸 */
 .m-card details.m-steps.ms-inline { margin: 2px 0 10px; }
+
+/* 步骤里的思考:比正文淡,展开也走同一套"长出来"的动画 */
+.ms-step details.m-think > summary { color: var(--text3); font-size: 11.5px; }
+.ms-step .think-body { color: var(--text2); }
+.ms-step details[open] > .think-body {
+  animation: ms-fade-in .16s var(--ease) both;
+}
+/* 正文卡片里那个独立的思考块(没有工具的轮次)也淡一档并平滑展开 */
+details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
+@keyframes ms-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 可访问性:系统要求减少动效时,所有过渡/动画一律关掉 */
+@media (prefers-reduced-motion: reduce) {
+  .m-steps-wrap,
+  .ms-step.ms-in,
+  .ms-step details[open] > .think-body,
+  details.m-think > .think-body {
+    transition: none !important;
+    animation: none !important;
+  }
+  .m-steps-wrap { transition: none !important; }
+}

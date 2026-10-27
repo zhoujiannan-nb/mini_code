@@ -1,4 +1,4 @@
- /* ---------------- 执行过程归并(steps) ----------------
+/* ---------------- 执行过程归并(steps) ----------------
    agent 一轮任务常常是:思考 → 调工具 → 思考 → 调工具 → …… → 最后一段正文。
    中间这些"只有思考、没有正文"的步骤若一条条平铺,屏幕全是工具卡(刷屏)。
    这里把它们收进一条「执行过程」折叠条:平时只有一行摘要(N 步 · M 次思考),
@@ -11,21 +11,23 @@ function stepsReset() {            // 消息容器被清空(renderHistory)后丢
   STEPS.card = null; STEPS.det = null; STEPS.body = null; STEPS.n = 0; STEPS.th = 0;
 }
 function stepsStrip() {            // 懒创建折叠条(一张独立卡,逐步往里加)
-  if (STEPS.det && STEPS.det.isConnected) return STEPS.det;
-  stepsReset();
-  const div = addCard("steps",
-    '<div class="m-card"><details class="m-steps"><summary></summary><div class="m-steps-body"></div></details></div>');
-  STEPS.card = div;
-  STEPS.det = div.querySelector("details");
-  STEPS.body = div.querySelector(".m-steps-body");
-  // <details> 被浏览器原生开合时不会走我们的重绘,这里挂个 toggle 只改右侧提示字
-  STEPS.det.addEventListener("toggle", function () {
-    const h = this.querySelector(".ms-hint");
-    if (h) h.textContent = this.open ? "收起" : "展开";
-  });
-  stepsPaint();
-  return STEPS.det;
+   if (STEPS.det && STEPS.det.isConnected) return STEPS.det;
+   stepsReset();
+   const div = addCard("steps",
+     '<div class="m-card"><details class="m-steps"><summary></summary>' +
+     '<div class="m-steps-wrap"><div class="m-steps-body"></div></div></details></div>');
+   STEPS.card = div;
+   STEPS.det = div.querySelector("details");
+   STEPS.body = div.querySelector(".m-steps-body");
+   // <details> 被浏览器原生开合时不会走我们的重绘,这里挂个 toggle 只改右侧提示字
+   STEPS.det.addEventListener("toggle", function () {
+     const h = this.querySelector(".ms-hint");
+     if (h) h.textContent = this.open ? "收起" : "展开";
+   });
+   stepsPaint();
+   return STEPS.det;
 }
+
 function stepsPaint() {
   if (!STEPS.det) return;
   STEPS.det.querySelector("summary").innerHTML =
@@ -35,27 +37,112 @@ function stepsPaint() {
     '<span class="ms-hint">' + (STEPS.det.open ? "收起" : "展开") + '</span>';
 }
 function stepsPush(html, isThink, tag) {
-  const body = stepsStrip().querySelector(".m-steps-body");
-  const d = document.createElement(tag || "div");
-  d.className = "ms-step";
-  d.innerHTML = html;
-  body.appendChild(d);
-  STEPS.n++;
-  if (isThink) STEPS.th++;
-  stepsPaint();
-  if (!histRendering && nearBottom()) scrollBottom(false, true);
-  return d;
+   const body = stepsStrip().querySelector(".m-steps-body");
+   const d = document.createElement(tag || "div");
+   d.className = "ms-step";
+   d.innerHTML = html;
+   body.appendChild(d);
+   STEPS.n++;
+   if (isThink) STEPS.th++;
+   stepsPaint();
+   if (!histRendering && nearBottom()) scrollBottom(false, true);
+   // 只在"追加当下"淡入一次;历史重绘是成批建卡,动画会让整屏一起闪,
+   // 所以 histRendering 期间直接给最终态。
+   if (!histRendering) {
+     d.classList.add("ms-in");
+     setTimeout(() => d.classList.remove("ms-in"), 220);
+   }
+   return d;
 }
+
+/* ---- 工具参数:标题行只放"这次调了什么" ----
+    真实问题:以前把整段 JSON 参数(args 本身是字符串)塞进标题行的单个 span,
+    长参数(尤其 exec 的命令行)会把工具名挤到换行、和参数黏在一起。
+    这里按工具名抽出最关键的一个字段,压成单行;参数全文仍在展开区里。 */
+const TOOL_ARG_KEY = {
+   exec: "command", bash: "command", shell: "command", run: "command",
+   read_file: "path", write_file: "path", edit_file: "path", list_dir: "path",
+   search_files: "pattern", find: "pattern", grep: "pattern",
+   web_search: "query", fetch: "url", http: "url", task: "goal", todo: "task",
+};
+
+// toolArgsOf 把 args 解析成对象;解析不了就返回 null(不代表出错)。
+function toolArgsOf(args) {
+   if (args == null) return null;
+   if (typeof args === "object") return args;
+   const s = String(args).trim();
+   if (!s) return null;
+   try {
+     const o = JSON.parse(s);
+     return o && typeof o === "object" ? o : null;
+   } catch (e) {
+     return null;
+   }
+}
+
+// toolArgOne 取"最能说明这次调用"的一个值:先看该工具的惯用字段,再退回
+// 第一个标量字段。返回 {k, v} 或 null。
+function toolArgOne(name, args) {
+  const o = toolArgsOf(args);
+  if (!o) return null;
+  const pick = (k) => {
+    const v = o[k];
+    if (v == null || typeof v === "object") return null;
+    const s = String(v);
+    return s ? { k: k, v: s } : null;
+  };
+  const key = TOOL_ARG_KEY[String(name || "").toLowerCase()];
+  if (key && pick(key)) return pick(key);
+  // 没登记的工具:取第一个标量字段(值本身通常已能说明问题)
+  for (const k of Object.keys(o)) {
+    const got = pick(k);
+    if (got) return got;
+  }
+  return null;
+}
+
+// isPathKey 判断这个参数是不是"文件路径"。
+// 只按**键名**判断,不看值里有没有斜杠 —— exec 的 command 里全是斜杠(路径),
+// 但它是一条命令,不能被当成路径截成尾部两段,否则一条 cd && dir && findstr
+// 会被显示成 "…/js/steps.js",读者完全看不出这次执行了什么。
+function isPathKey(k) {
+  const s = String(k || "").toLowerCase();
+  return s === "path" || s === "file" || s === "dir" || s === "cwd" ||
+    s === "target" || s === "dest" || s === "source" ||
+    /(^|_)(path|file|dir|cwd)$/.test(s);
+}
+
+// toolArgLine 渲染标题行里的那一小段参数:单行 + 省略号,完整值放 title。
+//   - 路径:只留最后两段(前面的目录对"这次动了什么"没有信息量);
+//   - 其它(命令/查询/目标):压成一行,过长就截断。
+function toolArgLine(name, args) {
+  const got = toolArgOne(name, args);
+  if (!got) {
+    const raw = args == null ? "" : String(args).replace(/\s+/g, " ").trim();
+    if (!raw) return "";
+    return '<span class="ms-arg1" title="' + esc(raw) + '">' + esc(raw) + "</span>";
+  }
+  let shown = got.v.replace(/\s+/g, " ").trim();
+  if (isPathKey(got.k)) {
+    const parts = shown.split(/[\\/]+/).filter(Boolean);
+    if (parts.length > 3) shown = "…/" + parts.slice(-2).join("/");
+  }
+  const brief = shown.length > 58 ? shown.slice(0, 58) + "…" : shown;
+  return '<span class="ms-arg1" title="' + esc(got.v) + '">' + esc(brief) + "</span>";
+}
+
+
 function stepsAddThink(reasoning) {
   return stepsPush('<details class="m-think"><summary>💭 思考过程(' + reasoning.length + ' 字)</summary>'
     + '<div class="think-body md">' + mdToHtml(reasoning) + "</div></details>", true);
 }
 // 工具步骤:标题行(名字 + 一行参数 + 状态徽标)常态可见,参数全文与返回结果默认折起
 function stepsAddTool(name, args, result) {
+  mcEmit("tool");
   const a = args == null ? "" : String(args);
   const st = stepsPush(
     '<summary><span class="t-name">⚙ ' + esc(name) + '</span>' +
-    '<span class="ms-arg1">' + esc(a) + '</span><span class="ms-tag"></span></summary>' +
+    toolArgLine(name, args) + '<span class="ms-tag"></span></summary>' +
     '<div class="ms-step-body">' +
       (a ? '<div class="ms-args">' + esc(a.slice(0, 2000)) + (a.length > 2000 ? " …" : "") + "</div>" : "") +
       '<div class="ms-res-slot"></div>' +
@@ -115,6 +202,7 @@ function stepsMergeInto(card) {    // 并进"有正文"的那张卡片:放在标
 }
 
 function addAssistant(text, reasoning) {
+  mcEmit("reply");
   // 没有正文 = 这一轮只是过程(思考/准备调工具)→ 收进折叠条,不平铺成卡
   if (!text) { if (reasoning) stepsAddThink(reasoning); return null; }
   let inner = '<div class="m-head"><span class="m-tag ai">Mini Code</span></div>';
@@ -130,6 +218,7 @@ function addAssistant(text, reasoning) {
 }
 
 function addError(text) {
+  mcEmit("error");
   addCard("error", '<div class="m-text">⚠ 任务失败:' + esc(text) + "</div>");
 }
 function addStatus(text) {

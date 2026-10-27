@@ -34,11 +34,6 @@ type BootAnimConfig struct {
 	// calendar day). It is a *policy* enforced by the host player, not a hint.
 	Mode string `json:"mode"`
 
-	// Speed multiplies the theme's own timeline (0.35-3). 0 means unset and is
-	// normalized to 1. Themes that ignore the parameter simply play at their
-	// own pace; the host hard-stops at maxMs regardless.
-	Speed float64 `json:"speed"`
-
 	// Name is the identity string the theme shows (empty = the theme's own
 	// default / the app name). Kept short so themes can lay it out.
 	Name string `json:"name,omitempty"`
@@ -76,10 +71,6 @@ const (
 	// DefaultBootAnimTheme is played when the user has not picked one. It is
 	// just a name: it only takes effect once that theme is installed.
 	DefaultBootAnimTheme = "mc-access"
-	// DefaultBootAnimSpeed / limits for the speed multiplier.
-	DefaultBootAnimSpeed = 1.0
-	MinBootAnimSpeed     = 0.35
-	MaxBootAnimSpeed     = 3.0
 )
 
 // DefaultBootAnimConfig is what an unconfigured (or older) config gets.
@@ -91,7 +82,6 @@ func DefaultBootAnimConfig() BootAnimConfig {
 		Enabled: true,
 		Theme:   DefaultBootAnimTheme,
 		Mode:    BootAnimModeSession,
-		Speed:   DefaultBootAnimSpeed,
 	}
 }
 
@@ -103,10 +93,6 @@ func (b *BootAnimConfig) Normalize() {
 	default:
 		b.Mode = BootAnimModeSession
 	}
-	if b.Speed <= 0 {
-		b.Speed = DefaultBootAnimSpeed
-	}
-	b.Speed = clampBootAnimSpeed(b.Speed)
 	b.Name = strings.TrimSpace(b.Name)
 	if len(b.Name) > 48 {
 		b.Name = b.Name[:48]
@@ -123,7 +109,7 @@ func (b *BootAnimConfig) Normalize() {
 // an older config.json — or a UI that knows nothing about boot animation —
 // unmarshals to.
 func (b BootAnimConfig) IsZero() bool {
-	return !b.Enabled && b.Theme == "" && b.Mode == "" && b.Speed == 0 && b.Dir == "" && b.Repo == "" && b.Name == "" && !b.Interactive && !b.Mute
+	return !b.Enabled && b.Theme == "" && b.Mode == "" && b.Dir == "" && b.Repo == "" && b.Name == "" && !b.Interactive && !b.Mute
 }
 
 // applyBootAnimDefaults fills an unconfigured boot-anim block with defaults and
@@ -205,9 +191,6 @@ func (b BootAnimConfig) Validate() error {
 	default:
 		return fmt.Errorf("boot_anim.mode must be %s, %s or %s", BootAnimModeSession, BootAnimModeAlways, BootAnimModeDaily)
 	}
-	if b.Speed < MinBootAnimSpeed || b.Speed > MaxBootAnimSpeed {
-		return fmt.Errorf("boot_anim.speed must be between %g and %g", MinBootAnimSpeed, MaxBootAnimSpeed)
-	}
 	if b.Theme != "" && !ValidBootAnimID(b.Theme) {
 		return fmt.Errorf("boot_anim.theme must be a theme id (lowercase letters, digits and dashes)")
 	}
@@ -221,16 +204,6 @@ func (b BootAnimConfig) Validate() error {
 // Used by the save path to keep its "nothing changed" short circuit.
 func SameBootAnim(a, b BootAnimConfig) bool {
 	return a.Enabled == b.Enabled && a.Theme == b.Theme && a.Mode == b.Mode &&
-		a.Speed == b.Speed && a.Name == b.Name && a.Interactive == b.Interactive &&
+		a.Name == b.Name && a.Interactive == b.Interactive &&
 		a.Mute == b.Mute && a.Dir == b.Dir && a.Repo == b.Repo
-}
-
-func clampBootAnimSpeed(v float64) float64 {
-	if v < MinBootAnimSpeed {
-		return MinBootAnimSpeed
-	}
-	if v > MaxBootAnimSpeed {
-		return MaxBootAnimSpeed
-	}
-	return v
 }

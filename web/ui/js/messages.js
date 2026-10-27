@@ -22,8 +22,10 @@ function scrollBottom(force, stick) {
   }
 }
 /* 历史懒加载:打开会话只渲染最近 HIST_PAGE 条(避免全量渲染卡顿),
-   更早的缓存到 histFull,用户上滑接近顶部时由 loadOlder 自动按批补齐。 */
-const HIST_PAGE = 10;
+   更早的缓存到 histFull,用户上滑接近顶部时由 loadOlder 自动按批补齐。
+   100 条:工具步骤本来就折进「执行过程」一条里,一屏信息密度高了,
+   10 条常常"翻两下就到顶",100 条基本等于打开即看全,又不至于卡。 */
+const HIST_PAGE = 100;
 let histFull = [];        // 当前会话完整消息列表(已滤掉 system)
 let histStart = 0;        // 已渲染第一条在 histFull 中的下标
 let histRendering = false; // 批量渲染历史期间,addCard 不触发智能滚动

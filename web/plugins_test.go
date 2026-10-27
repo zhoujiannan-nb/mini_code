@@ -136,7 +136,9 @@ func TestPluginAssetRouteServes(t *testing.T) {
 	if code != 404 {
 		t.Errorf("missing file: code = %d, want 404", code)
 	}
-	// HTML and plain text are not served from the app's origin.
+	// HTML a plugin merely happens to contain is NOT served (it would turn the
+	// plugin directory into a web root on the app's origin); only a fragment the
+	// manifest declares as a slot is. Plain text is never served.
 	for _, p := range []string{"/plugins/skin/evil.html", "/plugins/skin/notes.txt"} {
 		code, _, _ = get(p)
 		if code != 403 {
@@ -218,8 +220,15 @@ func TestPluginsListAPI(t *testing.T) {
 			t.Errorf("/api/plugins is missing %s\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, `"disabled"`) {
-		t.Error("/api/plugins lists a disabled plugin")
+	if strings.Contains(body, `"error"`) {
+		t.Error("/api/plugins reported an error for a valid plugin")
+	}
+	// The centre lists disabled plugins too (that is where you turn them back
+	// on), each flagged with enabled:false and a reason. The agent's own view
+	// (plugin.Load) is the one that filters them out — see the plugin package
+	// tests for that side.
+	if !strings.Contains(body, `"id":"disabled"`) || !strings.Contains(body, `"enabled":false`) {
+		t.Error("/api/plugins should list a disabled plugin with enabled:false")
 	}
 	// Sorted by id: a-tools before b-skin.
 	if strings.Index(body, "a-tools") > strings.Index(body, "b-skin") {
@@ -256,6 +265,50 @@ func TestPluginPageServesAssets(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("plugin css status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestDeclaredSlotHTMLIsServed: the one .html a manifest declares as a slot
+// fragment IS served (the page frames it), with a locked-down CSP and nosniff —
+// while an undeclared .html in the same directory stays 403.
+func TestDeclaredSlotHTMLIsServed(t *testing.T) {
+	home := pluginHome(t)
+	installPlugin(t, home, "bar", `{"id":"bar","ui":{"slots":[{"slot":"composer-bar","html":"bar.html"}]}}`,
+		map[string]string{
+			"bar.html":     `<b onclick="alert(1)">hi</b>`,
+			"undeclared.html": "<script>alert(1)</script>",
+		})
+	srv := httptest.NewServer(NewServer(newTestBackend(t)))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/plugins/bar/bar.html")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("declared slot html status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("nosniff missing: %q", got)
+	}
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") {
+		t.Errorf("CSP = %q, want default-src 'none'", csp)
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+
+	resp2, err := http.Get(srv.URL + "/plugins/bar/undeclared.html")
+	if err != nil {
+		t.Fatalf("GET undeclared: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != 403 {
+		t.Errorf("undeclared html status = %d, want 403", resp2.StatusCode)
 	}
 }
 

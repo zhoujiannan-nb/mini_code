@@ -30,6 +30,7 @@ async function send() {
   autoGrow();
   liveCommit();
   addUser(text, images);
+  mcEmit("send");
   state.pendingImages = [];
   renderImgPreviews();
   pendingStart(); // 等待模型首 token 的转圈提示(vllm 吞长上下文时可见)
