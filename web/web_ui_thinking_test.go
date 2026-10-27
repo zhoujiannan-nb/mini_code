@@ -28,6 +28,11 @@ func TestIndexServesComposerThinkingUI(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	page := string(b)
 
+	// The shell is served from "/" but its behaviour lives in the JS modules
+	// served from /js/*. Pull those in as well so this smoke test keeps
+	// covering the thinking control after the front-end was split up.
+	page = page + jsModulesForTest(t)
+
 	want := []string{
 		`id="btn-model"`,
 		`id="think-badge"`,

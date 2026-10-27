@@ -1,0 +1,63 @@
+{
+  "id": "web-search",
+  "name": "网页搜索 / 浏览器",
+  "version": "1.0.0",
+  "description": "通过本地浏览器驱动搜索网页并读取正文。真实浏览器,默认无头;需要先装好 D:\\project_ai\\web_search。",
+  "enabled": false,
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Search the web with a real (headless) browser and return structured results. Use it for anything that needs current information: news, versions, prices, API docs. Returns JSON with title/link/snippet per result.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "What to search for. Keep it short — it is typed into a search box."
+          },
+          "engine": {
+            "type": "string",
+            "description": "Search engine: bing (default, most reliable), baidu, google, duckduckgo, zhihu.",
+            "enum": ["bing", "baidu", "google", "duckduckgo", "zhihu"]
+          },
+          "max": {
+            "type": "integer",
+            "description": "How many results to return (default 8, max 20)."
+          }
+        },
+        "required": ["query"]
+      },
+      "command": "python",
+      "args": [
+        "-c",
+        "import json,sys,subprocess; p=json.load(sys.stdin); a=['python', r'D:\\project_ai\\web_search\\ws.py','search',p['query'],'--engine',p.get('engine') or 'bing','--json','--max',str(int(p.get('max') or 8))]; r=subprocess.run(a,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=120); sys.stdout.write(r.stdout if r.returncode==0 else (r.stdout or '')+(r.stderr or '')); sys.exit(r.returncode)"
+      ],
+      "timeout_seconds": 150
+    },
+    {
+      "name": "web_read",
+      "description": "Read the main article text of one web page as markdown. Use it after web_search to open a promising result.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Absolute http(s) URL to read."
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Truncate the extracted text to this many characters (default 8000)."
+          }
+        },
+        "required": ["url"]
+      },
+      "command": "python",
+      "args": [
+        "-c",
+        "import json,sys,subprocess; p=json.load(sys.stdin); a=['python', r'D:\\project_ai\\web_search\\ws.py','read',p['url'],'--format','text','--max-chars',str(int(p.get('max_chars') or 8000))]; r=subprocess.run(a,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=120); sys.stdout.write(r.stdout if r.returncode==0 else (r.stdout or '')+(r.stderr or '')); sys.exit(r.returncode)"
+      ],
+      "timeout_seconds": 150
+    }
+  ],
+  "memory": "memory.md"
+}

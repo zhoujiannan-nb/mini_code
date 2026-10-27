@@ -53,6 +53,10 @@ func NewPromptBuilder(config *agent.AgentConfig, workDir string) *PromptBuilder 
 		workDir:     workDir,
 	}
 	pb.registerDefaultTools()
+	// Plugin tools are appended after the core list (never interleaved): the
+	// core segment of the tool schema array is the head of the prefix the
+	// provider's cache matches, so installing a plugin must not move it.
+	pb.registerPluginTools()
 	return pb
 }
 
@@ -112,6 +116,14 @@ func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string 
 	if ps := pluginsSection(); ps != "" {
 		parts = append(parts, ps)
 	}
+	// Plugin memory: notes contributed by installed directory plugins
+	// (~/.mini_code/plugins/<id>/memory.md). Placed after the plugin list and
+	// before the environment block so the untrusted-ish user text stays in one
+	// region of the prompt. Each file is static until edited, so the prefix
+	// stays cacheable.
+	if mem := pluginMemorySection(); mem != "" {
+		parts = append(parts, mem)
+	}
 	// The system prompt is static on purpose: it is the head of the request
 	// prefix the provider's prefix cache matches, so it must not be
 	// re-rendered with fresh content (e.g. a timestamp) on every task.
@@ -157,6 +169,13 @@ func (pb *PromptBuilder) EnableGroupTool(sessionID string, api tools.GroupChatDi
 	slog.Debug("GroupChatTool enabled", "session", sessionID)
 }
 
+// GetFilteredDefinitions returns the tool schemas the agent role may use.
+//
+// The role's permission table is compiled in (agent/basePermissions) and only
+// lists the core tools, so a plugin tool would otherwise be filtered out and the
+// model would never see it. Appended (plugin) tools are therefore allowed by
+// default unless the role explicitly denies that exact name — a plugin still
+// cannot sneak past an explicit "deny".
 func (pb *PromptBuilder) GetFilteredDefinitions(cfg *agent.AgentConfig) []provider.ToolSchema {
 	defs := pb.Tools.GetDefinitions(false)
 	if cfg == nil || len(cfg.Permissions.Tools) == 0 {
@@ -164,9 +183,24 @@ func (pb *PromptBuilder) GetFilteredDefinitions(cfg *agent.AgentConfig) []provid
 	}
 	var filtered []provider.ToolSchema
 	for _, d := range defs {
-		if cfg.Permissions.IsToolAllowed(d.Function.Name, "") {
+		name := d.Function.Name
+		if cfg.Permissions.IsToolAllowed(name, "") {
+			filtered = append(filtered, d)
+			continue
+		}
+		if pb.Tools.IsAppended(name) && !explicitlyDenied(cfg, name) {
 			filtered = append(filtered, d)
 		}
 	}
 	return filtered
+}
+
+// explicitlyDenied reports whether the role names this tool with a "deny"
+// action. An absent entry is not a deny: the compiled tables predate plugins.
+func explicitlyDenied(cfg *agent.AgentConfig, name string) bool {
+	tp, ok := cfg.Permissions.Tools[name]
+	if !ok {
+		return false
+	}
+	return !tp.IsAllowed("")
 }

@@ -1,0 +1,8 @@
+{
+  "id": "wallpaper-demo",
+  "name": "壁纸(示例)",
+  "version": "0.1.0",
+  "description": "示例壁纸插件:把背景图铺在消息区。图片放在插件目录里,先照着 bg.svg 换掉或直接改 wallpaper 字段。",
+  "enabled": false,
+  "wallpaper": "bg.svg"
+}

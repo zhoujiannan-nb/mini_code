@@ -1,0 +1,744 @@
+/* =====================================================================
+   ===== 视觉润色层 v3(Qoder 国际版取色 + DSH Desktop 结构) =====
+   只覆盖已有选择器,不改 DOM/JS。整体回退:git checkout main
+   ① 大面积中性、小面积绿(强调/链接/发送钮/状态)
+   ② 分层靠发丝描边 + ≤5% 柔光,不靠厚投影
+   ③ 消息列与输入卡共用一根宽度主轴 --col-w
+   ④ 统一 120ms / cubic-bezier(.4,0,.2,1) + 键盘焦点环
+   ===================================================================== */
+body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+/* 支持的引擎里把圆角变成"苹果式方圆"(superellipse),不支持自动忽略,零成本 */
+@supports (corner-shape: superellipse(1.5)) {
+  :root { --corner: superellipse(1.5); }
+  *, *::before, *::after { corner-shape: superellipse(1.5); }
+}
+
+/* 焦点环只给按钮/链接。文本框一律不加光环:Chromium 里文本框永远匹配
+   :focus-visible,给它加环会在输入卡里再套一个"框中框"(v3 的翻车点)。
+   文本框的焦点由输入卡自己的描边表达。 */
+:where(button, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--ring-soft);
+}
+html[data-input-modality="pointer"] :where(button, a):focus-visible { outline-color: transparent; }
+input, select, textarea { outline: none; }
+
+/* 统一过渡 + 0.5px 按压反馈 */
+.btn, .icon-btn, .mode-btn, .compact-btn, .send-btn, .stop-btn, .tasks-btn,
+.plus-btn, .new-btn, .set-close, .set-nav-item, .cb-copy, .task-stop, .mc-fetch,
+.model-inline-btn, .sess-item, .group-item, .model-tile, .boot-tile {
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
+              color var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+              transform var(--dur) var(--ease);
+}
+.btn:active:not(:disabled), .icon-btn:active, .send-btn:active:not(:disabled),
+.plus-btn:active:not(:disabled), .new-btn:active, .mode-btn:active,
+.compact-btn:active:not(:disabled) { transform: translateY(.5px); }
+
+/* ---------- 顶栏:更薄更安静,品牌名渐变字,工作目录用等宽小徽标 ---------- */
+header { position: relative; padding: 8px 14px; gap: 10px; }
+header::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1px;
+  background: var(--hairline); pointer-events: none;
+}
+.logo { font-size: 15px; font-weight: 800; letter-spacing: -.015em; }
+.logo span {
+  background: var(--grad-text); -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+}
+.pill {
+  font-family: var(--mono); font-size: 11.5px; padding: 3px 10px;
+  background: var(--surface2); border-color: transparent; color: var(--text2);
+}
+.pill b { color: var(--title); }
+.icon-btn { background: transparent; border-color: var(--border2); color: var(--text2); padding: 5px 11px; }
+.icon-btn:hover { background: var(--hover); border-color: var(--border2); color: var(--accent-t); }
+
+/* ---------- 侧栏:墨色"新建"按钮 + 微型分区标签 + 选中项左侧主色条 ---------- */
+.new-btn {
+  margin: 10px 10px 4px; padding: 9px 10px;
+  background: var(--ink); color: var(--ink-fg);
+  box-shadow: 0 1px 2px var(--sh2), inset 0 0 0 .5px rgba(0,0,0,.06);
+  font-weight: 600; letter-spacing: .005em;
+}
+.new-btn:hover { background: var(--ink-h); box-shadow: 0 3px 10px var(--sh2); }
+.sec-head {
+  font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--text3); padding: 10px 12px 5px; font-weight: 700;
+}
+.sess-list { padding: 0 8px 10px; }
+.sess-item, .group-item { padding: 8px 10px; margin-bottom: 1px; }
+.sess-item:hover, .group-item:hover { background: var(--hover); }
+.sess-item.active, .group-item.active {
+  background: var(--hover-2); border-color: transparent;
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
+.sess-title { font-weight: 600; letter-spacing: -.005em; }
+.del-btn:hover { background: var(--red); color: #fff; }
+.rename-btn:hover { background: var(--ink); color: var(--ink-fg); }
+.gh-add:hover { background: var(--ink); color: var(--ink-fg); }
+
+/* ---------- 聊天头 ---------- */
+.chat-head { max-width: var(--col-w); width: 100%; margin: 0 auto; }
+.chat-head .title { font-size: 13.5px; font-weight: 700; color: var(--title); letter-spacing: -.01em; }
+.chat-head .title:hover { color: var(--accent-t); }
+.tasks-btn { background: transparent; }
+.tasks-count { background: var(--ink); color: var(--ink-fg); }
+
+/* ---------- 消息:宽度主轴 + 扁空气泡 + 工具卡发丝描边 ---------- */
+.messages { max-width: var(--col-w); margin: 0 auto; width: 100%; }
+.m-tag {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em; padding: 2px 8px;
+  border: 1px solid transparent;
+}
+.m-tag.user { border-color: var(--accent-b); }
+.m-tag.ai, .m-tag.member { border-color: var(--border); }
+/* 用户气泡:扁平、无框、右下角收尖朝头像(DSH UserMessageBubble) */
+.msg.user .m-card {
+  background: var(--accent-l); border-color: transparent; padding: 10px 14px;
+  border-radius: var(--msg-radius) var(--msg-radius) 6px var(--msg-radius);
+}
+.msg.user .m-card { max-width: min(calc(var(--col-w) * .702), 82%); }
+.msg.tool .m-card {
+  background: var(--surface2); border-color: transparent; padding: 8px 11px;
+  box-shadow: inset 2px 0 0 0 var(--border2), 0 0 0 .5px var(--border);
+}
+.msg.tool .m-card:hover { box-shadow: inset 2px 0 0 0 var(--accent), 0 0 0 .5px var(--border2); }
+.t-name { font-weight: 700; color: var(--title2); font-size: 11.5px; letter-spacing: .02em; }
+.t-args, .t-res { font-size: 11.5px; line-height: 1.6; }
+details.m-think summary {
+  font-size: 11.5px; font-weight: 600; color: var(--text3);
+  padding: 2px 6px; margin-left: -6px; border-radius: var(--r-xs);
+}
+details.m-think summary:hover { color: var(--accent-t); background: var(--hover); }
+.think-body, .m-think-live { border-top: 1px solid var(--border); font-size: 12.5px; }
+
+/* Markdown 节奏(DSH 字号阶梯:h1-h3 全 700,正文 14/24) */
+.md p { margin: 6px 0; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
+  margin: 14px 0 6px; letter-spacing: -.015em; font-weight: 700;
+}
+.md h1 { font-size: 1.24em; } .md h2 { font-size: 1.14em; } .md h3 { font-size: 1.07em; }
+.md blockquote { border-left: 2px solid var(--accent-b); background: var(--surface2); }
+.md :not(pre) > code {
+  background: var(--surface2); border-color: var(--border); color: var(--title2);
+  font-size: .87em; padding: 1.5px 5px;
+}
+.md th, .md td { border-color: var(--border); padding: 5px 11px; }
+.md th { background: var(--surface2); }
+.md a { color: var(--accent-t); text-decoration: none; border-bottom: 1px solid var(--accent-b); }
+.md a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* 代码块:深色卡 + 更矮的语言条,复制按钮 hover 才亮 */
+.codeblock { border-color: var(--border); box-shadow: 0 1px 2px var(--sh1); }
+.cb-head { background: rgba(148,163,184,.05); border-bottom-color: var(--border); padding: 5px 8px 5px 11px; }
+.cb-lang { color: #83907f; font-size: 10.5px; letter-spacing: .07em; }
+.cb-copy { opacity: .65; background: rgba(148,163,184,.10); }
+.codeblock:hover .cb-copy { opacity: 1; }
+.cb-pre { padding: 11px 12px; font-size: 12.5px; line-height: 1.62; }
+
+/* 状态/错误/等待 */
+.msg.error .m-card { border-color: transparent; border-radius: var(--r-sm); }
+.msg.pending .m-card {
+  background: var(--surface2); border-color: transparent; border-radius: var(--r-sm);
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
+.spinner { border-color: var(--accent-b); border-top-color: var(--accent); }
+
+/* ---------- 输入区:一体大圆角卡(DSH InputBar),聚焦只换描边、不叠第二层环 ---------- */
+.composer { padding: 8px var(--pad-x) 10px; }
+.composer-box {
+  max-width: calc(var(--col-w) + 32px); margin: 0 auto; width: 100%;
+  border-radius: var(--r-xl); border-color: transparent; padding: 12px 14px 10px;
+  box-shadow: 0 0 0 .5px var(--border2), 0 4px 16px var(--sh1), 0 0 24px var(--sh1);
+}
+.composer-box:hover { box-shadow: 0 0 0 .5px var(--border2), 0 6px 20px var(--sh2); }
+.composer-box:focus-within {
+  border-color: transparent;
+  box-shadow: 0 0 0 1.5px var(--accent), 0 6px 20px var(--sh2);
+}
+.composer textarea {
+  font-size: 15px; line-height: 1.6; padding: 6px 2px 2px;
+  color: var(--text); caret-color: var(--accent);
+}
+.composer textarea::placeholder { color: var(--text2); opacity: .8; }
+/* 原生控件跟着主色走(否则复选框/滑条是刺眼的系统蓝) */
+input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
+input[type=range] { accent-color: var(--accent); }
+/* 发送钮是全界面少数"彩色"之一:走品牌绿 */
+.send-btn {
+  height: 32px; padding: 0 16px; background: var(--accent-btn);
+  border-color: transparent; box-shadow: 0 1px 2px var(--sh2), inset 0 1px 0 rgba(255,255,255,.12);
+}
+.send-btn:hover:not(:disabled) { background: var(--accent-btn-h); box-shadow: 0 3px 12px var(--sh2); }
+.send-btn:disabled { opacity: .5; box-shadow: none; }
+.stop-btn { border-color: var(--red-b); background: transparent; }
+.stop-btn:hover { background: var(--red-l); border-color: var(--red); }
+.plus-btn { background: transparent; border: 1px solid var(--border2); }
+.plus-btn:hover:not(:disabled) { background: var(--hover); color: var(--accent-t); }
+.model-inline-btn { border: 1px solid transparent; padding: 5px 9px; }
+.model-inline-btn:hover { background: var(--hover); }
+.composer-foot { margin-top: 7px; font-size: 11px; }
+.foot-hint:hover { background: var(--hover); color: var(--accent-t); }
+.compact-btn, .mode-btn { background: transparent; }
+.compact-btn:hover:not(:disabled), .mode-btn:hover { background: var(--hover); }
+.think-badge { background: var(--accent-l); border: 1px solid var(--accent-b); }
+
+/* 浮层统一:发丝描边 + 极淡柔光(DSH elevation-panel) */
+.model-menu, .think-pop, .tasks-panel, .fs-picker {
+  border-color: transparent; border-radius: var(--r-md);
+  box-shadow: 0 0 0 .5px var(--border2), 0 3px 8px var(--sh2), 0 0 16px var(--sh1);
+}
+.fs-head { background: var(--surface2); }
+.model-menu .mm-item.cur { background: var(--accent-l); }
+.task-item:hover { background: var(--hover); }
+
+/* ---------- 弹窗:遮罩更强、卡片靠描边分层 ---------- */
+.modal-mask { backdrop-filter: blur(6px) saturate(1.1); -webkit-backdrop-filter: blur(6px) saturate(1.1); }
+.modal {
+  border-color: transparent; border-radius: var(--r-lg); padding: 18px;
+  box-shadow: 0 0 0 .5px var(--border2), 0 18px 50px var(--sh4), 0 0 24px var(--sh2);
+  animation: pop .18s var(--ease);
+}
+.modal h2 { font-size: 16px; letter-spacing: -.015em; }
+.modal h3 { font-size: 12.5px; }
+.set-head { padding: 12px 16px; }
+.set-head h2 { font-size: 15.5px; }
+.set-nav { background: var(--surface2); }
+.set-nav-item.active { background: var(--hover-2); color: var(--title); box-shadow: inset 2px 0 0 0 var(--accent); }
+.set-page > h3 { font-size: 14.5px; letter-spacing: -.01em; }
+.frow input[type=text], .frow input[type=password], .frow input[type=number],
+.frow select, .g-bg-input { background: var(--bg); }
+.frow input:focus, .frow select:focus, .g-bg-input:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring-soft); background: var(--surface);
+}
+.btn { background: var(--surface); }
+.btn:hover { background: var(--hover); }
+.btn.primary {
+  background: var(--ink); color: var(--ink-fg); border-color: transparent;
+  box-shadow: 0 1px 2px var(--sh2), inset 0 0 0 .5px rgba(0,0,0,.06);
+}
+.btn.primary:hover { background: var(--ink-h); color: var(--ink-fg); }
+.model-tile, .boot-tile { background: var(--surface); }
+.model-tile:hover, .boot-tile:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring-soft); }
+.model-tile .mt-badge, .boot-tile .bt-badge { background: var(--surface2); }
+.add-model-btn:hover { background: var(--hover); }
+
+/* ---------- 提示条:滑入 ---------- */
+#toast {
+  border-color: var(--border2); border-radius: var(--r-md);
+  box-shadow: 0 8px 24px var(--sh3);
+  transform: translate(-50%, 8px); opacity: 0;
+  transition: opacity .2s var(--ease), transform .2s var(--ease);
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast.ok { background: var(--accent-l); color: var(--accent-t); border-color: var(--accent-b); }
+
+/* ---------- 空状态 ---------- */
+.placeholder .big {
+  font-size: 30px; width: 54px; height: 54px; display: flex; align-items: center;
+  justify-content: center; border-radius: var(--r-lg);
+  background: var(--accent-l); border: 1px solid var(--accent-b);
+}
+.placeholder p { font-size: 13px; max-width: 440px; text-align: center; line-height: 1.7; }
+
+/* ---------- 滚动条:细胶囊 + 透明轨道(DSH 5px,Windows 上留 6px 好点) ---------- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll); border-radius: 999px;
+  border: 1px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-h); background-clip: padding-box; }
+::selection { background: var(--accent-b); }
+
+/* 无障碍:要求减少动效时全停 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important; scroll-behavior: auto !important;
+  }
+}
+
+/* =====================================================================
+   ===== v4 追加:① 顶栏与侧栏一体(DSH 骨架) ② 可读性提档 =====
+   ===================================================================== */
+
+/* ---------- ① 一体骨架:侧栏贯通到顶,顶栏只压在聊天列上 ---------- */
+/* DOM 已改为 body > [aside, main],main 内部是 header + section.chat */
+body { flex-direction: row; }
+aside { height: 100%; }
+main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+header { padding: 9px 16px; gap: 8px; }
+header::after { display: none; }           /* 顶栏不再横跨整宽,顶部高光改由侧栏承担 */
+aside { position: relative; }
+aside::after {                             /* 侧栏顶部一条极淡高光,和顶栏连成一块"框" */
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1px;
+  background: var(--hairline); pointer-events: none;
+}
+/* 品牌挪进侧栏顶部(DSH/Qoder 都是品牌在左栏,不横跨整条顶栏) */
+.brand { display: flex; align-items: baseline; gap: 8px; padding: 13px 14px 9px; }
+.brand .logo { font-size: 15.5px; }
+.brand .brand-sub {
+  font-size: 10.5px; color: var(--text3); letter-spacing: .08em; text-transform: uppercase;
+}
+
+/* ---------- ② 可读性:11px 一档的小字整体抬到 11.5~12px,并改用次级文本色 ---------- */
+:root { --msg-text: 15px; --msg-time: 11.5px; }
+.composer-foot { font-size: 12px; color: var(--text2); }
+.composer-foot .token-usage { color: var(--text2); }
+.mode-btn, .compact-btn { font-size: 12px; color: var(--text2); }
+.foot-hint { font-size: 11.5px; color: var(--text2); }
+.t-args, .t-res { font-size: 12px; }
+.sess-meta, .group-item .g-count, .set-nav-count, .empty-hint { font-size: 11.5px; }
+.sec-head { font-size: 11px; }
+.m-tag { font-size: 11px; }
+.pill { font-size: 12px; }
+details.m-think summary { font-size: 12px; }
+.think-body, .m-think-live { font-size: 13px; }
+.cb-pre { font-size: 13px; }
+.cb-lang { font-size: 11px; }
+.cb-copy { font-size: 11.5px; }
+.md :not(pre) > code { font-size: .9em; }
+.boot-tile .bt-desc, .model-tile .mt-sub, .model-tile .mt-stats { font-size: 11.5px; }
+.fs-name { font-size: 13.5px; }
+.fs-head { font-size: 12.5px; }
+.msg.status .m-text { font-size: 12.5px; }
+.chat-head .title { font-size: 14px; }
+
+/* ---------- v4.1:输入卡再圆一点(DSH radius-panel 28 的本地化),聚焦环收到 1px ---------- */
+.composer-box { border-radius: 24px; }
+.composer-box:focus-within { box-shadow: 0 0 0 1px var(--accent), 0 6px 20px var(--sh2); }
+
+/* =====================================================================
+   ===== v4.2 分层骨架(DSH / Arc 式):侧栏+顶栏=一块"框",聊天区=叠上去的圆角"页" =====
+   原来界面是"三块":① 侧栏 ② 顶栏 ③ 聊天区,各画各的底色和分隔线。
+   现在:① ② 合成一块 frame(同一底色、中间不再画线),③ 是一张圆角页,
+   浮在 frame 上(投影 + 发丝描边),四边留白让框透出来 —— 一眼就是"页叠在框上"。
+   ===================================================================== */
+:root { --frame: #eceee8; }
+html[data-theme="dark"] { --frame: #040404; }
+
+/* 框:整个窗口底 = frame;侧栏与顶栏都不再画自己的底色/分隔线 */
+body { background: var(--frame); }
+aside { background: transparent; border-right: none; }
+aside::after { display: none; }
+header { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; border-bottom: none; }
+main { background: transparent; }
+
+/* 页:聊天区是一张圆角纸,浮起来 */
+.chat {
+  background:
+    radial-gradient(760px 460px at 10% -6%, var(--glow1), transparent 62%),
+    radial-gradient(680px 460px at 92% 106%, var(--glow2), transparent 60%),
+    var(--bg);
+  border-radius: 16px;
+  margin: 0 10px 10px 10px;
+  box-shadow: 0 0 0 .5px var(--border), 0 10px 30px var(--sh2), 0 2px 6px var(--sh1);
+  overflow: hidden;                 /* 内部滚动条/浮层不溢出圆角 */
+  position: relative; z-index: 1;
+}
+/* 页内的顶栏分隔线取消后,聊天头与页边之间留一点呼吸 */
+.chat-head { padding-top: 2px; }
+/* 侧栏现在坐在框上:选中/hover 的中性叠色要稍微加重一点点才看得出来 */
+.sess-item:hover, .group-item:hover { background: rgba(38,49,42,.09); }
+.sess-item.active, .group-item.active { background: rgba(38,49,42,.07); }
+html[data-theme="dark"] .sess-item:hover, html[data-theme="dark"] .group-item:hover { background: rgba(255,255,255,.08); }
+html[data-theme="dark"] .sess-item.active, html[data-theme="dark"] .group-item.active { background: rgba(255,255,255,.06); }
+/* 框上的小控件描边略加重,免得在 frame 上"洗白" */
+header .icon-btn { border-color: var(--border2); background: transparent; }
+.pill { background: rgba(38,49,42,.06); }
+html[data-theme="dark"] .pill { background: rgba(255,255,255,.07); }
+@media (max-width: 760px) {
+  .chat { margin: 0 6px 6px 6px; border-radius: 12px; }
+}
+
+/* v4.3:暗色下"页"比"框"更亮一档,分离感补齐 */
+html[data-theme="dark"] .chat {
+  background:
+    radial-gradient(760px 460px at 10% -6%, var(--glow1), transparent 62%),
+    radial-gradient(680px 460px at 92% 106%, var(--glow2), transparent 60%),
+    #0d0e0c;
+  box-shadow: 0 0 0 .5px rgba(236,232,220,.09), 0 10px 30px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
+}
+/* =====================================================================
+   ===== v5 顶部条带重做:一条线,三组东西 —— 身份 | 上下文 ......... 操作 =====
+   原来不协调的原因(逐条对上):
+     1) 品牌行是 padding 撑高的(13/9),顶栏控件是另一套 padding(9/16)撑高的,
+        两行的垂直中心差着 ~5px,所以 "Mini Code" 明显比右边的按钮矮半头。
+     2) pill 是 999px 胶囊 + 等宽字 + 有描边,按钮是 8px 方角 + 无底 + 有描边,
+        同一条带上两套形状语言 → 看着像两个团队的控件。
+     3) pill 左边在 x=296、页左边在 x=290;按钮右边和页右边也不齐 → 顶栏和
+        下面那张"页"没有共用网格。
+   做法:
+     a) 定高一条带 --band-h,内部一律垂直居中 → 品牌与控件同一条基线;
+     b) 条带左右内缩 = .chat 的 margin(10px) → pill 左沿压着页左沿、配置按钮
+        右沿压着页右沿,上下两张网格咬合;
+     c) pill 和按钮合并成同一族"安静控件":同高 28、同圆角 8、无边框、只留
+        极淡叠底;pill 用一颗状态点代替胶囊当标识;
+     d) 侧栏内部左内缩统一 12px(品牌 / 新建按钮 / 会话列表)。
+   ===================================================================== */
+:root { --band-h: 46px; --band-x: 10px; --side-x: 12px; --ctl-h: 28px; }
+
+/* ---------- a) 一条定高的带:品牌行与顶栏共用同一垂直中心 ---------- */
+.brand {
+  height: var(--band-h);
+  padding: 0 var(--side-x);
+  align-items: center;                 /* 原来是 baseline,和右侧控件对不齐 */
+  gap: 7px;
+  flex: 0 0 auto;
+}
+.brand .logo { font-size: 15px; }
+.brand .brand-sub { font-size: 9.5px; letter-spacing: .14em; }
+
+header {
+  height: var(--band-h);
+  padding: 0 var(--band-x);            /* 左右内缩 = 页的 margin,网格对齐 */
+  gap: 6px;
+  align-items: center;
+}
+
+/* ---------- b/c) 同一条带上的控件:pill 与按钮同一套尺寸语言 ---------- */
+.pill,
+header .icon-btn {
+  height: var(--ctl-h);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid transparent;       /* 描边一律去掉,靠叠底分层 */
+  border-radius: var(--r-sm);          /* 8px,和侧栏控件同族,不再用 999px */
+  background: rgba(38, 49, 42, .055);
+  color: var(--text2);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+html[data-theme="dark"] .pill,
+html[data-theme="dark"] header .icon-btn { background: rgba(255, 255, 255, .06); }
+
+/* 审批徽标:保持红色告警语义,但尺寸/圆角跟这条带对齐(仍然默认隐藏) */
+header .approval-badge {
+  height: var(--ctl-h);
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+}
+header .approval-badge.show { display: inline-flex; }
+
+header .icon-btn:hover {
+  background: rgba(38, 49, 42, .10);
+  color: var(--text);
+  border-color: transparent;
+}
+html[data-theme="dark"] header .icon-btn:hover {
+  background: rgba(255, 255, 255, .11);
+  color: var(--text);
+}
+header .icon-btn:active { transform: translateY(.5px); }
+
+/* 状态点代替"胶囊"做标识:一个亮点的存在感比一圈描边安静得多 */
+.pill { max-width: 420px; }
+.pill::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring-soft);
+}
+.pill b { color: var(--text); font-weight: 600; }
+/* 端口号比模型名退一档,信息有主次 */
+.pill { color: var(--text2); }
+
+/* ---------- d) 侧栏左内缩统一 12px,品牌/新建/列表同一条竖线 ---------- */
+.new-btn { margin: 4px var(--side-x) 6px; }
+.sec-head { padding-left: var(--side-x); padding-right: var(--side-x); }
+.sess-list { padding-left: var(--side-x); padding-right: var(--side-x); }
+.group-list { padding-left: var(--side-x); padding-right: var(--side-x); }
+/* 群区/归档区的分隔线也跟着内缩,不再横穿到侧栏两边 */
+.group-sec { border-top: none; position: relative; }
+.group-sec::before {
+  content: ""; position: absolute; left: var(--side-x); right: var(--side-x); top: 0;
+  height: 1px; background: var(--border); pointer-events: none;
+}
+.sess-item, .group-item { padding-left: 10px; padding-right: 10px; }
+
+@media (max-width: 760px) {
+  :root { --band-h: 42px; --band-x: 6px; }
+  .brand { padding-left: 10px; }
+}
+/* =====================================================================
+   ===== v6:① 品牌徽标(放大、渐变、有形状) ② 模型/端口标签挪进会话头
+            ③ 内容主轴加宽(两边留白 130px → ~30px) ④ 侧栏渐变 =====
+   ===================================================================== */
+
+/* ---------- ① 品牌:32px 徽标 + 20px 字标,顶栏条带随之抬到 56px ---------- */
+:root {
+  --band-h: 56px;
+  --mk-1: #aee98f; --mk-2: #2e7d4f; --mk-3: #153f2b;   /* 徽标渐变(亮) */
+  --side-g1: rgba(128, 199, 118, .34);                  /* 侧栏顶部绿光晕 */
+  --side-g2: rgba(84, 142, 120, .16);
+  --side-wash: rgba(255, 255, 255, .6);
+  --side-sweep: rgba(128, 199, 118, .12);
+  --act-1: rgba(46, 125, 79, .17); --act-2: rgba(46, 125, 79, .045);
+  --chip: rgba(46, 125, 79, .10);
+}
+html[data-theme="dark"] {
+  --mk-1: #86e58a; --mk-2: #2f7a52; --mk-3: #0d2417;
+  --side-g1: rgba(106, 216, 108, .16);
+  --side-g2: rgba(106, 216, 108, .055);
+  --side-wash: rgba(255, 255, 255, .028);
+  --side-sweep: rgba(106, 216, 108, .06);
+  --act-1: rgba(106, 216, 108, .16); --act-2: rgba(106, 216, 108, .035);
+  --chip: rgba(106, 216, 108, .12);
+}
+
+.brand { gap: 10px; }
+.brand-mark {
+  flex: 0 0 32px; width: 32px; height: 32px; display: block;
+  border-radius: 9px;
+  box-shadow: 0 3px 10px var(--ring-soft), 0 1px 2px var(--sh2);
+}
+.brand-mark svg { display: block; }
+/* 渐变色标由 CSS 变量驱动 → 亮/暗主题各自换色,不用换图 */
+.brand-mark .s1 { stop-color: var(--mk-1); }
+.brand-mark .s2 { stop-color: var(--mk-2); }
+.brand-mark .s3 { stop-color: var(--mk-3); }
+.brand .logo { font-size: 20px; letter-spacing: -.022em; }
+.brand .brand-sub {
+  font-size: 9.5px; letter-spacing: .18em;
+  padding-left: 9px; margin-left: 1px;
+  border-left: 1px solid var(--border2);      /* 细线把副标和字标分开 */
+  line-height: 1.1;
+}
+
+/* ---------- ② 模型/端口:搬进会话头后,缩成标题旁边的微型标签 ---------- */
+.chat-head { padding: 0 var(--pad-x); }        /* 和消息列左边距(22px)对齐 */
+.chat-head .pill {
+  height: 20px; padding: 0 8px; gap: 5px;
+  font-size: 11.5px; border-radius: var(--r-xs);
+  background: var(--chip); color: var(--text2);
+  max-width: 340px;
+}
+.chat-head .pill::before { width: 5px; height: 5px; box-shadow: 0 0 0 2px var(--ring-soft); }
+.chat-head .pill b { color: var(--title); font-weight: 600; }
+.chat-head .title { max-width: 420px; }
+
+/* ---------- ③ 内容主轴加宽:1200px 宽的页面两边各空 130px → 约 30px ---------- */
+:root { --col-w: clamp(700px, 95%, 1280px); }
+@media (min-width: 1560px) {
+  :root { --col-w: clamp(920px, 80%, 1400px); }   /* 超宽屏仍守住可读行长 */
+}
+
+/* ---------- ④ 侧栏渐变:顶部绿光托住品牌,底部一抹冷绿收尾,选中项也走渐变 ---------- */
+aside {
+  background:
+    radial-gradient(340px 210px at -10% -2%, var(--side-g1), transparent 68%),
+    radial-gradient(300px 260px at 112% 104%, var(--side-g2), transparent 70%),
+    linear-gradient(155deg, var(--side-sweep), transparent 42%),
+    linear-gradient(180deg, var(--side-wash), transparent 26%);
+}
+.sess-item:hover, .group-item:hover {
+  background: linear-gradient(90deg, var(--act-2), transparent 82%);
+}
+/* 选中项写在 hover 之后:鼠标掠过时也不要盖掉"当前会话"的那层绿 */
+.sess-item.active, .group-item.active {
+  background: linear-gradient(90deg, var(--act-1), var(--act-2) 62%, transparent);
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
+.sess-item.active:hover, .group-item.active:hover {
+  background: linear-gradient(90deg, var(--act-1), var(--act-2) 62%, transparent);
+}
+/* 分区那条内缩的 hairline 也改成渐隐,别在渐变底上切一刀硬线 */
+.group-sec::before { background: linear-gradient(90deg, var(--border2), transparent 88%); }
+/* =====================================================================
+   ===== v7:① 侧栏与顶栏有色差 → 渐变改铺在整块"框"上 ② 会话头:模型标签在前
+            ③ 会话标题只留几个字(完整内容在 tooltip) =====
+   ===================================================================== */
+
+/* ---------- ① 一块连续的框:渐变从 aside 挪到 body ----------
+   v6 把绿光只画在 aside 上,于是"侧栏(带绿)"和"顶栏(frame 平色)"交界处
+   出现一条竖向色差。现在整块 frame(body)只画一层渐变,侧栏保持透明,
+   左上那道光从品牌一路铺到顶栏,不会再有两块颜色。 */
+aside { background: none; }
+body {
+  background:
+    radial-gradient(460px 250px at -5% -2%, var(--side-g1), transparent 64%),
+    radial-gradient(320px 300px at 2% 104%, var(--side-g2), transparent 70%),
+    linear-gradient(155deg, var(--side-sweep), transparent 40%),
+    linear-gradient(180deg, var(--side-wash), transparent 22%),
+    var(--frame);
+}
+
+/* ---------- ②③ 会话头:先模型标签,再头像 + 短标题 ---------- */
+/* 标签排在最前(DOM 已挪到 chat-ava 之前),这里把它做成一颗"前置徽标" */
+.chat-head .pill {
+  height: 22px; padding: 0 9px; gap: 6px;
+  font-size: 12px; border-radius: var(--r-xs);
+}
+/* 标题只留几个字,后面省略号;完整内容在 tooltip(见 setChatTitle 里的 title 属性) */
+.chat-head .title { max-width: 168px; }
+.chat-head .pill + .chat-ava { margin-left: 2px; }
+@media (max-width: 900px) {
+  .chat-head .title { max-width: 120px; }
+  .chat-head .pill { max-width: 220px; }
+}
+/* =====================================================================
+   ===== v8:① 顶栏按钮换细线 SVG 图标(去掉彩色 emoji) ② 会话头不放头像 =====
+   ===================================================================== */
+
+/* ---------- ① 图标:和徽标同一套线宽语言,颜色跟文字走(currentColor) ---------- */
+.icon-btn .ico {
+  width: 14px; height: 14px; flex: 0 0 14px;
+  fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+header .icon-btn { gap: 7px; }
+header .icon-btn .ico { opacity: .85; }
+header .icon-btn:hover .ico { opacity: 1; }
+
+/* ---------- ② 会话头只要标题 ---------- */
+/* paintChatAva() 会写行内 display:flex,所以这里用 !important 压住 */
+.chat-head .chat-ava { display: none !important; }
+/* =====================================================================
+   ===== v9:会话头里"模型标签"与"标题组"之间拉开距离 + 一条渐隐竖线 ----------
+   原来两者只靠 flex gap 8px 挨着,标签(带底色)和标题(粗体)挤成一坨。
+   现在:标签 → 16px → 一条 16px 高的渐隐竖线 → 13px → 标题,
+   和侧栏里 "Mini Code | AGENT" 用的是同一种分隔语言。
+   ===================================================================== */
+.chat-head { gap: 10px; }
+.chat-head .pill { margin-right: 6px; }          /* 6 + gap10 = 16px */
+
+/* 标题是标签之后的第二个兄弟(中间那个头像已隐藏),用相邻兄弟定位它 */
+.chat-head .pill + .chat-ava + .title {
+  position: relative;
+  padding-left: 13px;
+}
+.chat-head .pill + .chat-ava + .title::before {
+  content: "";
+  position: absolute; left: 0; top: 50%;
+  width: 1px; height: 16px;
+  transform: translateY(-50%);
+  background: linear-gradient(180deg, transparent, var(--border2) 38%, var(--border2) 62%, transparent);
+}
+
+@media (max-width: 900px) {
+  .chat-head { gap: 8px; }
+  .chat-head .pill { margin-right: 2px; }
+  .chat-head .pill + .chat-ava + .title { padding-left: 10px; }
+}
+/* =====================================================================
+   ===== v10「执行过程」折叠条:没有正文的思考 + 工具调用,默认收进一条摘要 =====
+   一条横在正文上方的窄条:执行过程 · 5 步 · 2 次思考      展开/收起
+   展开后是一条"时间轴":每一步左边一根细轨,参数/结果都缩一级字号。
+   ===================================================================== */
+
+/* 独立成卡时不要气泡的底(它只是条窄条) */
+.msg.steps { margin-left: calc(var(--msg-avatar) + var(--msg-gap)); }
+.msg.steps .m-card {
+  background: transparent; border: none; box-shadow: none; padding: 0; max-width: none;
+}
+
+details.m-steps {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-a, var(--surface2));
+  overflow: hidden;
+  transition: border-color var(--dur) var(--ease);
+}
+details.m-steps:hover { border-color: var(--border2); }
+details.m-steps[open] { border-color: var(--border2); }
+
+details.m-steps > summary {
+  display: flex; align-items: center; gap: 8px;
+  height: 30px; padding: 0 10px;
+  font-size: 12px; color: var(--text2); cursor: pointer; user-select: none;
+  list-style: none;
+}
+details.m-steps > summary::-webkit-details-marker { display: none; }
+details.m-steps > summary:hover { background: var(--hover); color: var(--text); }
+details.m-steps > summary::before {
+  content: ""; width: 5px; height: 5px; flex: 0 0 5px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg); opacity: .7; margin-left: 2px;
+  transition: transform var(--dur) var(--ease);
+}
+details.m-steps[open] > summary::before { transform: rotate(45deg); }
+details.m-steps[open] > summary { border-bottom: 1px solid var(--border); }
+.ms-t { font-weight: 600; color: var(--title2); letter-spacing: .01em; }
+.ms-n {
+  font-size: 11px; color: var(--text3);
+  padding: 1px 6px; border-radius: 999px; background: var(--hover);
+}
+.ms-hint { margin-left: auto; font-size: 11px; color: var(--text3); }
+
+/* 展开后的时间轴 */
+.m-steps-body {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px 11px 12px;
+  /* 步数多时在自己肚子里滚,别把正文顶出屏幕 */
+  max-height: 46vh; overflow: auto;
+}
+.ms-step {
+  position: relative;
+  padding-left: 11px;
+  border-left: 1px solid var(--border2);
+  font-size: 12px; color: var(--text2);
+  word-break: break-word;
+}
+.ms-step:last-child { border-left-color: transparent; }
+.ms-step .t-name { display: inline-block; font-size: 11.5px; }
+.ms-step .t-args, .ms-step .t-res { font-size: 11.5px; line-height: 1.62; }
+
+/* 每个工具步骤自己也是一层折叠:常态只有一行"⚙ 名字 + 参数一行 + 状态",
+   点开才见参数全文和返回结果 —— 后期回看时整屏是目录,不是一大坨输出。 */
+details.ms-step > summary {
+  display: flex; align-items: center; gap: 7px;
+  min-width: 0; padding: 1px 0; cursor: pointer; user-select: none;
+  list-style: none; color: var(--text2);
+}
+details.ms-step > summary::-webkit-details-marker { display: none; }
+details.ms-step > summary::before {
+  content: ""; flex: 0 0 4px; width: 4px; height: 4px;
+  border-right: 1.4px solid currentColor; border-bottom: 1.4px solid currentColor;
+  transform: rotate(-45deg); opacity: .5;
+  transition: transform var(--dur) var(--ease);
+}
+details.ms-step[open] > summary::before { transform: rotate(45deg); }
+details.ms-step > summary:hover { color: var(--text); }
+details.ms-step[open] > summary { color: var(--text); margin-bottom: 3px; }
+.ms-step .ms-arg1 {
+  flex: 1 1 auto; min-width: 0;
+  font-family: var(--mono); font-size: 11px; color: var(--text3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ms-tag {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; line-height: 16px; height: 16px; padding: 0 6px;
+  border-radius: 999px; background: var(--hover); color: var(--text3);
+}
+.ms-tag.ok { color: var(--accent-t); background: var(--accent-l); }
+.ms-tag.run { color: var(--text2); }
+.ms-step-body { padding: 0 0 2px 12px; min-width: 0; }
+.ms-step .ms-args {
+  font-family: var(--mono); font-size: 11px; line-height: 1.6; color: var(--text3);
+  white-space: pre-wrap; word-break: break-all; margin-bottom: 4px;
+}
+.ms-step .t-res {
+  margin-top: 3px; padding: 5px 8px;
+  border-radius: var(--r-xs); background: var(--hover);
+  max-height: 240px; overflow: auto; white-space: pre-wrap;
+}
+.ms-cut { display: block; margin-top: 4px; color: var(--text3); font-size: 11px; }
+/* 步骤里的思考块:比正文里那个再收一点,别抢戏 */
+.ms-step details.m-think { margin: 0; }
+.ms-step details.m-think summary { padding: 2px 4px; }
+.ms-step .think-body { border-top: none; padding-top: 4px; font-size: 12.5px; color: var(--text2); }
+
+/* 并进正文卡片里时:贴在标题行下方,和答案之间留一口呼吸 */
+.m-card details.m-steps.ms-inline { margin: 2px 0 10px; }

@@ -1,0 +1,15 @@
+/* 示例皮肤:只覆盖自定义属性。
+   base.css 里所有颜色都走 var(--*),所以皮肤不需要重复任何组件规则 ——
+   改 4 个变量就能换一套配色,内置主题的深浅切换仍然生效。 */
+:root {
+  --accent: #2f8fb5;
+  --accent-t: #1f6f92;
+  --ring-soft: rgba(47, 143, 181, .16);
+  --title: #0d2b3a;
+}
+html[data-theme="dark"] {
+  --accent: #5fc4e8;
+  --accent-t: #8fd8f2;
+  --ring-soft: rgba(95, 196, 232, .2);
+  --title: #e6f6ff;
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/user/mini_code/agent"
+	"github.com/user/mini_code/plugin"
 	"github.com/user/mini_code/tools"
 )
 
@@ -63,9 +64,27 @@ type Approver interface {
 func (s *Session) gateFor(cfg *agent.AgentConfig) ToolGate {
 	return func(ctx context.Context, toolName string, params map[string]interface{}) (bool, string) {
 		if cfg != nil && len(cfg.Permissions.Tools) > 0 && !cfg.Permissions.IsToolAllowed(toolName, "") {
-			return false, fmt.Sprintf("Error: tool %q is not permitted for agent role %q. Use only the tools available to you.", toolName, s.record.AgentRole)
+			// The compiled role table only knows core tools; a plugin tool is
+			// absent from it by construction, so an absent entry is not a deny.
+			// An explicit "deny" from the role still wins.
+			if !explicitlyDenied(cfg, toolName) && isPluginTool(toolName) {
+				// allowed: fall through to the mode check
+			} else {
+				return false, fmt.Sprintf("Error: tool %q is not permitted for agent role %q. Use only the tools available to you.", toolName, s.record.AgentRole)
+			}
 		}
 		if s.manager == nil || s.manager.ModeOf(s.ID()) != ModeCautious {
+			return true, ""
+		}
+		// A plugin tool runs an external program the host knows nothing about,
+		// so in cautious mode it gets the same treatment as a destructive shell
+		// command: ask the user first. This is the one place the plugin layer
+		// touches the gate, and it only ever makes the gate stricter.
+		if isPluginTool(toolName) {
+			decision := s.requestApproval(ctx, toolName, params)
+			if !decision.Approved {
+				return false, fmt.Sprintf("Error: Operation denied in cautious mode (%s). Do NOT retry this operation. State the limitation to the user and continue with alternatives if any.", decision.Reason)
+			}
 			return true, ""
 		}
 		action, _ := classifyDestructive(toolName, params)
@@ -80,6 +99,20 @@ func (s *Session) gateFor(cfg *agent.AgentConfig) ToolGate {
 		}
 		return true, ""
 	}
+}
+
+// isPluginTool reports whether name belongs to an installed, enabled plugin.
+// Only the deny / cautious paths call it, so the directory read never happens on
+// the hot path of an allowed core tool call.
+func isPluginTool(name string) bool {
+	for _, p := range plugin.Load() {
+		for _, t := range p.Manifest.Tools {
+			if t.Name == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // requestApproval sends a destructive operation to the approver (UI popup)

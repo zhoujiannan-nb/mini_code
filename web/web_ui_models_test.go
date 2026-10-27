@@ -10,10 +10,10 @@ import (
 // button that opens the editor, and the one-click "获取参数" probe that fills
 // the context window and sampling defaults from the serving framework.
 func TestIndexServesModelTileEditor(t *testing.T) {
-	page, err := embeddedPage()
-	if err != nil {
-		t.Fatalf("embeddedPage: %v", err)
-	}
+	// The UI is split into index.html + css/ + js/, so the markup, the model
+	// editor's template strings and the probe call live in different files.
+	// Assert against the whole shipped source, not the HTML shell alone.
+	page := uiSource(t)
 	for _, want := range []string{
 		`id="model-list" class="model-grid"`,
 		`id="model-edit"`,

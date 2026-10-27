@@ -87,6 +87,10 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /favicon.ico", s.handleFavicon)
 	mux.HandleFunc("GET /avatars/{name}", s.handleAvatar)
 
+	// --- plugins (file-based drop-ins under ~/.mini_code/plugins) ---
+	mux.HandleFunc("GET /plugins/", s.handlePluginAsset)
+	mux.HandleFunc("GET /api/plugins", s.handlePluginsList)
+
 	// --- startup animation themes (untrusted third-party HTML, see bootanim.go) ---
 	mux.HandleFunc("GET /bootanim/", s.handleBootAnimAsset)
 	mux.HandleFunc("GET /api/bootanim", s.handleBootAnimList)
@@ -153,6 +157,13 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 // --- UI ---
 
 func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	// CSS/JS/SVG live as separate embedded files so they stay editable and
+	// diffable; "/" itself still serves the single HTML document. Requests
+	// with a whitelisted asset extension are answered here (before the page)
+	// and never fall through to the HTML below.
+	if s.tryServeUIAsset(w, r) {
+		return
+	}
 	page, err := s.static()
 	if err != nil {
 		http.Error(w, "ui not available: "+err.Error(), http.StatusInternalServerError)
@@ -165,6 +176,9 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// 开机动画的配置直接注入页面里的占位 script:内联播放器在首帧之前就知道
 	// 要不要播、播哪个主题,不必等一次 /api 往返,首屏不会先白一下再盖黑幕。
 	page = injectBootAnim(page, s.bootAnimBootJSON())
+	// 插件皮肤/壁纸:同样在服务端注入,插件是纯落盘即生效(不改页面、不重编译)。
+	// 注入点在内置样式之后,所以皮肤可以覆盖内置主题。
+	page = injectPluginAssets(page)
 	w.Write([]byte(page))
 }
 

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="1200" height="800">
+  <!-- 示例壁纸:一张可以直接用的渐变 + 细网格。
+       壁纸会被 background-size:cover 铺满消息区,所以只要保证「怎么裁都不难看」即可,
+       不要在这里放需要看完整才行的重要信息。 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef6ff"/>
+      <stop offset="0.55" stop-color="#e9eef8"/>
+      <stop offset="1" stop-color="#f4f1ff"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#c8d4e6" stroke-opacity=".35" stroke-width="1"/>
+    </pattern>
+    <radialGradient id="glow" cx="0.12" cy="0" r="0.9">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="800" fill="url(#bg)"/>
+  <rect width="1200" height="800" fill="url(#grid)"/>
+  <rect width="1200" height="800" fill="url(#glow)"/>
+</svg>

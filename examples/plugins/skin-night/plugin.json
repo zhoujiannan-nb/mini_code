@@ -1,0 +1,9 @@
+{
+  "id": "skin-night",
+  "name": "夜间皮肤(示例)",
+  "version": "0.1.0",
+  "description": "示例皮肤插件:只加一条 CSS,把强调色换成偏青的蓝。演示 styles 字段的用法。",
+  "enabled": false,
+  "styles": ["skin.css"]
+}
+
