@@ -29,7 +29,8 @@ const taskProgressAnchor = `<progress_anchor>
 
 const workConstraints = `<work_requirements>
 # Work Requirements
-- Place all scripts, dependencies, and all files needed or generated during task execution into _work_{timestamp} under current directory.
+- Place all scripts, dependencies, and all files needed or generated during task execution into '_work_{timestamp}_{theme}' under the current directory. The theme must use the user's language.
+- If the work involves SSH or remote login to other terminals, still create working files in the remote terminal using the same format, and place all project-related files there.
 - For temporary files only; no final outputs. Auto-cleaned after task completion.
 </work_requirements>`
 
