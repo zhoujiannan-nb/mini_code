@@ -46,6 +46,17 @@
       '" data-file="' + esc(path) + '">' + inner + "</a>";
   }
 
+  // sessionLinkHTML 生成一个"会话跳转"芯片。模型输出
+  //   [八卡4090调优](mc-session://6865c8f734c48ad955555c7c)
+  // 时渲染成可点元素,点击交给 selectSession(id)(见下方 click 委托)。
+  // 用自定义 scheme 而不是 #fragment:真链接、锚点、路径都不会和它撞车。
+  function sessionLinkHTML(id, labelText) {
+    const sid = String(id == null ? "" : id).trim().replace(/\/+$/, "");
+    const shown = labelText != null ? mdUnescape(labelText) : "会话 " + sid.slice(0, 8);
+    return '<a class="md-sess" role="button" tabindex="0" title="跳转到会话 ' + esc(sid) +
+      '" data-session="' + esc(sid) + '">💬 ' + escFast(shown) + "</a>";
+  }
+
   // mdLinkifyPaths 在已转义的纯文本里把裸路径替换成链接。
   // 只在"还没有标签"的阶段调用(行内代码/图片/链接已进 stash),所以不会咬到 HTML。
   // 裸文本只认"明确像路径"的写法:盘符/UNC/绝对/./../~/ 开头,
@@ -164,9 +175,13 @@
    s = s.replace(/!\[([^\]]*)\]\(\s*(https?:[^)\s"']+)(?:\s+\"[^\"]*\")?\s*\)/g,
      (m, alt, url) => keep('<img class="md-img" src="' + url + '" alt="' + alt + '">'));
    s = s.replace(/\[([^\]]+)\]\(\s*([^)\s"']+)(?:\s+\"[^\"]*\")?\s*\)/g, (m, txt, url) => {
-     if (/^\s*(javascript|data|vbscript):/i.test(url)) return m; // 危险协议不转链接
-     // [在浏览器打开](D:\proj\index.html):本地路径同样是"点了就打开"
-     if (mdIsFilePath(url)) return keep(fileOpenLinkHTML(url, null, txt));
+    if (/^\s*(javascript|data|vbscript):/i.test(url)) return m; // 危险协议不转链接
+      // [标题](mc-session://<id>):会话跳转芯片。必须排在 mdIsFilePath 之前,
+      // 否则冒号形式的路径判断可能先把它抢走。
+      if (/^mc-session:\/\//i.test(url)) return keep(sessionLinkHTML(url.replace(/^mc-session:\/\//i, ""), txt));
+      // [在浏览器打开](D:\proj\index.html):本地路径同样是"点了就打开"
+      if (mdIsFilePath(url)) return keep(fileOpenLinkHTML(url, null, txt));
+
      return '<a href="' + url + '" target="_blank" rel="noopener">' + txt + "</a>";
    });
    s = mdLinkifyPaths(s, keep);
@@ -394,19 +409,31 @@
     }
   }
   document.addEventListener("click", (e) => {
-    const a = e.target.closest(".md-file");
+    const a = e.target.closest(".md-file, .md-sess");
     if (!a) return;
     e.preventDefault();
-    openFilePath(a.dataset.file || a.textContent);
+    activateMDLink(a);
   });
   // 键盘同样可用:它是一个 role=button 的链接
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;
-    const a = e.target.closest && e.target.closest(".md-file");
+    const a = e.target.closest && e.target.closest(".md-file, .md-sess");
     if (!a) return;
     e.preventDefault();
-    openFilePath(a.dataset.file || a.textContent);
+    activateMDLink(a);
   });
+  // .md-file → 用系统默认程序打开那个路径;.md-sess → 跳到那个会话。
+  // selectSession 直接按 id 打 /api/sessions/{id},所以已归档的会话同样能跳,
+  // 不要求它出现在左侧列表里。
+  function activateMDLink(a) {
+    if (!a.classList.contains("md-sess")) { openFilePath(a.dataset.file || a.textContent); return; }
+    const sid = (a.dataset.session || "").trim();
+    if (!sid) return;
+    if (typeof selectSession !== "function") { toast("无法跳转:界面尚未就绪", "err"); return; }
+    Promise.resolve(selectSession(sid))
+      .then(() => toast("已跳到会话 " + sid.slice(0, 8), "ok"))
+      .catch(() => toast("找不到会话 " + sid.slice(0, 8), "err"));
+  }
 function toast(msg, kind) {
   const t = $("#toast");
   t.textContent = msg;

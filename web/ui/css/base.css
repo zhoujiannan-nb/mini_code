@@ -408,6 +408,22 @@ details.m-think[open] summary { margin-bottom: 6px; }
 }
 .md a.md-file:hover { color: var(--accent); text-decoration-style: solid; }
 .md a.md-file > code { color: inherit; background: var(--accent-l); }
+/* 会话跳转芯片:模型输出 [标题](mc-session://<id>) 时出现,点击切到那个会话 */
+.md a.md-sess {
+  display: inline-block;
+  color: var(--accent-t);
+  background: var(--accent-l);
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 0 8px;
+  margin: 0 1px;
+  font-size: .92em;
+  line-height: 1.6;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.md a.md-sess:hover { color: var(--accent); border-color: var(--accent); }
 .md del { color: var(--text3); }
 .md :not(pre) > code {
   font-family: var(--mono); font-variant-ligatures: none; font-size: .9em;
