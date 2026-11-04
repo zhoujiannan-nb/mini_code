@@ -537,6 +537,12 @@ func (s *Session) WorkerBrief() provider.Message {
 		if !isRoot {
 			return provider.Message{}
 		}
+		// The guidance tells the model to use the workers tool, so it must not be
+		// injected when that tool is not exposed (a tool-ablation run does exactly
+		// that; production never disables it).
+		if disabledTools()["workers"] {
+			return provider.Message{}
+		}
 		return BuildWorkerBrief("none", workerAssignmentGuidance)
 	}
 	if name == "" {

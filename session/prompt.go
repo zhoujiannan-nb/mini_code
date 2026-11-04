@@ -2,8 +2,10 @@ package session
 
 import (
 	"log/slog"
+	"os"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/user/mini_code/agent"
 	"github.com/user/mini_code/provider"
@@ -201,6 +203,7 @@ func (pb *PromptBuilder) EnableGroupTool(sessionID string, api tools.GroupChatDi
 // cannot sneak past an explicit "deny".
 func (pb *PromptBuilder) GetFilteredDefinitions(cfg *agent.AgentConfig) []provider.ToolSchema {
 	defs := pb.Tools.GetDefinitions(false)
+	defs = dropDisabledTools(defs)
 	if cfg == nil || len(cfg.Permissions.Tools) == 0 {
 		return defs
 	}
@@ -216,6 +219,58 @@ func (pb *PromptBuilder) GetFilteredDefinitions(cfg *agent.AgentConfig) []provid
 		}
 	}
 	return filtered
+}
+
+// ablationEnv is the tool-ablation hook: MC_DISABLE_TOOLS="copy_file,glob,task"
+// (comma separated names) drops those schemas from every request in this process.
+// It exists to measure what a smaller tool list costs or saves — the schema array
+// is part of the cached prompt prefix, so the set must be fixed per process: it is
+// read once and frozen. Empty/unset means production behaviour (nothing dropped).
+const ablationEnv = "MC_DISABLE_TOOLS"
+
+var (
+	ablationOnce     sync.Once
+	ablationDisabled map[string]bool
+)
+
+func disabledTools() map[string]bool {
+	ablationOnce.Do(func() {
+		ablationDisabled = parseDisabledTools(os.Getenv(ablationEnv))
+	})
+	return ablationDisabled
+}
+
+// parseDisabledTools turns the env value into a set ("a, b ,,c" -> {a,b,c}).
+func parseDisabledTools(v string) map[string]bool {
+	set := map[string]bool{}
+	for _, name := range strings.Split(v, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			set[name] = true
+		}
+	}
+	return set
+}
+
+// dropDisabledTools removes the ablated tools. It runs before the role filter so
+// plugin tools (web_search, sessions_*) can be ablated too.
+func dropDisabledTools(defs []provider.ToolSchema) []provider.ToolSchema {
+	return filterOutTools(defs, disabledTools())
+}
+
+// filterOutTools is the pure half, so the removal rule stays testable even though
+// the env value itself is read once and frozen per process.
+func filterOutTools(defs []provider.ToolSchema, dis map[string]bool) []provider.ToolSchema {
+	if len(dis) == 0 || len(defs) == 0 {
+		return defs
+	}
+	kept := make([]provider.ToolSchema, 0, len(defs))
+	for _, d := range defs {
+		if dis[d.Function.Name] {
+			continue
+		}
+		kept = append(kept, d)
+	}
+	return kept
 }
 
 // explicitlyDenied reports whether the role names this tool with a "deny"
