@@ -229,6 +229,68 @@ func imageURLsOf(m provider.Message) []string {
 	return urls
 }
 
+// orphanToolCallNote is the synthetic result written for a tool call that never
+// ran. The loop persists the assistant message carrying tool_calls BEFORE
+// executing them (so a web refresh mid-tool keeps the reply); if the process
+// dies in that window, the stored history ends on a call with no answer, and
+// the next task would replay it as-is.
+//
+// That request is malformed: the OpenAI tool-calling contract requires exactly
+// one tool message per tool_call_id, and vLLM/SGLang/DeepSeek answer 400, which
+// leaves the session permanently unable to send anything. Repairing only ever
+// inserts after the results that already follow the offending reply - which for
+// a crashed run is the tail of the history - so the cached prefix is untouched.
+const orphanToolCallNote = "Tool not executed: the task was interrupted before this call ran."
+
+// repairOrphanToolCalls appends a synthetic tool result for every tool call
+// whose result is missing. It only ever inserts; existing messages are copied
+// unchanged, so the request stays a byte-for-byte extension of the cached
+// prefix.
+func repairOrphanToolCalls(messages []provider.Message) []provider.Message {
+	answered := make(map[string]bool, len(messages))
+	for _, m := range messages {
+		if m.Role == "tool" && m.ToolCallID != "" {
+			answered[m.ToolCallID] = true
+		}
+	}
+	var names []string
+	out := make([]provider.Message, 0, len(messages)+2)
+	for i := 0; i < len(messages); i++ {
+		m := messages[i]
+		out = append(out, m)
+		if m.Role != "assistant" || len(m.ToolCalls) == 0 {
+			continue
+		}
+		// Copy the results that already follow this reply untouched, and append
+		// only what is missing after them: existing messages keep their exact
+		// position, so nothing that was already cached shifts.
+		j := i + 1
+		for j < len(messages) && messages[j].Role == "tool" {
+			out = append(out, messages[j])
+			j++
+		}
+		for _, tc := range m.ToolCalls {
+			if tc.ID == "" || answered[tc.ID] {
+				continue
+			}
+			out = append(out, provider.Message{
+				Role:       "tool",
+				ToolCallID: tc.ID,
+				Content:    orphanToolCallNote,
+			})
+			answered[tc.ID] = true
+			names = append(names, tc.Function.Name)
+		}
+		i = j - 1
+	}
+	if len(names) == 0 {
+		return messages
+	}
+	slog.Warn("repaired tool calls left without a result by an interrupted run",
+		"count", len(names), "tools", strings.Join(names, ","))
+	return out
+}
+
 // userMessageMatches reports whether two user messages carry the same text
 // and the same images — used for the "history already ends with this user
 // message" dedup (interrupt recovery must not re-append the message, but a
@@ -482,6 +544,11 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			userMsg,
 		}
 	}
+
+	// A run that died between persisting a tool call and appending its result
+	// leaves the restored history unanswerable; close those calls before the
+	// first request of this task (see repairOrphanToolCalls).
+	messages = repairOrphanToolCalls(messages)
 
 	slog.Info("AgentLoop started", "initial_tokens", util.CountMessagesTokens(messages), "max_input", l.client.GetMaxInput())
 
