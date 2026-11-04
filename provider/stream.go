@@ -66,6 +66,20 @@ func (a *streamAccumulator) mergeToolCalls(deltas []streamDeltaToolCall) {
 	}
 }
 
+// progressSnapshot exposes the in-flight tool calls to the onChunk callback.
+// Strings are shared (headers copied, not bytes), so calling this per SSE chunk
+// costs one small slice regardless of how big the arguments are getting.
+func (a *streamAccumulator) progressSnapshot() []StreamToolCallProgress {
+	if len(a.toolCalls) == 0 {
+		return nil
+	}
+	out := make([]StreamToolCallProgress, 0, len(a.toolCalls))
+	for i, tc := range a.toolCalls {
+		out = append(out, StreamToolCallProgress{Index: i, ID: tc.ID, Name: tc.Function.Name, Args: tc.Function.Arguments})
+	}
+	return out
+}
+
 // ChatStream sends a streaming chat request. onChunk is invoked with the
 // accumulated content/reasoning whenever a delta arrives. The returned
 // ChatResponse is the fully aggregated result (same shape as Chat's).
@@ -209,7 +223,7 @@ func (mc *ModelClient) readStream(ctx context.Context, body io.Reader, onChunk f
 			acc.usage = delta.Usage
 		}
 		if onChunk != nil && (ch.Delta.Content != "" || ch.Delta.ReasoningContent != "" || len(ch.Delta.ToolCalls) > 0) {
-			onChunk(StreamChunk{Content: acc.content, ReasoningContent: acc.reasoning})
+			onChunk(StreamChunk{Content: acc.content, ReasoningContent: acc.reasoning, ToolCalls: acc.progressSnapshot()})
 		}
 	}
 	if err := scanner.Err(); err != nil && !finished {

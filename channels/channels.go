@@ -34,17 +34,25 @@ import (
 
 // Message kinds flowing through the hub.
 const (
-	KindUser            = "user"              // inbound user message from a channel
-	KindAssistant       = "assistant"         // final assistant reply for a task
-	KindToolStart       = "tool_start"        // a tool call is starting
-	KindToolEnd         = "tool_end"          // a tool call has finished
-	KindContextUsage    = "context_usage"     // per-turn context token count for the UI token bar
-	KindUsage           = "usage"             // real per-call provider usage (prompt/cached/completion tokens) for the cache-hit indicator
-	KindStatus          = "status"            // lifecycle notice (see Status* constants)
-	KindError           = "error"             // task failed
-	KindReasoning       = "reasoning_delta"   // live (cumulative) reasoning_content of the model
-	KindContent         = "content_delta"     // live (cumulative) assistant text of the model
-	KindApprovalRequest = "approval_request"  // cautious mode: a destructive operation awaits user approval (Content = ApprovalRequestPayload JSON)
+	KindUser      = "user"       // inbound user message from a channel
+	KindAssistant = "assistant"  // final assistant reply for a task
+	KindToolStart = "tool_start" // a tool call is starting
+	KindToolEnd   = "tool_end"   // a tool call has finished
+	// KindToolOutput is a chunk of output from a tool that is still running
+	// (display only: never persisted, never part of the model's context).
+	KindToolOutput = "tool_output"
+	// KindToolArgs is the arguments of a tool call the model is STILL generating
+	// (Content = everything generated so far). It exists because a big write_file
+	// payload takes minutes to type out while tool_start only fires afterwards;
+	// display only, never persisted.
+	KindToolArgs         = "tool_args"
+	KindContextUsage     = "context_usage"     // per-turn context token count for the UI token bar
+	KindUsage            = "usage"             // real per-call provider usage (prompt/cached/completion tokens) for the cache-hit indicator
+	KindStatus           = "status"            // lifecycle notice (see Status* constants)
+	KindError            = "error"             // task failed
+	KindReasoning        = "reasoning_delta"   // live (cumulative) reasoning_content of the model
+	KindContent          = "content_delta"     // live (cumulative) assistant text of the model
+	KindApprovalRequest  = "approval_request"  // cautious mode: a destructive operation awaits user approval (Content = ApprovalRequestPayload JSON)
 	KindApprovalResolved = "approval_resolved" // the approval was decided / timed out (Content = ApprovalResolvedPayload JSON)
 )
 
@@ -64,15 +72,15 @@ const (
 
 // Message is the unified envelope flowing through the hub.
 type Message struct {
-	ID         string    `json:"id"`
-	Kind       string    `json:"kind"`
-	Channel    string    `json:"channel"`
-	TaskID     string    `json:"task_id,omitempty"` // on terminal messages: inbound message ID that triggered the task
-	Status     string    `json:"status,omitempty"`  // on KindStatus messages: one of the Status* constants
-	SessionID  string    `json:"session_id,omitempty"`
-	SessionKey string    `json:"session_key,omitempty"` // stable external conversation key
-	Mode       string    `json:"mode,omitempty"`        // permission mode for a NEW session (full / cautious); ignored when the message continues an existing session
-	Model      string    `json:"model,omitempty"`       // model name for a NEW session (config key); ignored when the message continues an existing session
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	Channel    string `json:"channel"`
+	TaskID     string `json:"task_id,omitempty"` // on terminal messages: inbound message ID that triggered the task
+	Status     string `json:"status,omitempty"`  // on KindStatus messages: one of the Status* constants
+	SessionID  string `json:"session_id,omitempty"`
+	SessionKey string `json:"session_key,omitempty"` // stable external conversation key
+	Mode       string `json:"mode,omitempty"`        // permission mode for a NEW session (full / cautious); ignored when the message continues an existing session
+	Model      string `json:"model,omitempty"`       // model name for a NEW session (config key); ignored when the message continues an existing session
 	// ContextReminders is the experimental context-usage notices preference for
 	// a NEW session (web UI toggle). nil = keep the default (on); non-nil = set.
 	// Ignored when the message continues an existing session.
@@ -80,18 +88,18 @@ type Message struct {
 	// Thinking / ReasoningEffort are the per-session thinking-depth override for
 	// a NEW session (web UI composer). Empty = the model's configured default.
 	// Ignored when the message continues an existing session.
-	Thinking        string `json:"thinking,omitempty"`
-	ReasoningEffort string `json:"reasoning_effort,omitempty"`
-	Content    string    `json:"content"`
-	Images     []string  `json:"images,omitempty"` // data URLs (data:image/...;base64,...) attached to a user message; the model sees them on the first turn
-	Reasoning  string    `json:"reasoning,omitempty"` // on assistant messages: model reasoning_content; on KindReasoning: cumulative live reasoning
-	ToolName   string    `json:"tool_name,omitempty"`
-	ToolArgs   string    `json:"tool_args,omitempty"`
-	ToolResult string    `json:"tool_result,omitempty"`
-	Tokens     int       `json:"tokens,omitempty"` // on KindContextUsage: context tokens in use
+	Thinking        string   `json:"thinking,omitempty"`
+	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
+	Content         string   `json:"content"`
+	Images          []string `json:"images,omitempty"`    // data URLs (data:image/...;base64,...) attached to a user message; the model sees them on the first turn
+	Reasoning       string   `json:"reasoning,omitempty"` // on assistant messages: model reasoning_content; on KindReasoning: cumulative live reasoning
+	ToolName        string   `json:"tool_name,omitempty"`
+	ToolArgs        string   `json:"tool_args,omitempty"`
+	ToolResult      string   `json:"tool_result,omitempty"`
+	Tokens          int      `json:"tokens,omitempty"` // on KindContextUsage: context tokens in use
 	// On KindUsage: the provider-reported usage of the last LLM call.
 	PromptTokens     int `json:"prompt_tokens,omitempty"`
-	CachedTokens     int `json:"cached_tokens,omitempty"`     // prompt tokens served from the KV prefix cache
+	CachedTokens     int `json:"cached_tokens,omitempty"` // prompt tokens served from the KV prefix cache
 	CompletionTokens int `json:"completion_tokens,omitempty"`
 	// CacheReported tells whether the provider actually included cache-hit
 	// information (even a genuine 0), so the UI can tell "0% hits" apart from
@@ -100,8 +108,8 @@ type Message struct {
 	// On KindUsage: the average output speed of the last LLM call in
 	// tokens/second (completion tokens over the call's wall time). 0 when the
 	// provider reported no completion count.
-	Speed float64 `json:"speed,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	Speed     float64   `json:"speed,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (m *Message) ensureID() {
@@ -153,6 +161,21 @@ func NewToolStartMessage(sessionID, sessionKey, name string, params map[string]i
 		args = string(b)
 	}
 	return Message{ID: util.RandomHex(12), Kind: KindToolStart, SessionID: sessionID, SessionKey: sessionKey, ToolName: name, ToolArgs: args, CreatedAt: time.Now()}
+}
+
+// NewToolOutputMessage builds one live output chunk of a still-running tool.
+// Content carries the chunk; nothing here is persisted or replayed — the final
+// tool result is the record, this stream only exists so the UI is not a frozen
+// "运行中" label for the length of the command.
+func NewToolOutputMessage(sessionID, sessionKey, name, chunk string) Message {
+	return Message{ID: util.RandomHex(12), Kind: KindToolOutput, SessionID: sessionID, SessionKey: sessionKey, ToolName: name, Content: chunk, CreatedAt: time.Now()}
+}
+
+// NewToolArgsMessage reports the arguments generated SO FAR for a tool call the
+// model is still writing (see KindToolArgs). Cumulative, not a delta: the UI
+// re-renders the whole value each time, so a dropped event costs nothing.
+func NewToolArgsMessage(sessionID, sessionKey, name, argsSoFar string) Message {
+	return Message{ID: util.RandomHex(12), Kind: KindToolArgs, SessionID: sessionID, SessionKey: sessionKey, ToolName: name, Content: argsSoFar, CreatedAt: time.Now()}
 }
 
 // NewToolEndMessage builds a tool-call-finished message.
@@ -287,6 +310,17 @@ func (h *Hub) Attach(mgr *session.SessionManager) {
 			},
 			OnToolEnd: func(name string, params map[string]interface{}, result string) {
 				h.emit(NewToolEndMessage(sessionID, h.channelKeyFor(sessionID), name, params, result))
+			},
+			// Live output of a running tool: emitted straight through, never
+			// stored. h.emit is non-blocking, so a slow subscriber can never
+			// stall the command whose output it is watching.
+			OnToolOutput: func(name string, chunk string) {
+				h.emit(NewToolOutputMessage(sessionID, h.channelKeyFor(sessionID), name, chunk))
+			},
+			// Arguments still being generated (a long write_file typing itself
+			// out). Same pass-through rule as the output feed above.
+			OnToolArgs: func(name string, argsSoFar string) {
+				h.emit(NewToolArgsMessage(sessionID, h.channelKeyFor(sessionID), name, argsSoFar))
 			},
 			OnContextUsage: func(tokens int) {
 				h.emit(NewContextUsageMessage(sessionID, h.channelKeyFor(sessionID), tokens))

@@ -32,13 +32,18 @@ func NormalizeMode(m string) string {
 }
 
 type Session struct {
-	record           *SessionRecord
-	store            *SessionStore
-	client           *provider.ModelClient
-	agentCfg         *agent.AgentConfig
-	manager          *SessionManager
-	onToolCallStart  func(name string, params map[string]interface{})
-	onToolCallEnd    func(name string, params map[string]interface{}, result string)
+	record          *SessionRecord
+	store           *SessionStore
+	client          *provider.ModelClient
+	agentCfg        *agent.AgentConfig
+	manager         *SessionManager
+	onToolCallStart func(name string, params map[string]interface{})
+	onToolCallEnd   func(name string, params map[string]interface{}, result string)
+	// onToolOutput forwards a streaming tool's live output to the channel layer.
+	onToolOutput func(name string, chunk string)
+	// onToolArgs forwards the arguments the model is still generating, so the UI
+	// can show a long write_file as it is being typed (display only).
+	onToolArgs       func(name string, argsSoFar string)
 	onAssistantReply func(content string, reasoning string)
 	onContextUsage   func(tokens int)
 	onUsage          func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64)
@@ -362,6 +367,10 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		client = client.WithReasoning(thinking, effort)
 	}
 	loop := NewAgentLoop(client, maxTurns, pb.Tools, defs, s.onToolCallStart, s.onToolCallEnd, s.onAssistantReply, turnHook)
+	// Live tool output (UI only) rides the same callback set; tools that cannot
+	// stream simply never call it.
+	loop.SetOnToolOutput(s.onToolOutput)
+	loop.SetOnToolArgs(s.onToolArgs)
 	if s.manager != nil {
 		loop.compactionOn = s.manager.CompactionEnabled()
 		// Runtime permission gate: role permissions + cautious-mode
@@ -519,10 +528,16 @@ func (m *SessionManager) CompactSession(ctx context.Context, sessionID string) (
 // produces one set of callbacks per session ID lets a message hub route each
 // session's tool events into the bus, including sub-agent sessions.
 type SessionCallbacks struct {
-	OnToolStart    func(name string, params map[string]interface{})
-	OnToolEnd      func(name string, params map[string]interface{}, result string)
+	OnToolStart func(name string, params map[string]interface{})
+	OnToolEnd   func(name string, params map[string]interface{}, result string)
+	// OnToolOutput receives output a tool produced while it is still running
+	// (display only; the model only ever sees the final tool result).
+	OnToolOutput func(name string, chunk string)
+	// OnToolArgs receives the arguments of a tool call the model is still
+	// generating (accumulated so far), so a long write shows up before it runs.
+	OnToolArgs     func(name string, argsSoFar string)
 	OnReply        func(content string, reasoning string)
-	OnContextUsage func(tokens int) // per-turn context token count (UI token bar)
+	OnContextUsage func(tokens int)                                                                          // per-turn context token count (UI token bar)
 	OnUsage        func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64) // real per-call usage (cache-hit + output-speed indicator)
 }
 
@@ -530,10 +545,10 @@ type SessionManager struct {
 	// models is the registry of configured model clients. Sessions
 	// reference one by name (record.ModelKey); empty/unknown names
 	// resolve to the default model. It is hot-replaced on config save.
-	models *provider.ModelRegistry
-	store  *SessionStore
-	sessions  map[string]*Session
-	mu        sync.RWMutex
+	models          *provider.ModelRegistry
+	store           *SessionStore
+	sessions        map[string]*Session
+	mu              sync.RWMutex
 	callbackFactory func(sessionID string) *SessionCallbacks
 
 	compactionMu sync.RWMutex
@@ -1049,6 +1064,8 @@ func (m *SessionManager) newSession(record *SessionRecord) *Session {
 	if cbs != nil {
 		s.onToolCallStart = cbs.OnToolStart
 		s.onToolCallEnd = cbs.OnToolEnd
+		s.onToolOutput = cbs.OnToolOutput
+		s.onToolArgs = cbs.OnToolArgs
 		s.onAssistantReply = cbs.OnReply
 		s.onContextUsage = cbs.OnContextUsage
 		s.onUsage = cbs.OnUsage

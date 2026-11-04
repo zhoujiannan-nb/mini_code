@@ -27,12 +27,12 @@ type LoopResult struct {
 }
 
 type AgentLoop struct {
-	client           *provider.ModelClient
-	maxTurns         int
-	tools            *tools.ToolRegistry
-	toolDefinitions  []provider.ToolSchema
-	compactor        *ContextCompactor
-	compactionOn     bool // false = skip the automatic compaction check entirely
+	client          *provider.ModelClient
+	maxTurns        int
+	tools           *tools.ToolRegistry
+	toolDefinitions []provider.ToolSchema
+	compactor       *ContextCompactor
+	compactionOn    bool // false = skip the automatic compaction check entirely
 	// compactionTurn is set from the moment the compaction instruction is
 	// appended until the summary comes back: the next model call IS the
 	// summarization turn.
@@ -47,15 +47,23 @@ type AgentLoop struct {
 	// prompt) would trigger a compaction turn on EVERY turn, which costs a
 	// full re-prefill each time and never converges.
 	lastCompactionTokens int
-	ctxState         *tools.ContextState // shared context view for context tools (nil = disabled)
-	contextRemindersOn bool             // inject 85%/90% usage notices (95% forces compaction) (nil ctxState-safe)
-	onToolCallStart  func(name string, params map[string]interface{})
-	onToolCallEnd    func(name string, params map[string]interface{}, result string)
+	ctxState             *tools.ContextState // shared context view for context tools (nil = disabled)
+	contextRemindersOn   bool                // inject 85%/90% usage notices (95% forces compaction) (nil ctxState-safe)
+	onToolCallStart      func(name string, params map[string]interface{})
+	onToolCallEnd        func(name string, params map[string]interface{}, result string)
+	// onToolOutput receives a streaming tool's output while it runs (UI feed
+	// only: nothing that arrives here reaches the model or the history).
+	onToolOutput func(name string, chunk string)
+	// onToolArgs receives the arguments a tool call is STILL GENERATING (accumulated
+	// so far). A 20 KB write_file payload takes minutes to type out and tool_start
+	// only fires once the whole reply has arrived, so without this the UI shows
+	// nothing while the model is doing its longest job. Display-only.
+	onToolArgs       func(name string, argsSoFar string)
 	onAssistantReply func(content string, reasoning string)
 	onTurn           func(turn int, messages []provider.Message)
 	onContextUsage   func(tokens int)
 	onUsage          func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64) // real per-call usage (cache-hit + output-speed visibility)
-	gate             ToolGate // runtime permission gate (nil = no gate)
+	gate             ToolGate                                                                                  // runtime permission gate (nil = no gate)
 
 	// Per-path locks serialize batched tool calls that touch the same file
 	// path, so one turn can never interleave two writes/edits of the same
@@ -171,6 +179,16 @@ func (l *AgentLoop) countMessages(messages []provider.Message) int {
 // call (role permissions + cautious-mode approval). Must be called before
 // Run; a nil gate disables checking.
 func (l *AgentLoop) SetGate(g ToolGate) { l.gate = g }
+
+// SetOnToolOutput wires the live output feed of tools that can stream (see
+// tools.StreamTool). It is display-only: the model still sees just the final
+// tool result, so wiring it changes nothing about what the agent does.
+func (l *AgentLoop) SetOnToolOutput(fn func(name, chunk string)) { l.onToolOutput = fn }
+
+// SetOnToolArgs wires the live feed of arguments the model is still generating
+// (see argsStreamer). Like the output feed it is display-only: the model and the
+// history never see it.
+func (l *AgentLoop) SetOnToolArgs(fn func(name, argsSoFar string)) { l.onToolArgs = fn }
 
 // SetContextState installs the shared context state the context tools read
 // (context_usage / compact_context). The loop publishes the current usage
@@ -677,7 +695,11 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		var firstTokAt time.Time
 		var lastLen int
 		callStart := time.Now()
+		// Arguments the model is still typing get forwarded too, so a long
+		// write_file is visible while it is being generated (nil-safe).
+		argFeed := newArgsStreamer(l.onToolArgs)
 		resp, err := l.chatWithRetry(ctx, turn, messages, l.toToolSchemas(l.toolDefinitions), func(chunk provider.StreamChunk) {
+			argFeed.push(chunk.ToolCalls)
 			n := len(chunk.Content) + len(chunk.ReasoningContent)
 			if n < lastLen {
 				firstTokAt = time.Time{}
@@ -1323,7 +1345,17 @@ func (l *AgentLoop) executeSingleTool(ctx context.Context, tc provider.ToolCall)
 		}
 	}
 	slog.Info("executing tool", "name", tc.Function.Name, "params", tc.Function.Arguments)
-	result, err := l.tools.Execute(ctx, tc.Function.Name, params)
+	// A tool that reports output while it runs gets a sink when someone is
+	// listening; everyone else goes through the registry unchanged. The result is
+	// the same either way, so the model's view never depends on the live feed.
+	var err error
+	if st, ok := l.tools.Get(tc.Function.Name).(tools.StreamTool); ok && l.onToolOutput != nil {
+		result, err = st.ExecuteStreamed(ctx, params, func(chunk string) {
+			l.onToolOutput(tc.Function.Name, chunk)
+		})
+	} else {
+		result, err = l.tools.Execute(ctx, tc.Function.Name, params)
+	}
 	if err != nil {
 		return tools.NewTextResult(fmt.Sprintf("Error: %s", err))
 	}

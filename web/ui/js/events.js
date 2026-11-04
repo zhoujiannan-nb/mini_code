@@ -72,6 +72,14 @@
       liveCommit();
       addToolLine(m.tool_name, m.tool_args);
       break;
+    case "tool_args":
+      // 模型还在生成参数的工具:先立一张"预备步骤",把正在写的字符显示出来
+      appendToolArgs(m.tool_name, m.content);
+      break;
+    case "tool_output":
+      // 运行中工具的实时输出:只贴到「正在执行」卡里那一步,不落库、不进历史
+      appendToolOutput(m.tool_name, m.content);
+      break;
     case "tool_end":
       markToolPendingDone(m.tool_result, m.tool_name);
       break;
@@ -91,6 +99,7 @@
       speedStopTicker(); // 任务结束:保留最后一次的展示值
       if (m.content || m.reasoning) addAssistant(m.content, m.reasoning);
       stepsClose(); // 收尾:没被并进去的过程步骤独立成卡
+      stepsRunFreeze(); // 在跑的工具步骤不再计时
       setRunning(false);
       updateTokenUsage();
       loadSessions();
@@ -100,6 +109,7 @@
       liveRemove();
       speedStopTicker();
       stepsClose();
+      stepsRunFreeze();
       addError(m.content);
       clearSending(); // 任务没起来:结束 sending 保护期,允许降级
       setRunning(false);
@@ -118,12 +128,14 @@
         pendingRemove();
         liveRemove();
         speedStopTicker();
+        stepsRunFreeze();
         addStatus("⏹ 任务已中断(已保留进度,可继续发送消息)");
         setRunning(false);
       } else if (m.status === "task_done") {
         pendingRemove();
         liveRemove();
         speedStopTicker();
+        stepsRunFreeze();
         setRunning(false);
       }
       updateTokenUsage();

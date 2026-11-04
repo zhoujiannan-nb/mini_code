@@ -679,6 +679,11 @@ details.m-steps[open] > summary { border-bottom: 1px solid var(--border); }
   padding: 1px 6px; border-radius: 999px; background: var(--hover);
 }
 .ms-hint { margin-left: auto; font-size: 11px; color: var(--text3); }
+/* 折叠条摘要里的"最近一步":平时不点开也能看到刚跑了哪个工具、回执是什么 */
+.ms-last {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: 11px; color: var(--text3); padding-left: 2px;
+}
 
 /* 展开后的时间轴。
    折叠用 max-height:0 → 46vh 的过渡(不是 0fr→1fr 的网格轨道:实测轨道压到 0
@@ -748,6 +753,59 @@ details.ms-step[open] > summary { color: var(--text); margin-bottom: 3px; }
 }
 .ms-tag.ok { color: var(--accent-t); background: var(--accent-l); }
 .ms-tag.run { color: var(--text2); }
+/* 运行中计时徽标:"已运行 12s / 最长 300s"。工具在跑的时候读者要能分清
+   慢慢在跑和已经卡死,超过上限还没回来就转琥珀色醒目提示。 */
+.ms-run {
+  flex: 0 0 auto; display: inline-block;
+  font-family: var(--mono); font-size: 10.5px; line-height: 16px; height: 16px;
+  padding: 0 6px; border-radius: 999px; background: var(--hover); color: var(--text3);
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.ms-run.late { background: var(--amber-l); color: var(--amber-t); font-weight: 600; }
+.ms-run:empty { display: none; }
+/* 正在执行的这一步不折叠:它住在折叠条外面一张自己的小卡里,跑完那一刻才搬进
+   「执行过程」列表。此刻在跑什么,不该藏在折叠列表的最后一行里。
+   样式刻意跟「执行过程」/「思考过程」同档:它是过程,不是告警,不该抢色。 */
+.msg.steps .m-card.ms-live {
+  margin-top: 6px; padding: 6px 10px 7px;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface-a, var(--surface2));
+  box-shadow: none; max-width: none;
+  opacity: .78;
+  transition: border-color var(--dur) var(--ease), opacity .18s var(--ease);
+}
+.msg.steps .m-card.ms-live:hover { border-color: var(--border2); opacity: 1; }
+.ms-live-hd {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 3px;
+  font-size: 11.5px; color: var(--text3);
+}
+.ms-live-n {
+  font-size: 10.5px; line-height: 16px; height: 16px;
+  padding: 0 6px; border-radius: 999px; background: var(--hover); color: var(--text3);
+}
+/* 小卡自己已经有框了,步骤自带的那根竖线在这里是多余的 */
+.ms-live .ms-step { padding-left: 0; border-left: none; }
+.ms-live details.ms-live-step > summary { color: var(--text2); }
+.ms-live .ms-run { background: var(--surface2, var(--hover)); }
+/* 待写入的量这类"运行期间就已经知道的信息" */
+.ms-work {
+  flex: 0 0 auto; font-family: var(--mono); font-size: 10.5px;
+  line-height: 16px; height: 16px; padding: 0 6px; border-radius: 999px;
+  background: var(--surface2, var(--hover)); color: var(--text3); white-space: nowrap;
+}
+.ms-work:empty { display: none; }
+/* 工具的实时输出:只住在"正在执行"卡的展开区,跑完就撤(全文在结果里,不留两份)。
+   高度封顶 + 自己滚到底,一条刷屏的命令也不会把界面顶飞。 */
+.ms-live .ms-out {
+  margin: 3px 0 0; padding: 5px 7px;
+  max-height: 132px; overflow: auto;
+  border-radius: var(--r-xs); background: var(--hover);
+  font-family: var(--mono); font-size: 11px; line-height: 1.55; color: var(--text2);
+  white-space: pre-wrap; word-break: break-all;
+}
+.ms-live .ms-out[hidden] { display: none; }
+/* 参数预览(输入,不是输出):淡一档,免得把"要写的字符"读成"工具吐出来的字符" */
+.ms-live .ms-out.ms-prev { color: var(--text3); }
 .ms-step-body { padding: 0 0 2px 12px; min-width: 0; }
 .ms-step .ms-args {
   font-family: var(--mono); font-size: 11px; line-height: 1.6; color: var(--text3);

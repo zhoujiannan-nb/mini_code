@@ -151,6 +151,21 @@ type ChatResponse struct {
 type StreamChunk struct {
 	Content          string
 	ReasoningContent string
+	// ToolCalls lists the tool calls being generated so far, in stream order,
+	// with the arguments accumulated up to this point. It exists so a caller can
+	// show what the model is about to call WHILE it is still typing the
+	// arguments (a 20 KB write_file payload takes minutes to generate, and until
+	// now the UI had nothing to show for it). Same accumulate-not-delta
+	// convention as Content, so a dropped snapshot costs nothing.
+	ToolCalls []StreamToolCallProgress
+}
+
+// StreamToolCallProgress is one in-flight tool call mid-generation.
+type StreamToolCallProgress struct {
+	Index int    // stream index; parallel calls arrive as 0, 1, ...
+	ID    string // may be empty until the provider sends it
+	Name  string // arrives with the first delta of this call
+	Args  string // arguments accumulated so far (raw JSON, possibly incomplete)
 }
 
 // PromptTokensDetails is the OpenAI/SGLang/vLLM cache-hit shape:

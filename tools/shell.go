@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -99,6 +101,22 @@ func (t *ExecTool) Parameters() map[string]interface{} {
 }
 
 func (t *ExecTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
+	return t.run(ctx, params, nil)
+}
+
+// ExecuteStreamed runs the command and forwards its output as it arrives. The
+// command, the timeout, the process-tree cleanup and the returned result are
+// identical to Execute's; only the reporting differs, which is what keeps the
+// model's view of the tool unchanged.
+func (t *ExecTool) ExecuteStreamed(ctx context.Context, params map[string]interface{}, sink func(string)) (*ToolResult, error) {
+	return t.run(ctx, params, sink)
+}
+
+// run executes one shell command. When sink is non-nil the child's stdout and
+// stderr are additionally forwarded to it in UI-sized pieces (outputFeeder), so
+// the interface can show progress while the command is still running; the final
+// result is still built from the complete buffered output.
+func (t *ExecTool) run(ctx context.Context, params map[string]interface{}, sink func(string)) (*ToolResult, error) {
 	command, _ := params["command"].(string)
 	if command == "" {
 		return nil, fmt.Errorf("missing command")
@@ -153,8 +171,20 @@ func (t *ExecTool) Execute(ctx context.Context, params map[string]interface{}) (
 	}
 
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	if sink != nil {
+		// Tee the child's output: the buffers still collect everything for the
+		// result (and its truncation), while the feeders hand the UI a coalesced
+		// live view. Nothing here changes what the command itself sees.
+		out := newOutputFeeder(ctx, sink, "")
+		defer out.close()
+		errf := newOutputFeeder(ctx, sink, "[stderr] ")
+		defer errf.close()
+		cmd.Stdout = io.MultiWriter(&stdout, out)
+		cmd.Stderr = io.MultiWriter(&stderr, errf)
+	} else {
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+	}
 
 	// Optional stdin: when the caller supplies `input`, feed that text to the
 	// command's standard input. This is the reliable way to pipe data into a
@@ -481,4 +511,82 @@ func (t *ExecTool) guardCommand(command string) string {
 		return "Error: Command blocked — dangerous pattern detected"
 	}
 	return ""
+}
+
+// outputFeeder turns one child stream into UI-sized chunks.
+//
+// A command can write thousands of lines, and forwarding every write as its own
+// event would flood the subscriber queue (and the browser) for nothing: the
+// final result carries all of the output anyway. So bytes accumulate until
+// either a chunk is worth sending (feedChunkBytes) or the reader has been quiet
+// long enough (feedChunkWait), and then exactly one chunk goes out.
+//
+// The sink runs on this goroutine and must never block; the hub's fan-out is
+// non-blocking by design. A feeder with a slow sink delays only its own stream,
+// never the child process.
+type outputFeeder struct {
+	ctx  context.Context
+	sink func(string)
+	pfx  string
+	mu   sync.Mutex
+	pend []byte
+	stop chan struct{}
+	once sync.Once
+}
+
+const (
+	feedChunkBytes = 1024
+	feedChunkWait  = 250 * time.Millisecond
+)
+
+func newOutputFeeder(ctx context.Context, sink func(string), prefix string) *outputFeeder {
+	f := &outputFeeder{ctx: ctx, sink: sink, pfx: prefix, stop: make(chan struct{})}
+	go func() {
+		t := time.NewTicker(feedChunkWait)
+		defer t.Stop()
+		for {
+			select {
+			case <-f.stop:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				f.flush()
+			}
+		}
+	}()
+	return f
+}
+
+// Write implements io.Writer; os/exec copies a non-*os.File destination on its
+// own goroutine, so this runs concurrently with the child process.
+func (f *outputFeeder) Write(p []byte) (int, error) {
+	f.mu.Lock()
+	f.pend = append(f.pend, p...)
+	big := len(f.pend) >= feedChunkBytes
+	f.mu.Unlock()
+	if big {
+		f.flush()
+	}
+	return len(p), nil
+}
+
+func (f *outputFeeder) flush() {
+	f.mu.Lock()
+	s := string(f.pend)
+	f.pend = nil
+	f.mu.Unlock()
+	if strings.Trim(s, " \t\r\n") == "" {
+		return
+	}
+	f.sink(f.pfx + s)
+}
+
+// close stops the ticker and pushes whatever is still buffered, so the last
+// lines of a command always reach the UI instead of dying in the buffer.
+func (f *outputFeeder) close() {
+	f.once.Do(func() {
+		close(f.stop)
+		f.flush()
+	})
 }

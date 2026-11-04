@@ -31,6 +31,18 @@ type Tool interface {
 	IsHidden() bool
 }
 
+// StreamTool is implemented by tools that can report output while they run, not
+// only the final result. The agent loop passes a sink and the tool pushes
+// chunks as they arrive.
+//
+// A sink is a UI feed, never a source of truth: it may be called from another
+// goroutine, may drop or coalesce chunks, and its return says nothing about the
+// tool's result. The final *ToolResult must stay exactly what Execute would
+// have returned, so a tool that cannot stream simply does not implement this.
+type StreamTool interface {
+	ExecuteStreamed(ctx context.Context, params map[string]interface{}, sink func(string)) (*ToolResult, error)
+}
+
 func ToSchema(t Tool) provider.ToolSchema {
 	params := t.Parameters()
 	// Wire invariant: the model API validates `parameters.required` as an
