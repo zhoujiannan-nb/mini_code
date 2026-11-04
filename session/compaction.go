@@ -181,7 +181,8 @@ func SummaryBlock(summary string) string {
 //   - the verbatim block stays within budget tokens; a single message that is
 //     itself too large is truncated to fit.
 //
-// Compaction instructions and usage notices are dropped. ok is false when
+// Compaction instructions, usage notices and worker briefs are dropped (all three
+// are derived data the next turn re-creates). ok is false when
 // nothing could be kept and the caller should keep the original context.
 func RebuildContext(messages []provider.Message, summary string, keep, budget int) (out []provider.Message, ok bool) {
 	return RebuildContextEst(messages, summary, keep, budget, defaultTokenEstimator)
@@ -209,7 +210,7 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 			}
 			continue
 		}
-		if IsCompactRequest(m) || IsUsageNotice(m) {
+		if IsCompactRequest(m) || IsUsageNotice(m) || IsWorkerBrief(m) {
 			continue
 		}
 		history = append(history, m)

@@ -25,6 +25,7 @@ var basePermissions = map[string]interface{}{
 	"skills":       "allow",
 	"readimg":      "allow",
 	"group_chat":   "allow", // read/send on the group channel (only registered for group members)
+	"workers":      "allow", // 工作大类: discover/create/join + the shared 公约 (only registered for root sessions)
 }
 
 func mergePermissions(overrides ...map[string]interface{}) PermissionConfig {

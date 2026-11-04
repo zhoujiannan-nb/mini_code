@@ -90,6 +90,12 @@ type Message struct {
 	// Ignored when the message continues an existing session.
 	Thinking        string   `json:"thinking,omitempty"`
 	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
+	// WorkerID puts a NEW session into that worker (工作大类) straight away: the
+	// sidebar's switcher sends it when the user starts a chat inside a worker.
+	// "" = leave the decision to the model (it inspects the workers tool and
+	// joins or creates one); ignored when the message continues an existing
+	// session, whose membership is already decided.
+	WorkerID string `json:"worker_id,omitempty"`
 	Content         string   `json:"content"`
 	Images          []string `json:"images,omitempty"`    // data URLs (data:image/...;base64,...) attached to a user message; the model sees them on the first turn
 	Reasoning       string   `json:"reasoning,omitempty"` // on assistant messages: model reasoning_content; on KindReasoning: cumulative live reasoning
@@ -712,6 +718,16 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 	if m.SessionKey != "" {
 		if err := h.mgr.SetChannelKey(created.ID(), m.SessionKey); err != nil {
 			slog.Warn("bind channel key failed", "session", created.ID(), "key", m.SessionKey, "err", err)
+		}
+	}
+	// Worker for the new session (the sidebar's switcher). Attaching happens
+	// before the first task, so the very first request already carries the
+	// worker block: a chat started inside a worker never has to recompute its
+	// prefix. "" leaves it unassigned, and the first task is told to decide with
+	// the workers tool.
+	if m.WorkerID != "" {
+		if err := h.mgr.MoveToWorker(created.ID(), m.WorkerID); err != nil {
+			slog.Warn("attach new session to worker failed", "session", created.ID(), "worker", m.WorkerID, "err", err)
 		}
 	}
 	h.emit(NewStatusMessage(m.ID, created.ID(), m.Channel, StatusSessionCreated, m.SessionKey))

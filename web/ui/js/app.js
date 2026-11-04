@@ -187,22 +187,12 @@
   if (GROUP_CHAT_ENABLED) {
     loadGroups();
   } else {
-    // 群聊隐藏:其侧边栏位置由下方"已归档"区承接(群区元素保留但不可见)
+    // 群聊隐藏:其侧边栏位置由上方的 worker 切换条承接(群区元素保留但不可见)
     const gsec = $("#group-sec");
     if (gsec) gsec.style.display = "none";
   }
-  // 已归档区:默认折叠(localStorage 只记忆用户手动切换,未设置 = 折叠),初始化拖放
-  setArchiveCollapsed(userArchiveCollapsed(), false);
-  // 归档区手动折叠/展开(记忆状态;标题点击仅用于从折叠态展开)
-  $("#archive-toggle").addEventListener("click", (e) => {
-    e.stopPropagation();
-    setArchiveCollapsed(!$("#archive-sec").classList.contains("collapsed"), true);
-  });
-  // 与箭头同逻辑:展开/收起都是完整切换(箭头 & 文字均可双向切换)
-  $("#archive-head-title").addEventListener("click", () => {
-    setArchiveCollapsed(!$("#archive-sec").classList.contains("collapsed"), true);
-  });
-  initArchiveDragDrop();
+  // worker(工作大类)切换条:恢复上次选中的分桶、绑定 ‹ › /菜单/新建
+  initWorkerBar();
   loadStatus();
   connectEvents();
   paintMode();
@@ -220,6 +210,7 @@
   // (运行中也不跳过,这样 SSE 漏掉终结事件时停止按钮能自动收敛)
   setInterval(() => {
     loadSessions();
+    loadWorkers();
     if (GROUP_CHAT_ENABLED) loadGroups();
     updateTokenUsage();
     syncApprovals();

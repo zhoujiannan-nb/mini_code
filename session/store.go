@@ -32,6 +32,10 @@ type SessionRecord struct {
 	// model. Sub-agent sessions snapshot their parent's key at dispatch.
 	ModelKey   string                 `json:"model_key,omitempty"`
 	ChannelKey string                 `json:"channel_key,omitempty"`
+	// WorkerID is the worker (工作大类) this session belongs to; "" = unassigned.
+	// Assigning a worker gives the session its shared workspace and injects the
+	// worker block (directory + convention file snapshot) into the system prompt.
+	WorkerID string                 `json:"worker_id,omitempty"`
 	Messages   []provider.Message     `json:"messages"`
 	Metadata   map[string]interface{} `json:"metadata"`
 	CreatedAt  string                 `json:"created_at"`
@@ -79,6 +83,7 @@ func (s *SessionStore) initDB() {
 		mode TEXT DEFAULT '',
 		model_key TEXT DEFAULT '',
 		channel_key TEXT DEFAULT '',
+		worker_id TEXT DEFAULT '',
 		messages TEXT DEFAULT '[]',
 		metadata TEXT DEFAULT '{}',
 		created_at TEXT,
@@ -90,6 +95,7 @@ func (s *SessionStore) initDB() {
 	s.migrateChannelKey()
 	s.migrateMode()
 	s.migrateModelKey()
+	s.initWorkers()
 }
 
 // migrateChannelKey adds the channel_key column to databases created before
@@ -152,34 +158,49 @@ type SessionSummary struct {
 	Mode         string
 	ModelKey     string
 	ChannelKey   string
+	WorkerID     string
 	CreatedAt    string
 	UpdatedAt    string
 	MessageCount int
 }
 
 // sessionListQuery is the shared lightweight list query for root sessions.
-// archivedOnly selects the archived list (hidden from the main conversation
-// list) instead of the main one. The message count comes from
-// json_array_length, so conversation payloads are never loaded into a list
-// response — the endpoint stays cheap enough for frequent polling.
-func sessionListQuery(archivedOnly bool) string {
-	flag := "!= 1"
-	if archivedOnly {
-		flag = "= 1"
+// bucket selects one worker's sessions: WorkerAllID is "everything visible"
+// (unassigned plus every non-builtin worker), WorkerUnassignedID ("") is the
+// un-assigned bucket, anything else is that exact worker — the built-in 已归档
+// bucket is therefore only reachable by name and never shows up in "all".
+// The message count comes from json_array_length, so conversation payloads are
+// never loaded into a list response — the endpoint stays cheap enough for
+// frequent polling.
+func sessionListQuery(bucket string) string {
+	predicate := "COALESCE(worker_id, '') NOT IN (SELECT worker_id FROM workers WHERE builtin = 1)"
+	switch bucket {
+	case WorkerUnassignedID:
+		predicate = "COALESCE(worker_id, '') = ''"
+	case WorkerAllID:
+	default:
+		predicate = "COALESCE(worker_id, '') = ?"
 	}
 	return `SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key,
+	        COALESCE(worker_id, '') AS worker_id,
 	        created_at, updated_at,
 	        COALESCE(json_array_length(messages), 0) AS message_count
 	 FROM sessions
-	 WHERE parent_id IS NULL OR parent_id = ''` +
-		` AND COALESCE(json_extract(metadata, '$.archived'), 0) ` + flag +
+	 WHERE (parent_id IS NULL OR parent_id = '') AND ` + predicate +
 		` ORDER BY updated_at DESC LIMIT ? OFFSET ?`
 }
 
-// ListSessionSummaries returns the main conversation list: root sessions that
-// are NOT archived, most recently updated first.
-func (s *SessionStore) ListSessionSummaries(limit, offset int) ([]SessionSummary, error) {
-	rows, err := s.db.FetchAll(sessionListQuery(false), limit, offset)
+// ListBucketSummaries returns one worker bucket's root sessions, most recently
+// updated first. See sessionListQuery for the bucket semantics.
+func (s *SessionStore) ListBucketSummaries(bucket string, limit, offset int) ([]SessionSummary, error) {
+	var rows []map[string]interface{}
+	var err error
+	switch bucket {
+	case WorkerUnassignedID, WorkerAllID:
+		rows, err = s.db.FetchAll(sessionListQuery(bucket), limit, offset)
+	default:
+		rows, err = s.db.FetchAll(sessionListQuery(bucket), bucket, limit, offset)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -190,19 +211,12 @@ func (s *SessionStore) ListSessionSummaries(limit, offset int) ([]SessionSummary
 	return out, nil
 }
 
-// ListArchivedSummaries returns the archived root sessions (hidden from the
-// main conversation list), most recently updated first.
-func (s *SessionStore) ListArchivedSummaries(limit, offset int) ([]SessionSummary, error) {
-	rows, err := s.db.FetchAll(sessionListQuery(true), limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]SessionSummary, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, summaryFromRow(row))
-	}
-	return out, nil
+// ListSessionSummaries returns the default conversation list: every visible
+// root session (unassigned + non-builtin workers), most recently updated first.
+func (s *SessionStore) ListSessionSummaries(limit, offset int) ([]SessionSummary, error) {
+	return s.ListBucketSummaries(WorkerAllID, limit, offset)
 }
+
 
 // ListChildren returns the sub-agent sessions (parent_id set) of one parent,
 // oldest first. Used by the UI to render background sub-agents under their
@@ -262,6 +276,7 @@ func summaryFromRow(row map[string]interface{}) SessionSummary {
 		Mode:         fmt.Sprint(row["mode"]),
 		ModelKey:     fmt.Sprint(row["model_key"]),
 		ChannelKey:   fmt.Sprint(row["channel_key"]),
+		WorkerID:     asString(row["worker_id"]),
 		CreatedAt:    fmt.Sprint(row["created_at"]),
 		UpdatedAt:    fmt.Sprint(row["updated_at"]),
 		MessageCount: asInt(row["message_count"]),
@@ -289,10 +304,10 @@ func (s *SessionStore) Create(record *SessionRecord) error {
 	msgsJSON, _ := json.Marshal(record.Messages)
 	metaJSON, _ := json.Marshal(record.Metadata)
 	_, err := s.db.Execute(
-		`INSERT INTO sessions (session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key, messages, metadata, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key, worker_id, messages, metadata, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.SessionID, record.ParentID, record.Title, record.AgentRole, record.WorkDir,
-		record.Status, record.Mode, record.ModelKey, record.ChannelKey, string(msgsJSON), string(metaJSON), record.CreatedAt, record.UpdatedAt,
+		record.Status, record.Mode, record.ModelKey, record.ChannelKey, record.WorkerID, string(msgsJSON), string(metaJSON), record.CreatedAt, record.UpdatedAt,
 	)
 	return err
 }
@@ -310,9 +325,9 @@ func (s *SessionStore) Update(record *SessionRecord) error {
 	msgsJSON, _ := json.Marshal(record.Messages)
 	metaJSON, _ := json.Marshal(record.Metadata)
 	_, err := s.db.Execute(
-		`UPDATE sessions SET parent_id=?, title=?, agent_role=?, work_dir=?, status=?, mode=?, model_key=?, channel_key=?, messages=?, metadata=?, updated_at=?
+		`UPDATE sessions SET parent_id=?, title=?, agent_role=?, work_dir=?, status=?, mode=?, model_key=?, channel_key=?, worker_id=?, messages=?, metadata=?, updated_at=?
 		 WHERE session_id=?`,
-		record.ParentID, record.Title, record.AgentRole, record.WorkDir, record.Status, record.Mode, record.ModelKey, record.ChannelKey,
+		record.ParentID, record.Title, record.AgentRole, record.WorkDir, record.Status, record.Mode, record.ModelKey, record.ChannelKey, record.WorkerID,
 		string(msgsJSON), string(metaJSON), record.UpdatedAt, record.SessionID,
 	)
 	return err
@@ -392,8 +407,9 @@ func (s *SessionStore) rowToRecord(row map[string]interface{}) (*SessionRecord, 
 		Status:     fmt.Sprint(row["status"]),
 		Mode:       fmt.Sprint(row["mode"]),
 		ModelKey:   fmt.Sprint(row["model_key"]),
-		ChannelKey: fmt.Sprint(row["channel_key"]),
-		CreatedAt:  fmt.Sprint(row["created_at"]),
+		ChannelKey:  fmt.Sprint(row["channel_key"]),
+		WorkerID:    asString(row["worker_id"]),
+		CreatedAt:   fmt.Sprint(row["created_at"]),
 		UpdatedAt:  fmt.Sprint(row["updated_at"]),
 	}
 	if msgsStr, ok := row["messages"].(string); ok && msgsStr != "" {

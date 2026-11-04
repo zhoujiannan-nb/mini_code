@@ -267,6 +267,14 @@ func (t *CopyFileTool) Execute(ctx context.Context, params map[string]interface{
 	return NewTextResult(fmt.Sprintf("Successfully copied %s -> %s", sf, df)), nil
 }
 
+// CopyTree copies a file or a whole directory tree, leaving the source in
+// place: when src is a directory its contents are merged into dst, when src is
+// a file dst is the destination file path. Exported for the worker service,
+// which seeds a new shared workspace from an existing folder
+// (session.WorkerService.Create with copy_from). Not to be confused with the
+// unexported copyTree, which is a move (it deletes the source).
+func CopyTree(src, dst string) error { return copyTreeKeep(src, dst) }
+
 // copyTreeKeep copies a file or a whole directory tree from src to dst,
 // leaving the source in place (unlike copyTree, the move fallback, which
 // deletes the source afterwards).

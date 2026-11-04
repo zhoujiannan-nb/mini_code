@@ -1,12 +1,14 @@
 /* ---------------- 会话列表 ---------------- */
+// 列表按 worker(工作大类)分桶:GET /api/sessions?worker=<id>。
+// state.worker: "*" = 全部 | "" = 未分配 | 其余 = worker_id(见 workers.js)。
 async function loadSessions(select) {
   try {
-    state.sessions = await api("/api/sessions");
+    state.sessions = await api("/api/sessions?worker=" + encodeURIComponent(state.worker == null ? "*" : state.worker));
   } catch (e) { return; }
   renderSessions();
   syncRunning();
-  loadArchived(); // 归档列表随主列表一起收敛(轻量查询)
   if (state.current) loadChildren(); // 子任务状态随列表一起收敛
+  if (typeof paintWorkerBar === "function") paintWorkerBar();
   if (select && select !== state.current) selectSession(select);
 }
 // SSE 事件是"有会话发生了变化"的信号:其他会话的事件不进入当前视图,
@@ -17,6 +19,7 @@ function scheduleListRefresh(delay) {
   listRefreshTimer = setTimeout(() => {
     listRefreshTimer = null;
     loadSessions();
+    if (typeof loadWorkers === "function") loadWorkers(); // 会话数徽标跟着收敛
   }, delay == null ? 1500 : delay);
 }
 // 用服务端状态校准当前会话的执行状态:
@@ -45,25 +48,18 @@ function renderSessions() {
   const cnt = $("#sess-count");
   if (cnt) cnt.textContent = state.sessions.length ? String(state.sessions.length) : "";
   if (state.sessions.length === 0) {
-    list.innerHTML = '<div class="empty-hint">暂无会话<br>发送第一条消息开始</div>';
+    list.innerHTML = '<div class="empty-hint">' + workerEmptyHint() + '</div>';
     return;
   }
   for (const s of state.sessions) {
     const el = document.createElement("div");
     el.className = "sess-item" + (s.session_id === state.current ? " active" : "");
-    // 拖到侧边栏的群上 = 加入该群;拖到"已归档"区 = 归档(不在会话列表显示)
+    // 拖到侧边栏的群上 = 加入该群;拖到 worker 菜单里的分桶 = 移动到该 worker
     el.draggable = true;
     el.addEventListener("dragstart", (e) => {
       e.dataTransfer.setData("text/plain", JSON.stringify({ kind: "session", sid: s.session_id }));
       e.dataTransfer.effectAllowed = "move";
-      // 拖会话入群/归档的落点必须可见:分区若折叠则临时展开(remember=false,
-      // 不写 localStorage,否则会永远记住展开态)
       setGroupCollapsed(false);
-      setArchiveCollapsed(false, false);
-    });
-    el.addEventListener("dragend", () => {
-      // 无论松手在哪(归档成功/恢复/取消拖拽),都回到用户自己的折叠偏好(默认折叠)
-      setArchiveCollapsed(userArchiveCollapsed(), false);
     });
     // 执行中只看服务端的 active 标志(本进程是否有活动任务):
     // 持久化的 status 在进程崩溃/重启后可能停留在 "running",不可信。
@@ -78,14 +74,19 @@ function renderSessions() {
       (statusText ? "<span>" + statusText + "</span>" : "") +
        "<span>" + relTime(s.updated_at) + "</span><span>" + s.message_count + " 条</span></div>" +
        '<button class="rename-btn" title="重命名会话">✎</button>' +
+       '<button class="wk-btn" title="移动到 Worker">📁</button>' +
        '<button class="del-btn" title="删除会话">✕</button>';
     el.addEventListener("click", (e) => {
-      if (e.target.classList.contains("del-btn") || e.target.classList.contains("rename-btn")) return;
+      if (e.target.classList.contains("del-btn") || e.target.classList.contains("rename-btn") || e.target.classList.contains("wk-btn")) return;
       selectSession(s.session_id);
     });
     el.querySelector(".rename-btn").addEventListener("click", (e) => {
       e.stopPropagation();
       renameSession(s.session_id, s.title);
+    });
+    el.querySelector(".wk-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openWorkerMoveMenu(s, e.target);
     });
     el.querySelector(".del-btn").addEventListener("click", async (e) => {
       e.stopPropagation();
@@ -122,100 +123,32 @@ async function renameSession(id, currentTitle) {
   } catch (err) { toast("重命名失败:" + err.message, "err"); }
 }
 
-/* ---------------- 已归档 ---------------- */
-// 已归档对话:与正常会话的唯一区别是不显示在会话列表(侧边栏"已归档"
-// 分区,平常收起)。归档的会话照常可打开、继续发消息。
-// 归档 = 会话 metadata 里的一个标记,不改变发给模型的任何内容(前缀缓存安全)。
-// 归档状态标记:拖会话到"已归档"区 = 归档;拖回会话区或点 ↩ = 恢复。
-// v2:旧版 key 曾被"拖动时自动展开"污染(误写展开态),换键重置回默认折叠
-const LS_ARCHIVE_COLLAPSED_KEY = "mini_code.archive_collapsed.v2";
-// remember=false:临时态(拖会话时自动展开落点);只有手动切换才写 localStorage
-function setArchiveCollapsed(c, remember) {
-  const sec = $("#archive-sec"), t = $("#archive-toggle");
-  if (!sec) return;
-  sec.classList.toggle("collapsed", c);
-  if (t) t.textContent = c ? "▸" : "▾";
-  if (remember) { try { localStorage.setItem(LS_ARCHIVE_COLLAPSED_KEY, c ? "1" : "0"); } catch (e) {} }
-}
-// 用户自己的偏好:默认折叠;拖动的自动展开/收起不修改它
-function userArchiveCollapsed() {
-  try { return localStorage.getItem(LS_ARCHIVE_COLLAPSED_KEY) !== "0"; } catch (e) { return true; }
-}
-async function loadArchived() {
+/* ---------------- 移动到 Worker ---------------- */
+// 原"归档"按钮的位置。移动会改变会话的工作目录(变成该 worker 的共享目录),
+// 下一条消息还会带上一条 worker 简报(共享目录 + 公约)。已有内容一个字都不动,
+// 缓存照常命中 —— 但目录变了这件事要在确认框里说清,让用户自己选时机。
+async function moveSessionToWorker(sid, workerID, label) {
+  const target = workerLabel(workerID);
+  if (target === label) { toast("会话已经在「" + label + "」", "ok"); return; }
+  const hasMsg = (state.sessions.find(x => x.session_id === sid) || {}).message_count > 0;
+  const tip = "把该会话移动到「" + target + "」?" +
+    (hasMsg ? "\n\n注意:之后这个会话的读写都落在该 worker 的共享目录里,下一条消息还会带上一条 worker 简报(共享目录 + 公约)。已有对话不动。" : "");
+  if (!confirm(tip)) return;
   try {
-    state.archived = await api("/api/sessions?archived=1");
-  } catch (e) { state.archived = []; }
-  renderArchiveList();
-}
-function renderArchiveList() {
-  const list = $("#archive-list");
-  if (!list) return;
-  const cnt = $("#archive-count");
-  if (cnt) cnt.textContent = state.archived.length ? String(state.archived.length) : "";
-  list.innerHTML = "";
-  if (!state.archived.length) {
-    list.innerHTML = '<div class="empty-hint" style="padding:10px 8px">暂无已归档对话<br>拖会话到此处归档</div>';
-    return;
-  }
-  for (const s of state.archived) {
-    const el = document.createElement("div");
-    el.className = "sess-item arch-item" + (s.session_id === state.current ? " active" : "");
-    // 拖回会话区 = 恢复
-    el.draggable = true;
-    el.addEventListener("dragstart", (e) => {
-      e.dataTransfer.setData("text/plain", JSON.stringify({ kind: "archived", sid: s.session_id }));
-      e.dataTransfer.effectAllowed = "move";
-    });
-    const dotClass = s.active ? "running" : (["completed", "failed", "interrupted"].includes(s.status) ? s.status : "idle");
-    const statusText = s.active ? "执行中" : { completed: "已完成", failed: "失败", interrupted: "已中断" }[s.status] || "";
-    el.innerHTML =
-      '<div class="sess-title-row">' +
-      '<span class="sess-ava" style="background:' + hashColor(s.session_id) + '">' + esc(firstChar(s.title)) + '</span>' +
-      '<div class="sess-title">' + esc(s.title || "未命名会话") + '</div></div>' +
-      '<div class="sess-meta"><span class="s ' + dotClass + '"></span>' +
-      (statusText ? "<span>" + statusText + "</span>" : "") +
-      "<span>" + relTime(s.updated_at) + "</span><span>" + s.message_count + " 条</span></div>" +
-      '<button class="arch-btn" title="恢复到会话列表">↩</button>' +
-      '<button class="rename-btn" title="重命名会话">✎</button>' +
-      '<button class="del-btn" title="删除会话">✕</button>';
-    el.addEventListener("click", (e) => {
-      if (e.target.classList.contains("arch-btn") || e.target.classList.contains("del-btn") || e.target.classList.contains("rename-btn")) return;
-      selectSession(s.session_id);
-    });
-    el.querySelector(".arch-btn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      setArchived(s.session_id, false);
-    });
-    el.querySelector(".rename-btn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      renameSession(s.session_id, s.title);
-    });
-    el.querySelector(".del-btn").addEventListener("click", async (e) => {
-      e.stopPropagation();
-      if (!confirm("确定删除该会话?(消息将一并删除)")) return;
-      try {
-        await api("/api/sessions/" + s.session_id, { method: "DELETE" });
-        if (state.current === s.session_id) resetToNew();
-        await loadSessions(); // loadSessions 会连带刷新归档列表
-        toast("会话已删除", "ok");
-      } catch (err) { toast("删除失败:" + err.message, "err"); }
-    });
-    list.appendChild(el);
-  }
-}
-async function setArchived(sid, on) {
-  try {
-    await api("/api/sessions/" + sid + "/archive", {
+    await api("/api/sessions/" + sid + "/worker", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ archived: on }),
+      body: JSON.stringify({ worker_id: workerID || "" }),
     });
-    toast(on ? "已归档(不在会话列表显示)" : "已恢复到会话列表", "ok");
-    await loadSessions(); // 主列表 + 归档列表一起收敛
-  } catch (err) { toast("操作失败:" + err.message, "err"); }
+    toast("已移动到 " + target, "ok");
+    await Promise.all([loadSessions(), loadWorkers()]);
+    // 移动改变了工作目录:重新拉一次会话视图,聊天里的相对路径才会按新目录解析
+    if (state.current === sid) await selectSession(sid);
+  } catch (err) { toast("移动失败:" + err.message, "err"); }
 }
-// 拖拽载荷:新版为 JSON({kind:"session"|"archived", sid}),
-// 兼容旧版纯 sid 文本(按会话处理)。
+
+// 拖拽载荷:新版为 JSON({kind:"session", sid}),兼容旧版纯 sid 文本(按会话处理)。
+// kind 目前只有 session:群区分组用 sid 加入,worker 移动走会话卡上的 📁 菜单。
 function readDragPayload(e) {
   const raw = e.dataTransfer.getData("text/plain");
   if (!raw) return null;
@@ -225,44 +158,3 @@ function readDragPayload(e) {
   } catch (err) {}
   return { kind: "session", sid: raw };
 }
-function initArchiveDragDrop() {
-  // 注意:HTML5 DnD 里 dataTransfer.getData() 只在 drop 事件能读到值,
-  // dragover 期间恒为空(安全限制)——所以 dragover 只能查 types 放行,
-  // drop 里再读真实载荷按 kind 过滤(否则 drop 永不触发,拖动无效)。
-  const hasText = (e) => e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, "text/plain") >= 0;
-  const zone = $("#archive-sec");
-  zone.addEventListener("dragover", (e) => {
-    if (hasText(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; zone.classList.add("drop-hint"); }
-  });
-  zone.addEventListener("dragleave", (e) => {
-    if (!zone.contains(e.relatedTarget)) zone.classList.remove("drop-hint");
-  });
-  zone.addEventListener("drop", async (e) => {
-    zone.classList.remove("drop-hint");
-    const p = readDragPayload(e);
-    if (!p || p.kind !== "session") return;
-    e.preventDefault();
-    await setArchived(p.sid, true);
-  });
-  // 恢复落点:会话列表(含"会话"分区头)
-  const list = $("#sess-list");
-  const attachRestore = (target) => {
-    target.addEventListener("dragover", (e) => {
-      if (hasText(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; list.classList.add("drop-hint"); }
-    });
-    target.addEventListener("dragleave", (e) => {
-      if (!target.contains(e.relatedTarget)) list.classList.remove("drop-hint");
-    });
-    target.addEventListener("drop", async (e) => {
-      list.classList.remove("drop-hint");
-      const p = readDragPayload(e);
-      if (!p || p.kind !== "archived") return;
-      e.preventDefault();
-      await setArchived(p.sid, false);
-    });
-  };
-  attachRestore(list);
-  const head = list.previousElementSibling;
-  if (head && head.classList.contains("sec-head")) attachRestore(head);
-}
-

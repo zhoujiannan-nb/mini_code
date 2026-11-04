@@ -66,6 +66,7 @@ type runtime struct {
 	hub       *channels.Hub
 	subagents *session.SubagentService
 	groups    *session.GroupService
+	workers   *session.WorkerService
 	approvals *approval.Service
 }
 
@@ -177,6 +178,13 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 	mgr.SetActiveTaskCheck(func(sid string) bool { return hub.ActiveTask(sid) })
 	mgr.SetGroups(groups)
 
+	// Workers (工作大类): a shared workspace + a shared 公约 per line of work, and
+	// the switcher the sidebar shows. The rows live in the session store (one
+	// connection, so deleting a worker can delete its sessions), hence no separate
+	// store constructor here — see session/worker_store.go.
+	workers := session.NewWorkerService(mgr.GetStore(), mgr)
+	mgr.SetWorkers(workers)
+
 	return &runtime{
 		cfg:       cfg,
 		clients:   allClients,
@@ -184,6 +192,7 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 		hub:       hub,
 		subagents: subagents,
 		groups:    groups,
+		workers:   workers,
 		approvals: approvals,
 	}, nil
 }
@@ -233,6 +242,7 @@ func main() {
 func (rt *runtime) Hub() *channels.Hub            { return rt.hub }
 func (rt *runtime) Mgr() *session.SessionManager  { return rt.mgr }
 func (rt *runtime) Groups() *session.GroupService { return rt.groups }
+func (rt *runtime) Workers() *session.WorkerService { return rt.workers }
 func (rt *runtime) Approvals() *approval.Service  { return rt.approvals }
 
 func (rt *runtime) liveConfig() *config.AppConfig {

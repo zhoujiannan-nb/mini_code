@@ -45,6 +45,9 @@ type PromptBuilder struct {
 	Tools       *tools.ToolRegistry
 	taskTool    *tools.TaskTool
 	workDir     string
+	// Worker content deliberately does NOT live here: the system prompt is frozen
+	// into the stored history after the first turn, so the worker's identity and
+	// 公约 travel as a special user message instead (Session.WorkerBrief).
 }
 
 func NewPromptBuilder(config *agent.AgentConfig, workDir string) *PromptBuilder {
@@ -111,6 +114,8 @@ func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string 
 	if workDir != "" {
 		parts = append(parts, "\n# Working Directory\n\nThe current working directory is: "+workDir+"\nAll file operations must be confined to this directory.\n")
 	}
+	// Worker content is not part of the system prompt (it would be frozen with
+	// it): see Session.WorkerBrief, which the loop appends as a user message.
 	// User plugins from ~/.mini_code/plugins.md (one per line, optional
 	// "desc:" suffix). Re-read on every task, so edits to the file take
 	// effect from the next task without a restart.
@@ -158,6 +163,23 @@ func (pb *PromptBuilder) EnableTaskTool(mgr *SessionManager, sessionID, workDir 
 func (pb *PromptBuilder) EnableContextTools(state *tools.ContextState) {
 	pb.Tools.Register(tools.NewContextUsageTool(state))
 	pb.Tools.Register(tools.NewCompactContextTool(state))
+}
+
+// EnableWorkerTools registers the workers tool (工作大类: discover, create,
+// join, and the shared convention file).
+//
+// It is registered for every ROOT session, whether or not it already belongs to
+// a worker. That is deliberate: a session has to be able to decide, and the
+// decision changes the session's state mid-life — if the schema appeared only
+// for unattached sessions, every join would also change the tool list and thus
+// the request prefix. One constant schema costs a few hundred schema bytes and
+// saves a break on every join.
+func (pb *PromptBuilder) EnableWorkerTools(sessionID string, api tools.WorkerDispatcher) {
+	if api == nil {
+		return
+	}
+	pb.Tools.Register(tools.NewWorkersTool(api))
+	slog.Debug("WorkersTool enabled", "session", sessionID)
 }
 
 // EnableGroupTool registers the group_chat tool for a group-member session.

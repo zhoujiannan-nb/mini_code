@@ -165,38 +165,6 @@ func (s *Session) LastUsage() map[string]interface{} {
 	return m
 }
 
-// archivedMetadataKey marks a session as archived: hidden from the main
-// conversation list (rendered in the collapsed "已归档" sidebar section
-// instead). The flag is metadata-only and invisible to the agent loop, so
-// archiving never changes the prompt prefix (KV-prefix-cache safe).
-const archivedMetadataKey = "archived"
-
-// SetArchived toggles the session's archived flag. It is valid while a task
-// is running: a targeted metadata write under the session lock that neither
-// touches the conversation nor the prompt prefix.
-func (s *Session) SetArchived(on bool) {
-	s.mu.Lock()
-	if s.record.Metadata == nil {
-		s.record.Metadata = map[string]interface{}{}
-	}
-	if on {
-		s.record.Metadata[archivedMetadataKey] = true
-	} else {
-		delete(s.record.Metadata, archivedMetadataKey)
-	}
-	s.store.Update(s.record)
-	s.mu.Unlock()
-}
-
-// Archived reports whether the session is archived (hidden from the main
-// conversation list).
-func (s *Session) Archived() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	b, _ := s.record.Metadata[archivedMetadataKey].(bool)
-	return b
-}
-
 // QueueUserMessage appends a user message to be injected into the running
 // agent loop at its next turn (e.g. a group-chat message arriving while the
 // session is busy). For an idle session use SessionManager.DeliverToSession,
@@ -249,6 +217,71 @@ func (s *Session) SetGroupMembership(groupID, name string) {
 	s.store.Update(s.record)
 }
 
+// metadataString reads one string field of a session record's metadata blob.
+func metadataString(rec *SessionRecord, key string) string {
+	if rec == nil || rec.Metadata == nil {
+		return ""
+	}
+	s, _ := rec.Metadata[key].(string)
+	return s
+}
+
+// Worker snapshot keys. The worker block in the system prompt is rendered ONLY
+// from these — the worker row and the convention file on disk are never read
+// while a prompt is built. That is what keeps a running session's prefix stable
+// while a human or a sibling agent edits the shared 公约.
+const (
+	workerNameMetaKey     = "worker_name"
+	workerDirMetaKey      = "worker_dir"
+	workerNoteMetaKey     = "worker_note"
+	workerNotePathMetaKey = "worker_note_path"
+	workerNoteAtMetaKey   = "worker_note_at"
+)
+
+// SetWorkerMembership attaches the session to a worker (workerID == "" detaches
+// it) and writes the snapshot the prompt is rendered from: the worker's name,
+// its shared directory (which becomes the session's own working directory) and
+// the convention file's content at this moment.
+//
+// workDir == "" leaves the session's directory alone — that is the detach case,
+// where the files it wrote stay put. Like SetGroupMembership this is a whole-row
+// write under the session lock, and it is only ever called while the session is
+// between tasks (join/leave happen at the start of a task or from the UI).
+func (s *Session) SetWorkerMembership(workerID, name, workDir, notePath, note string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.record.Metadata == nil {
+		s.record.Metadata = map[string]interface{}{}
+	}
+	s.record.WorkerID = workerID
+	if workDir != "" {
+		s.record.WorkDir = workDir
+		s.record.Metadata[workerDirMetaKey] = workDir
+	}
+	if workerID == "" {
+		for _, k := range []string{workerNameMetaKey, workerDirMetaKey, workerNoteMetaKey, workerNotePathMetaKey, workerNoteAtMetaKey} {
+			delete(s.record.Metadata, k)
+		}
+	} else {
+		s.record.Metadata[workerNameMetaKey] = name
+		s.record.Metadata[workerNotePathMetaKey] = notePath
+		s.record.Metadata[workerNoteMetaKey] = note
+		s.record.Metadata[workerNoteAtMetaKey] = time.Now().Format(time.RFC3339)
+	}
+	s.store.Update(s.record)
+}
+
+// WorkerSnapshot returns what this session's prompt carries for its worker
+// (id, display name, shared directory, convention snapshot).
+func (s *Session) WorkerSnapshot() (workerID, name, dir, note string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.record.WorkerID,
+		metadataString(s.record, workerNameMetaKey),
+		metadataString(s.record, workerDirMetaKey),
+		metadataString(s.record, workerNoteMetaKey)
+}
+
 // preparePromptTools assembles the agent config, the prompt builder (tool set
 // and system-prompt inputs) and the per-task context state.
 //
@@ -294,6 +327,19 @@ func (s *Session) preparePromptTools() (*agent.AgentConfig, *PromptBuilder, *too
 				if rec, err := gsvc.Get(gid); err == nil && rec != nil {
 					groupBackground = rec.Background
 				}
+			}
+		}
+		// Worker (工作大类): nothing goes into the system prompt. The worker's
+		// identity, shared directory and 公约 travel as a special user message the
+		// loop appends to the tail (Session.WorkerBrief + applyWorkerBrief), which
+		// keeps the request an exact extension of the cached prefix. The tool is
+		// registered for root sessions attached or not, so joining never changes
+		// the tool list either. When the service is not wired at all, nothing is
+		// registered and the prompt stays exactly as it was.
+		if wsvc := s.manager.Workers(); wsvc != nil {
+			s.ensureNoteSnapshot()
+			if isRootSession {
+				pb.EnableWorkerTools(s.ID(), wsvc.ToolAPIFor(s.ID()))
 			}
 		}
 	}
@@ -384,6 +430,12 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	// Mid-task user messages (group-chat messages for a running session) are
 	// drained from the session at the start of every turn.
 	loop.SetInjections(s.DrainUserMessages)
+	// Worker brief (special user message): rendered from this session's snapshot on
+	// every turn, so a join or a note_refresh made mid-task reaches the model on the
+	// next turn — as an appended message, never as a rewritten prefix.
+	if s.manager != nil && s.manager.Workers() != nil {
+		loop.SetWorkerBrief(s.WorkerBrief)
+	}
 	// Wire the shared context state (context tools) and the experimental
 	// context-usage notices toggle (session-level, default on).
 	loop.SetContextState(ctxState)
@@ -572,6 +624,9 @@ type SessionManager struct {
 	// groups is the group-chat service (wired at startup; nil = groups off).
 	groupsMu sync.RWMutex
 	groups   *GroupService
+	// workers is the 工作大类 service (wired at startup; nil = workers off).
+	workersMu sync.RWMutex
+	workers   *WorkerService
 
 	// deliverHook delivers a user message to an IDLE session (i.e. starts a
 	// task); the runtime wires it to the message hub.
@@ -804,22 +859,6 @@ func (m *SessionManager) RenameSession(sessionID, title string) error {
 	return nil
 }
 
-// SetArchived toggles a session's archived flag: an archived session is
-// fully functional but hidden from the main conversation list (the UI
-// renders it in the collapsed "已归档" section). The flag lives in the
-// session metadata and is invisible to the agent loop, so archiving never
-// changes the prompt prefix (KV-prefix-cache safe). Valid while a task is
-// running (targeted metadata write under the session lock).
-func (m *SessionManager) SetArchived(sessionID string, on bool) error {
-	s, err := m.Get(sessionID)
-	if err != nil || s == nil {
-		return fmt.Errorf("会话不存在: %s", sessionID)
-	}
-	s.SetArchived(on)
-	slog.Info("session archived state changed", "session", sessionID, "archived", on)
-	return nil
-}
-
 // --- approver (cautious-mode approval) ---
 
 // SetApprover wires the approval service used by the runtime gate.
@@ -865,6 +904,22 @@ func (m *SessionManager) Groups() *GroupService {
 	m.groupsMu.RLock()
 	defer m.groupsMu.RUnlock()
 	return m.groups
+}
+
+// --- worker (工作大类) ---
+
+// SetWorkers wires the worker service.
+func (m *SessionManager) SetWorkers(w *WorkerService) {
+	m.workersMu.Lock()
+	m.workers = w
+	m.workersMu.Unlock()
+}
+
+// Workers returns the wired worker service (nil before wiring).
+func (m *SessionManager) Workers() *WorkerService {
+	m.workersMu.RLock()
+	defer m.workersMu.RUnlock()
+	return m.workers
 }
 
 // --- mid-task user message delivery ---

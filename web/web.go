@@ -136,6 +136,16 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/reasoning", s.handleSetReasoning)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleRenameSession)
 	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handleSetArchived)
+	// Workers (工作大类): the sidebar switcher, the "移动到 Worker" action and the
+	// shared 公约 editor.
+	mux.HandleFunc("GET /api/workers", s.handleWorkersList)
+	mux.HandleFunc("POST /api/workers", s.handleWorkersCreate)
+	mux.HandleFunc("POST /api/workers/{id}/summary", s.handleWorkersSummary)
+	mux.HandleFunc("DELETE /api/workers/{id}", s.handleWorkersDelete)
+	mux.HandleFunc("GET /api/workers/{id}/note", s.handleWorkersNoteGet)
+	mux.HandleFunc("POST /api/workers/{id}/note", s.handleWorkersNoteWrite)
+	mux.HandleFunc("POST /api/sessions/{id}/worker", s.handleSessionsMoveWorker)
+	mux.HandleFunc("POST /api/sessions/{id}/worker/refresh", s.handleSessionsWorkerRefresh)
 	mux.HandleFunc("GET /api/sessions/{id}/children", s.handleListChildren)
 	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
@@ -324,6 +334,8 @@ type SessionSummary struct {
 	Mode             string `json:"mode"`
 	WorkDir          string `json:"work_dir"`
 	ChannelKey       string `json:"channel_key,omitempty"`
+	// WorkerID is the worker (工作大类) the session belongs to; "" = 未分配.
+	WorkerID         string `json:"worker_id,omitempty"`
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
 	MessageCount     int    `json:"message_count"`
@@ -347,6 +359,7 @@ func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 		Model:            r.ModelKey,
 		WorkDir:          r.WorkDir,
 		ChannelKey:       r.ChannelKey,
+		WorkerID:         r.WorkerID,
 		CreatedAt:        r.CreatedAt,
 		UpdatedAt:        r.UpdatedAt,
 		MessageCount:     len(r.Messages),
@@ -369,6 +382,7 @@ func (s *server) summarizeSummary(r session.SessionSummary) SessionSummary {
 		Model:        r.ModelKey,
 		WorkDir:      r.WorkDir,
 		ChannelKey:   r.ChannelKey,
+		WorkerID:     r.WorkerID,
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 		MessageCount: r.MessageCount,
@@ -385,14 +399,19 @@ func (s *server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	// Root sessions only: sub-agent sessions (parent_id set) are internal.
 	// The lightweight query skips conversation payloads, so the list stays
 	// cheap enough for the UI to poll it on every SSE signal.
-	// ?archived=1 selects the archived list (hidden from the main list).
-	var records []session.SessionSummary
-	var err error
-	if r.URL.Query().Get("archived") == "1" {
-		records, err = s.be.Mgr().GetStore().ListArchivedSummaries(limit, 0)
-	} else {
-		records, err = s.be.Mgr().GetStore().ListSessionSummaries(limit, 0)
+	// ?worker=<id> selects one worker's bucket; ?worker=(empty) is the
+	// un-assigned one; the default is every visible session. ?archived=1 stays
+	// as a compatibility alias for the built-in 已归档 bucket.
+	bucket := session.WorkerAllID
+	if q, ok := r.URL.Query()["worker"]; ok {
+		bucket = q[0]
+		if bucket == "" {
+			bucket = session.WorkerUnassignedID
+		}
+	} else if r.URL.Query().Get("archived") == "1" {
+		bucket = session.WorkerArchivedID
 	}
+	records, err := s.be.Mgr().GetStore().ListBucketSummaries(bucket, limit, 0)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -442,7 +461,18 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec := sess.Record()
-	msgs := sess.SnapshotMessages()
+	all := sess.SnapshotMessages()
+	// A worker brief is injected context, not something the user typed: it is
+	// persisted so the model keeps seeing it, but rendering it would put a
+	// thousand-character "user" bubble into every worker session's transcript.
+	// The token count below keeps it — that part of the context really is there.
+	msgs := make([]provider.Message, 0, len(all))
+	for _, m := range all {
+		if session.IsWorkerBrief(m) {
+			continue
+		}
+		msgs = append(msgs, m)
+	}
 	sum := s.summarize(rec)
 	if !sum.Active {
 		// 与列表一致:后台子 agent 还在跑时,主会话按"运行中"返回
@@ -456,8 +486,9 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session":  sum,
 		"messages": msgs,
-		// Token estimate for the composer footer (xx/context_window).
-		"tokens": util.CountMessagesTokens(msgs),
+		// Token estimate for the composer footer (xx/context_window). Counted
+		// over the full context, injected briefs included.
+		"tokens": util.CountMessagesTokens(all),
 		// Context window of THIS session's model (the token bar must track
 		// the per-session model, not the global default).
 		"context_window": s.be.Mgr().ContextWindowFor(rec.ModelKey),
@@ -678,12 +709,15 @@ func (s *server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSetArchived toggles a session's archived flag (hide/restore in the
-// conversation list). Archived sessions stay fully functional; the flag
-// never touches the conversation or the prompt prefix (cache-safe).
+// handleSetArchived is the compatibility alias of "移动到 Worker": the archived
+// flag is now the built-in 已归档 bucket, so an old client (or a bookmarked call)
+// still works and both spellings keep one source of truth. Archived sessions
+// stay fully functional, and because the built-in bucket carries no directory
+// and no convention file, the move changes nothing the model sees — the prefix
+// stays byte-identical (cache-safe).
 func (s *server) handleSetArchived(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, err := s.be.Mgr().Get(id); err != nil {
+	if sess, err := s.be.Mgr().Get(id); err != nil || sess == nil {
 		writeErr(w, http.StatusNotFound, "session not found: "+id)
 		return
 	}
@@ -694,13 +728,18 @@ func (s *server) handleSetArchived(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := s.be.Mgr().SetArchived(id, req.Archived); err != nil {
+	target := session.WorkerUnassignedID
+	if req.Archived {
+		target = session.WorkerArchivedID
+	}
+	if err := s.be.Mgr().MoveToWorker(id, target); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session_id": id,
 		"archived":   req.Archived,
+		"worker_id":  target,
 	})
 }
 
@@ -735,6 +774,7 @@ type SendMessageRequest struct {
 	ContextReminders *bool    `json:"context_reminders,omitempty"` // new-session preference; nil = default (on)
 	Thinking         string   `json:"thinking,omitempty"`          // thinking switch for a NEW session; ignored for existing sessions
 	ReasoningEffort  string   `json:"reasoning_effort,omitempty"`  // thinking depth for a NEW session; ignored for existing sessions
+	WorkerID         string   `json:"worker_id,omitempty"`         // worker (工作大类) for a NEW session; ignored for existing sessions
 }
 
 const (
@@ -786,6 +826,7 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	msg.ContextReminders = req.ContextReminders
 	msg.Thinking = strings.TrimSpace(req.Thinking)
 	msg.ReasoningEffort = strings.TrimSpace(req.ReasoningEffort)
+	msg.WorkerID = strings.TrimSpace(req.WorkerID)
 	s.be.Hub().Submit(msg)
 
 	resp := map[string]string{"task_id": msg.ID}

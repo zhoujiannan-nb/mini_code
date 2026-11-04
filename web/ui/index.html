@@ -223,6 +223,18 @@ window.__mcBoot = __mcBoot;
   <aside>
   <div class="brand"><span class="brand-mark"><svg class="mk" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true"><defs><linearGradient id="mc-mark-g" x1="0" y1="0" x2="1" y2="1"><stop class="s1" offset="0"/><stop class="s2" offset=".55"/><stop class="s3" offset="1"/></linearGradient></defs><rect x=".6" y=".6" width="30.8" height="30.8" rx="9" fill="url(#mc-mark-g)"/><rect x=".6" y=".6" width="30.8" height="30.8" rx="9" fill="none" stroke="rgba(0,0,0,.22)"/><path d="M9.6 11.4 5.4 16l4.2 4.6" fill="none" stroke="#fff" stroke-opacity=".95" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M18.6 9.8 13.4 22.2" fill="none" stroke="#fff" stroke-opacity=".95" stroke-width="2.1" stroke-linecap="round"/><path d="M22.4 11.4 26.6 16l-4.2 4.6" fill="none" stroke="#fff" stroke-opacity=".95" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg></span><div class="logo">Mini <span>Code</span></div><span class="brand-sub">agent</span></div>
     <button class="new-btn" id="btn-new" title="开始新会话">＋ 新建会话</button>
+    <!-- worker 切换条:一条工作线一个 worker(共享工作目录 + 共享公约)。
+         ‹ › 切换 worker,列表只显示这个 worker 的会话;＋ 新建 worker。 -->
+    <div class="worker-bar" id="worker-bar">
+      <button class="wk-arrow" id="wk-prev" title="上一个 worker">‹</button>
+      <button class="wk-pick" id="wk-pick" title="切换 worker / 查看它的目录与公约">
+        <span class="wk-label">worker</span><span class="wk-name" id="wk-name">全部</span><span class="wk-caret">⌄</span>
+      </button>
+      <button class="wk-arrow" id="wk-next" title="下一个 worker">›</button>
+      <button class="wk-add" id="btn-new-worker" title="新建 worker(工作大类:共享目录 + 公约)">＋</button>
+    </div>
+    <div class="worker-sub" id="worker-sub"></div>
+    <div class="worker-menu" id="worker-menu"></div>
     <div class="sec-head">会话 <span class="sec-count" id="sess-count"></span></div>
     <div class="sess-list" id="sess-list"></div>
     <div class="group-sec" id="group-sec">
@@ -233,14 +245,6 @@ window.__mcBoot = __mcBoot;
         <button class="gh-add" id="btn-new-group" title="新建群聊(多智能体协作)">＋</button>
       </div>
       <div class="group-list" id="group-list"></div>
-    </div>
-    <div class="group-sec collapsed" id="archive-sec" title="拖会话到这里归档;拖回会话区恢复">
-      <div class="sec-head group-head">
-        <span class="gh-toggle" id="archive-toggle" title="折叠/展开已归档区">▾</span>
-        <span class="gh-title" id="archive-head-title" title="已归档的对话不在会话列表显示;拖会话到这里归档,拖回会话区恢复">已归档(拖会话到此处归档)</span>
-        <span class="sec-count" id="archive-count"></span>
-      </div>
-      <div class="group-list" id="archive-list"></div>
     </div>
   </aside>
 <main>
@@ -556,6 +560,7 @@ window.__mcBoot = __mcBoot;
 <script src="/js/dom.js"></script>
 <script src="/js/markdown.js"></script>
 <script src="/js/sessions.js"></script>
+<script src="/js/workers.js"></script>
 <script src="/js/messages.js"></script>
 <script src="/js/steps.js"></script>
 <script src="/js/streaming.js"></script>

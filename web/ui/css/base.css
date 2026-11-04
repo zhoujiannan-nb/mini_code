@@ -292,25 +292,99 @@ aside {
 .rename-btn:hover { background: var(--blue-btn); color: #fff; }
 .empty-hint { color: var(--text3); font-size: 12px; text-align: center; padding: 24px 12px; }
 
-/* ===== 已归档区(原群聊位置)===== */
-/* 平常收起(只显示分区头);拖会话到该区域 = 归档,拖回会话区 = 恢复。
-   复用群区同款分区样式(group-sec/group-list),视觉与布局一致。 */
-/* 与会话列表之间留一段间距,分区头下移一点,不与会话条目贴死 */
-#archive-sec { margin-top: 14px; }
-#archive-sec.drop-hint { background: var(--accent-l); }
-#archive-sec.drop-hint .group-head { color: var(--accent-t); }
-.sess-list.drop-hint { outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: var(--r-sm); }
-/* 归档条目:复用 sess-item 外观,多一个"恢复"按钮(三按钮布局) */
-.arch-item .arch-btn {
-  position: absolute; right: 8px; top: 8px; width: 20px; height: 20px;
+/* ===== Worker(工作大类)切换条 ===== */
+/* 一行放:‹ worker名 › ＋。选中项决定会话列表显示哪个分桶;下面那行小字显示
+   这个 worker 的共享目录与公约/摘要/删除操作 —— 一眼看得见"现在在为哪条工作线干活"。 */
+.worker-bar {
+  display: flex; align-items: center; gap: 2px;
+  margin: 6px 10px 0; padding: 2px 4px;
+  background: var(--hover); border: 1px solid var(--border); border-radius: var(--r-md);
+}
+.wk-arrow {
+  flex: 0 0 auto; width: 22px; height: 24px; border: none; background: transparent;
+  color: var(--text2); font-size: 16px; line-height: 24px; cursor: pointer;
+  border-radius: var(--r-xs);
+}
+.wk-arrow:hover { background: var(--hover-2); color: var(--title); }
+.wk-pick {
+  flex: 1 1 auto; min-width: 0; height: 24px; border: none; background: transparent;
+  display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--title);
+  font-size: 12px; padding: 0 2px;
+}
+.wk-pick:hover { color: var(--accent-t); }
+.wk-label { color: var(--text3); font-size: 11px; letter-spacing: .04em; flex: 0 0 auto; }
+.wk-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wk-caret { color: var(--text3); font-size: 10px; flex: 0 0 auto; }
+.wk-add {
+  flex: 0 0 auto; width: 22px; height: 24px; border: none; border-radius: var(--r-xs);
+  background: transparent; color: var(--text2); font-size: 15px; cursor: pointer; line-height: 24px;
+}
+.wk-add:hover { background: var(--accent-btn); color: #fff; }
+/* 目录 + 操作行:小字,悬停看全路径 */
+.worker-sub {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  margin: 3px 12px 0; padding: 0 2px; min-height: 16px;
+  font-size: 11px; color: var(--text3);
+}
+.wk-sub-dir { flex: 1 1 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wk-sub-tip { flex: 1 1 100%; }
+.wk-sub-btn {
+  border: none; background: transparent; color: var(--text3); cursor: pointer;
+  font-size: 11px; padding: 1px 4px; border-radius: var(--r-xs);
+}
+.wk-sub-btn:hover { background: var(--hover-2); color: var(--title); }
+.wk-sub-danger:hover { background: var(--red-btn); color: #fff; }
+/* worker 菜单(切换 / 移动到) */
+.worker-menu {
+  position: fixed; z-index: 60; display: none; min-width: 176px; max-height: 320px; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--border2); border-radius: var(--r-md);
+  box-shadow: 0 10px 30px var(--sh2); padding: 4px;
+}
+.worker-menu.open { display: block; }
+.wk-menu-head { font-size: 11px; color: var(--text3); padding: 4px 8px 6px; letter-spacing: .05em; }
+.wk-menu-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer;
+  border-radius: var(--r-sm); font-size: 13px; color: var(--title);
+}
+.wk-menu-item:hover { background: var(--hover); }
+.wk-menu-item.cur { background: var(--hover-2); }
+.wk-menu-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wk-menu-n { font-size: 11px; color: var(--text3); }
+/* 公约编辑器:浮层里改 worker.md(人改 = 授权;agent 改要走审批) */
+.wk-note {
+  position: fixed; z-index: 70; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(680px, 92vw); display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--border2); border-radius: var(--r-md);
+  box-shadow: 0 18px 50px var(--sh2); padding: 12px; gap: 8px;
+}
+.wk-note-head { font-size: 13px; font-weight: 700; color: var(--title); }
+.wk-note-path { font-size: 11px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wk-note-area {
+  width: 100%; height: min(52vh, 460px); resize: vertical; box-sizing: border-box;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border2);
+  border-radius: var(--r-sm); padding: 10px; font: 12px/1.6 ui-monospace, Consolas, monospace;
+}
+.wk-note-area:focus { outline: none; border-color: var(--accent); }
+.wk-note-foot { display: flex; align-items: center; gap: 8px; }
+.wk-note-tip { flex: 1 1 auto; font-size: 11px; color: var(--text3); }
+.wk-note-btn {
+  border: 1px solid var(--border2); background: transparent; color: var(--text);
+  padding: 5px 12px; border-radius: var(--r-sm); cursor: pointer; font-size: 12px;
+}
+.wk-note-btn:hover { background: var(--hover); }
+.wk-note-btn.primary { background: var(--accent-btn); border-color: transparent; color: #fff; font-weight: 600; }
+.wk-note-btn.primary:hover { background: var(--accent-btn-h); }
+/* 会话卡三按钮:删除 / 重命名 / 移动到 worker */
+.sess-item .wk-btn {
+  position: absolute; right: 56px; top: 8px; width: 20px; height: 20px;
   border: none; border-radius: var(--r-xs); background: transparent; color: var(--text3);
   font-size: 12px; cursor: pointer; display: none; line-height: 20px;
 }
-.arch-item .rename-btn { right: 32px; }
-.arch-item .del-btn { right: 56px; }
-.arch-item .sess-title { padding-right: 76px; }
-.arch-item:hover .arch-btn { display: block; }
-.arch-btn:hover { background: var(--accent-btn); color: #fff; }
+.sess-item:hover .wk-btn { display: block; }
+.wk-btn:hover { background: var(--accent-btn); color: #fff; }
+.sess-item .sess-title { padding-right: 76px; }
+.sess-list.drop-hint { outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: var(--r-sm); }
+
 
 /* ---------- 聊天区 ---------- */
 .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
