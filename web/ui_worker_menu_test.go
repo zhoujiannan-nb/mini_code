@@ -255,3 +255,56 @@ func TestWorkerControlsHoverGreen(t *testing.T) {
 		t.Errorf("the skeleton rows should breathe:\n%s", sk)
 	}
 }
+
+// TestNewSessionButtonsSplitOwnership pins the two "new session" entry points.
+// They used to be the same thing: resetToNew() leaves state.worker alone, and
+// send.js takes the worker from exactly that field — so the big header button
+// quietly filed the new session under whichever worker happened to be selected,
+// duplicating the small ＋会话 under the worker bar. Now the big one detaches the
+// draft (an ownerless session then decides for itself, via the join reminder in
+// session/worker.go), and the small one pins the current worker.
+func TestNewSessionButtonsSplitOwnership(t *testing.T) {
+	app := string(uiAssetBody(t, "ui/js/app.js"))
+	wk := string(uiAssetBody(t, "ui/js/workers.js"))
+	page, err := embeddedPage()
+	if err != nil {
+		t.Fatalf("embeddedPage: %v", err)
+	}
+
+	i := strings.Index(app, `$("#btn-new").addEventListener`)
+	if i < 0 {
+		t.Fatal(`app.js lost the #btn-new click handler`)
+	}
+	body := app[i:]
+	if j := strings.Index(body, "\n  });"); j > 0 {
+		body = body[:j]
+	}
+	if !strings.Contains(body, "detachWorkerForNewSession()") {
+		t.Error(`#btn-new no longer detaches the draft from the worker — that makes it a duplicate of the worker-scoped ＋会话 button`)
+	}
+	if !strings.Contains(body, "resetToNew()") {
+		t.Error(`#btn-new no longer resets to a fresh draft (resetToNew)`)
+	}
+
+	detach := strings.Index(wk, "function detachWorkerForNewSession()")
+	attach := strings.Index(wk, "function newSessionInWorker()")
+	if detach < 0 || attach < 0 {
+		t.Fatal("workers.js lost detachWorkerForNewSession/newSessionInWorker")
+	}
+	detachBody := wk[detach:]
+	if !strings.Contains(detachBody, `state.worker = ""`) || !strings.Contains(detachBody, `rememberWorker("")`) {
+		t.Error(`detachWorkerForNewSession must clear both state.worker and rememberWorker — send.js reads state.worker as the only ownership source`)
+	}
+	if !strings.Contains(detachBody, "state.unassignedActive = 1") {
+		t.Error(`detachWorkerForNewSession must surface the 未分配 bucket (state.unassignedActive = 1) while the draft has no session yet`)
+	}
+	attachBody := wk[attach:]
+	if !strings.Contains(attachBody, "workerBucketId()") || !strings.Contains(attachBody, "state.worker = id") {
+		t.Error(`newSessionInWorker must pin the draft to the currently selected worker (state.worker = id)`)
+	}
+
+	// The split has to be readable from the UI, not only from the code.
+	if !strings.Contains(page, `id="btn-new" title="新建会话（不属于任何工作区`) {
+		t.Error(`#btn-new lost the tooltip telling the user the new session belongs to no worker`)
+	}
+}

@@ -104,13 +104,31 @@ function paintWorkerBar() {
   }
 }
 
-// 在当前 worker 里新建会话:回到草稿并聚焦输入框。send.js 发第一条消息时会带上
-// state.worker,会话一出生就在这个 worker 下面(共享目录、公约都跟着)。
+// 小「＋ 会话」:草稿**明确挂到当前 worker**。归属只有 send.js 一处来源
+// (body.worker_id = state.worker),而 resetToNew 不碰它,所以这里要把它钉成当前区。
+// "已归档"是个虚拟桶,不能当归属,那种情况下草稿留作未分配。
 function newSessionInWorker() {
   if (state.currentGroup && typeof exitGroupView === "function") exitGroupView();
+  const id = workerBucketId();
+  if (id && id !== "*") {
+    state.worker = id;
+    rememberWorker(id);
+  }
+  state.unassignedActive = 0;
   resetToNew();
   const input = $("#input");
   if (input) input.focus();
+}
+
+// 顶部大「＋ 新建会话」:建一个**不属于任何 worker** 的会话,归属交给会话自己判断 ——
+// 没有 worker 时后端会注入 join 提醒(session/worker.go 的 BuildWorkerNotice),
+// 由 agent 决定 join 哪条线 / create 新线 / 干脆不处理。
+// 不清 state.worker 的话,大按钮会跟着上一个选中的区走,和小「＋ 会话」变成同一件事。
+function detachWorkerForNewSession() {
+  state.worker = "";
+  rememberWorker("");
+  state.unassignedActive = 1; // 会话还没建出来,也要让"未分配"出现在切换器里
+  paintWorkerBar();
 }
 
 async function switchWorker(id) {
