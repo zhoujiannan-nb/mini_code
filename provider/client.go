@@ -70,7 +70,7 @@ type chatCompletion struct {
 
 var providerRegistry = map[string]func(cfg config.ModelConfig) Provider{
 	"vllm": func(cfg config.ModelConfig) Provider {
-		return NewVLLMProvider(cfg.BaseURL, cfg.APIKey, cfg.ModelName, cfg.MaxTokens, cfg.ContextWindow, cfg.Temperature, cfg.TopP)
+		return NewVLLMProvider(cfg.BaseURL, cfg.APIKey, cfg.ModelName, cfg.MaxTokens, cfg.ContextWindow, cfg.Temperature, cfg.TopP, cfg.Thinking, cfg.ReasoningEffort)
 	},
 	// SGLang is OpenAI-compatible like vLLM. The endpoint is {base}/chat/completions;
 	// a direct SGLang deployment puts /v1 in base_url, while a reverse proxy that
@@ -131,16 +131,22 @@ func (mc *ModelClient) applySampling(req *chatRequest) {
 }
 
 // WithReasoning returns a client whose provider carries an explicit thinking
-// depth (thinking switch + reasoning_effort), leaving the shared registry
-// client untouched. It backs the per-session thinking override set from the
-// composer: only DeepSeek and SGLang honor these fields, so any other provider
-// (or an empty override) returns the receiver unchanged. The HTTP client is
-// shared, so the derived client adds no connections.
+// depth (thinking switch + reasoning_effort), leaving the shared registry client
+// untouched. It backs two things: the per-session thinking override set from the
+// composer, and the session-title call (which always asks for "disabled"). vLLM,
+// SGLang and DeepSeek honor these fields; any other provider (or an empty
+// override) returns the receiver unchanged. The HTTP client is shared, so the
+// derived client adds no connections.
 func (mc *ModelClient) WithReasoning(thinking, effort string) *ModelClient {
 	if mc == nil || (thinking == "" && effort == "") {
 		return mc
 	}
 	switch p := mc.provider.(type) {
+	case *VLLMProvider:
+		cp := *p
+		cp.Thinking = thinking
+		cp.ReasoningEffort = effort
+		return &ModelClient{provider: &cp, providerType: mc.providerType, httpClient: mc.httpClient, topK: mc.topK}
 	case *SGLangProvider:
 		cp := *p
 		cp.Thinking = thinking

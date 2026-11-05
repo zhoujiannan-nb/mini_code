@@ -14,7 +14,7 @@ import (
 func newTestStreamServer(handler http.HandlerFunc) (*httptest.Server, *ModelClient) {
 	srv := httptest.NewServer(handler)
 	mc := &ModelClient{
-		provider:   NewVLLMProvider(srv.URL, "test-key", "test-model", 8192, 32768, 0.7, 1.0),
+		provider:   NewVLLMProvider(srv.URL, "test-key", "test-model", 8192, 32768, 0.7, 1.0, "", ""),
 		httpClient: srv.Client(),
 	}
 	return srv, mc

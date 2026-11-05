@@ -24,6 +24,7 @@ type capturedCall struct {
 	messages  []interface{}
 	tools     string // serialized tools field
 	thinking  string // serialized thinking field (only providers with a switch send it)
+	kwargs    string // serialized chat_template_kwargs field (the Qwen3 thinking switch)
 	titleCall bool
 }
 
@@ -42,6 +43,7 @@ func (p *titleProbe) handle(rw http.ResponseWriter, r *http.Request) {
 	msgs, _ := body["messages"].([]interface{})
 	toolsJSON, _ := json.Marshal(body["tools"])
 	thinkingJSON, _ := json.Marshal(body["thinking"])
+	kwargsJSON, _ := json.Marshal(body["chat_template_kwargs"])
 	isTitle := false
 	if len(msgs) > 0 {
 		if m, ok := msgs[len(msgs)-1].(map[string]interface{}); ok {
@@ -51,7 +53,7 @@ func (p *titleProbe) handle(rw http.ResponseWriter, r *http.Request) {
 		}
 	}
 	p.mu.Lock()
-	p.calls = append(p.calls, capturedCall{messages: msgs, tools: string(toolsJSON), thinking: string(thinkingJSON), titleCall: isTitle})
+	p.calls = append(p.calls, capturedCall{messages: msgs, tools: string(toolsJSON), thinking: string(thinkingJSON), kwargs: string(kwargsJSON), titleCall: isTitle})
 	p.mu.Unlock()
 
 	reply := "好的"
@@ -493,5 +495,39 @@ func TestTitleQuoteCaps(t *testing.T) {
 	}
 	if got := titleQuote("修一下 worker 列表"); got != "修一下 worker 列表" {
 		t.Errorf("a short ask was altered: %q", got)
+	}
+}
+
+// TestTitleRequestTurnsThinkingOffOnVLLM is the field case. The models in use are
+// Qwen3-style behind vLLM, where the thinking switch is a chat template variable —
+// and WithReasoning used to be a no-op on this provider, so every naming request
+// thought its way past the output budget and answered with nothing (finish=length,
+// no title, in production, for every session). The call must carry
+// enable_thinking=false; ordinary task calls must not carry the kwarg at all, so
+// nothing about normal traffic changes.
+func TestTitleRequestTurnsThinkingOffOnVLLM(t *testing.T) {
+	probe := &titleProbe{}
+	mgr := newTitleEnv(t, probe) // provider "vllm", like the config in use
+	mgr.SetTitlePolicy(true, "")
+	goal := "帮我把 worker 列表排个序"
+	s := mustSession(t, mgr, goal)
+	titlePrompt(t, s, goal)
+	if got := awaitTitle(t, mgr, s.ID(), "配置 nginx 的 gzip", 5*time.Second); got != "配置 nginx 的 gzip" {
+		t.Fatalf("no title generated on the vLLM path (still %q)", got)
+	}
+
+	var titleCall, taskCall capturedCall
+	for _, c := range probe.snapshot() {
+		if c.titleCall {
+			titleCall = c
+		} else {
+			taskCall = c
+		}
+	}
+	if titleCall.kwargs != `{"enable_thinking":false}` {
+		t.Errorf("the naming call carried chat_template_kwargs %s, want {\"enable_thinking\":false}", titleCall.kwargs)
+	}
+	if taskCall.kwargs != "null" {
+		t.Errorf("the task request should carry no chat_template_kwargs, got %s", taskCall.kwargs)
 	}
 }
