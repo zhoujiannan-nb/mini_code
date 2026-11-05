@@ -293,19 +293,13 @@ aside {
 .empty-hint { color: var(--text3); font-size: 12px; text-align: center; padding: 24px 12px; }
 
 /* ===== Worker(工作大类)切换条 ===== */
-/* 一行放:‹ worker名 › ＋。选中项决定会话列表显示哪个分桶;下面那行小字显示
-   这个 worker 的共享目录与公约/摘要/删除操作 —— 一眼看得见"现在在为哪条工作线干活"。 */
+/* 一行放:worker名 ⌄ ＋。点开名字出下拉选分桶;选中项决定下面列表显示哪个桶。
+   ‹ › 那种"循环切换"去掉了 —— worker 数量一多点着找很费劲,下拉一步到位。 */
 .worker-bar {
   display: flex; align-items: center; gap: 2px;
   margin: 6px 10px 0; padding: 2px 4px;
   background: var(--hover); border: 1px solid var(--border); border-radius: var(--r-md);
 }
-.wk-arrow {
-  flex: 0 0 auto; width: 22px; height: 24px; border: none; background: transparent;
-  color: var(--text2); font-size: 16px; line-height: 24px; cursor: pointer;
-  border-radius: var(--r-xs);
-}
-.wk-arrow:hover { background: var(--hover-2); color: var(--title); }
 .wk-pick {
   flex: 1 1 auto; min-width: 0; height: 24px; border: none; background: transparent;
   display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--title);
@@ -320,12 +314,13 @@ aside {
   background: transparent; color: var(--text2); font-size: 15px; cursor: pointer; line-height: 24px;
 }
 .wk-add:hover { background: var(--accent-btn); color: #fff; }
-/* 目录 + 操作行:小字,悬停看全路径 */
+/* 目录 + 操作行:小字,悬停看全路径。"全部"/"未分配"没有目录可显示,留空即折叠。 */
 .worker-sub {
   display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
   margin: 3px 12px 0; padding: 0 2px; min-height: 16px;
   font-size: 11px; color: var(--text3);
 }
+.worker-sub:empty { display: none; }
 .wk-sub-dir { flex: 1 1 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wk-sub-tip { flex: 1 1 100%; }
 .wk-sub-btn {
@@ -334,11 +329,13 @@ aside {
 }
 .wk-sub-btn:hover { background: var(--hover-2); color: var(--title); }
 .wk-sub-danger:hover { background: var(--red-btn); color: #fff; }
-/* worker 菜单(切换 / 移动到) */
+/* worker 菜单(切换 / 移动到)。注意背景必须是实色的 --surface:之前写的
+   var(--panel) 在调色板里根本不存在,解析成透明 → 菜单叠在会话列表上时
+   底下的标题直接透出来,等于看不清。阴影也要够重,否则实色块和列表分层不出来。 */
 .worker-menu {
-  position: fixed; z-index: 60; display: none; min-width: 176px; max-height: 320px; overflow-y: auto;
-  background: var(--panel); border: 1px solid var(--border2); border-radius: var(--r-md);
-  box-shadow: 0 10px 30px var(--sh2); padding: 4px;
+  position: fixed; z-index: 80; display: none; min-width: 208px; max-height: 320px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border2); border-radius: var(--r-md);
+  box-shadow: 0 12px 32px rgba(18,20,16,.20), 0 2px 6px rgba(18,20,16,.10); padding: 4px;
 }
 .worker-menu.open { display: block; }
 .wk-menu-head { font-size: 11px; color: var(--text3); padding: 4px 8px 6px; letter-spacing: .05em; }
@@ -352,9 +349,9 @@ aside {
 .wk-menu-n { font-size: 11px; color: var(--text3); }
 /* 公约编辑器:浮层里改 worker.md(人改 = 授权;agent 改要走审批) */
 .wk-note {
-  position: fixed; z-index: 70; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  position: fixed; z-index: 90; left: 50%; top: 50%; transform: translate(-50%, -50%);
   width: min(680px, 92vw); display: flex; flex-direction: column;
-  background: var(--panel); border: 1px solid var(--border2); border-radius: var(--r-md);
+  background: var(--surface); border: 1px solid var(--border2); border-radius: var(--r-md);
   box-shadow: 0 18px 50px var(--sh2); padding: 12px; gap: 8px;
 }
 .wk-note-head { font-size: 13px; font-weight: 700; color: var(--title); }

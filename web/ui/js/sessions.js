@@ -45,8 +45,7 @@ function syncRunning() {
 function renderSessions() {
   const list = $("#sess-list");
   list.innerHTML = "";
-  const cnt = $("#sess-count");
-  if (cnt) cnt.textContent = state.sessions.length ? String(state.sessions.length) : "";
+  // 「会话 N」分组标题已删（计数在 worker 条的名字后面，不再重复一遍）
   if (state.sessions.length === 0) {
     list.innerHTML = '<div class="empty-hint">' + workerEmptyHint() + '</div>';
     return;

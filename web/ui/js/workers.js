@@ -87,10 +87,10 @@ function paintWorkerBar() {
   const sub = $("#worker-sub");
   if (!sub) return;
   if (!w || !w.work_dir) {
-    // "全部"/"未分配"没有共享目录:说明清楚,避免用户以为没生效
-    sub.innerHTML = id === ""
-      ? '<span class="wk-sub-tip">未分配:新会话会自己判断该加入哪个 worker</span>'
-      : '<span class="wk-sub-tip">全部:不区分 worker(点 ‹ › 或名字切换)</span>';
+    // "全部"/"未分配"没有共享目录,原来那行解释性小字("全部:不区分 worker…"、
+    // "未分配:新会话会自己判断…")是纯噪音,还老跟下拉菜单打架 —— 删了。
+    // 空的 .worker-sub 由 CSS 的 :empty 折叠,不留空隙。
+    sub.innerHTML = "";
   } else {
     sub.innerHTML =
       '<span class="wk-sub-dir" title="' + esc(w.work_dir) + '\n共享工作目录">📂 ' + esc(shortPath(w.work_dir, 34)) + '</span>' +
@@ -119,15 +119,6 @@ async function switchWorker(id) {
   rememberWorker(id);
   closeWorkerMenu();
   await loadSessions();
-}
-
-function cycleWorker(delta) {
-  const list = workerBuckets();
-  const id = workerBucketId();
-  let i = list.findIndex(w => w.worker_id === id);
-  if (i < 0) i = 0;
-  const next = list[(i + delta + list.length) % list.length];
-  switchWorker(next.worker_id);
 }
 
 /* ---------------- worker 菜单(切换 / 新建)---------------- */
@@ -287,9 +278,7 @@ async function refreshCurrentNote() {
 /* ---------------- 事件绑定(由 app.js 的 init 调用)---------------- */
 function initWorkerBar() {
   restoreWorker();
-  const prev = $("#wk-prev"), next = $("#wk-next"), pick = $("#wk-pick");
-  if (prev) prev.addEventListener("click", () => cycleWorker(-1));
-  if (next) next.addEventListener("click", () => cycleWorker(1));
+  const pick = $("#wk-pick"); // ‹ › 循环切换已删除,切换只走下拉
   if (pick) pick.addEventListener("click", (e) => { e.stopPropagation(); openWorkerMenu(pick); });
   const add = $("#btn-new-worker");
   if (add) add.addEventListener("click", (e) => { e.stopPropagation(); createWorker(); });
