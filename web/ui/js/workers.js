@@ -26,11 +26,12 @@ function rememberWorker(id) {
   try { localStorage.setItem(LS_WORKER_KEY, id); } catch (e) {}
 }
 
-// workerBuckets 是切换条的全部序列:未分配 → 各 worker。没有"全部"这一档,内置分桶
-// (旧版"已归档")也不再列出 —— 归档按钮早就没了,那个桶也不会再被创建。
+// workerBuckets 是切换条的全部序列:各 worker → 未分配。未分配排最后,它是"没归属"
+// 的兜底档,不该抢在真正的工作线前面。没有"全部"这一档,内置分桶(旧版"已归档")也
+// 不再列出 —— 归档按钮早就没了,那个桶也不会再被创建。
 function workerBuckets() {
-  const out = [{ worker_id: "", name: "未分配", sessions: state.unassigned || 0 }];
-  for (const w of (state.workers || []).filter(x => !x.builtin)) out.push(w);
+  const out = (state.workers || []).filter(x => !x.builtin).slice();
+  out.push({ worker_id: "", name: "未分配", sessions: state.unassigned || 0 });
   return out;
 }
 

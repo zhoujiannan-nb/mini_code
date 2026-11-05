@@ -312,8 +312,11 @@ func TestApplyWorkerNoticeOncePerTask(t *testing.T) {
 	free := mustSession(t, mgr, "free")
 	loop.SetWorkerNotice(free.WorkerNotice)
 	task1 := loop.applyWorkerNotice([]provider.Message{{Role: "user", Content: "hi"}})
-	if len(task1) != 2 || !strings.Contains(task1[1].GetText(), "还没有归属 worker") {
-		t.Fatalf("no join reminder for an unattached session: %+v", task1)
+	// The reminder also states the cap, so a model learns it before it tries to
+	// create — not from a create that got refused.
+	if len(task1) != 2 || !strings.Contains(task1[1].GetText(), "还没有归属 worker") ||
+		!strings.Contains(task1[1].GetText(), fmt.Sprintf("worker 最多 %d 个", MaxWorkers)) {
+		t.Fatalf("no join reminder (with the worker cap) for an unattached session: %+v", task1)
 	}
 	task2 := loop.applyWorkerNotice(append(task1, provider.Message{Role: "assistant", Content: "ok"}))
 	if countWorkerNotices(task2) != 2 {
@@ -764,6 +767,10 @@ func TestWorkerOtherIsFixed(t *testing.T) {
 	}
 	// The cap: 其他 plus MaxWorkers-1 created ones fills the list.
 	base := mustSession(t, mgr, "base")
+	// The quota is stated before any create fails, in the list header.
+	if out := svc.ToolAPIFor(base.ID()).List(); !strings.Contains(out, fmt.Sprintf("worker 名额 1/%d", MaxWorkers)) {
+		t.Fatalf("list with room left: %q", out)
+	}
 	for i := 1; i < MaxWorkers; i++ {
 		if _, err := svc.Create(fmt.Sprintf("line-%d", i), "", base.WorkDir(), ""); err != nil {
 			t.Fatalf("create #%d: %v", i, err)
@@ -771,6 +778,17 @@ func TestWorkerOtherIsFixed(t *testing.T) {
 	}
 	if _, err := svc.Create("one-too-many", "", base.WorkDir(), ""); err == nil {
 		t.Fatalf("worker #%d should have been refused", MaxWorkers+1)
+	}
+	// Full list → the tool text says so instead of offering create as an option.
+	if out := svc.ToolAPIFor(base.ID()).List(); !strings.Contains(out, "名额已满") ||
+		!strings.Contains(out, fmt.Sprintf("worker 名额 %d/%d", MaxWorkers, MaxWorkers)) {
+		t.Fatalf("list at the cap: %q", out)
+	}
+	if q := quotaLine(MaxWorkers); !strings.Contains(q, "已满") {
+		t.Fatalf("quota line when full: %q", q)
+	}
+	if q := quotaLine(2); !strings.Contains(q, fmt.Sprintf("还剩 %d/%d", MaxWorkers-2, MaxWorkers)) {
+		t.Fatalf("quota line with room: %q", q)
 	}
 }
 

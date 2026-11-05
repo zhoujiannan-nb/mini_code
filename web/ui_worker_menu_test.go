@@ -34,3 +34,26 @@ func TestWorkerMenuIsBodyLevel(t *testing.T) {
 		t.Error(`workers.js no longer clamps the worker dropdown into the viewport (placeWorkerMenu)`)
 	}
 }
+
+// TestUnassignedBucketSortsLast pins the order of the worker switcher: the real
+// lines of work come first and 未分配 goes last. It is the fallback bucket, so
+// having it on the first row put the row you almost never want at the top.
+func TestUnassignedBucketSortsLast(t *testing.T) {
+	js := jsModulesForTest(t)
+	start := strings.Index(js, "function workerBuckets()")
+	if start < 0 {
+		t.Fatal("workers.js lost workerBuckets()")
+	}
+	body := js[start:]
+	if end := strings.Index(body, "\n}"); end > 0 {
+		body = body[:end]
+	}
+	workers := strings.Index(body, "state.workers || []")
+	unassigned := strings.Index(body, `name: "未分配"`)
+	switch {
+	case workers < 0 || unassigned < 0:
+		t.Fatalf("workerBuckets changed shape:\n%s", body)
+	case unassigned < workers:
+		t.Errorf("未分配 must be appended after the real workers:\n%s", body)
+	}
+}

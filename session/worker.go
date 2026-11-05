@@ -527,8 +527,14 @@ func heldNoteVersion(messages []provider.Message, workerID string) int {
 }
 
 // workerJoinReminder is the notice an unattached root session gets, once per
-// task. It repeats until the session resolves it, so it stays a few lines.
-const workerJoinReminder = `<worker_notice>本会话还没有归属 worker。先用 workers 工具处理:join 已有 worker,或 create 新建;确属一次性问题可以不处理。本轮先做这个决定。</worker_notice>`
+// task. It repeats until the session resolves it, so it stays a few lines. The
+// worker cap is stated here on purpose: the model learns it before it tries to
+// create, instead of from a failed create. The wording (and the numbers) is
+// static, so it never costs a cached prefix.
+var workerJoinReminder = fmt.Sprintf(
+	`<worker_notice>本会话还没有归属 worker。先用 workers 工具处理:join 已有 worker,或 create 新建;确属一次性问题可以不处理。本轮先做这个决定。`+
+		`worker 最多 %d 个(固定的「%s」也占一格),新建前先 list 看清名额。</worker_notice>`,
+	MaxWorkers, WorkerOtherName)
 
 // WorkerNotice renders what this session must be told right now, once per task:
 // the join reminder when it has no worker, or the latest 公约 when the version its
@@ -620,7 +626,8 @@ func (a *WorkerToolAPI) WorkerInfo() string {
 	name := metadataString(sess.record, workerNameMetaKey)
 	sess.mu.Unlock()
 	if id == "" {
-		return "本会话尚未归属任何 worker。用 action=list 看看已有的 worker,或 action=create 新建一个,或保持现状(一次性小问题不需要 worker)。"
+		return fmt.Sprintf("本会话尚未归属任何 worker。用 action=list 看看已有的 worker(名额 %d/%d),或 action=create 新建一个,或保持现状(一次性小问题不需要 worker)。",
+			a.svc.workerCount(), MaxWorkers)
 	}
 	rec, _ := a.svc.store.GetWorker(id)
 	var b strings.Builder
@@ -640,6 +647,26 @@ func (a *WorkerToolAPI) WorkerInfo() string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// workerCount reports how many of the MaxWorkers slots are taken (the fixed 其他
+// included, built-in buckets not). Read-only reporting never fails a call, so an
+// error degrades to 0.
+func (w *WorkerService) workerCount() int {
+	n, err := w.store.countWorkers()
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// quotaLine tells a model how much room is left, phrased for one that may be
+// about to create another worker.
+func quotaLine(used int) string {
+	if left := MaxWorkers - used; left > 0 {
+		return fmt.Sprintf("worker 名额:还剩 %d/%d。", left, MaxWorkers)
+	}
+	return fmt.Sprintf("worker 名额已满(%d/%d),再建要先删一个。", used, MaxWorkers)
+}
+
 func (a *WorkerToolAPI) List() string {
 	recs, err := a.svc.Joinable()
 	if err != nil {
@@ -650,10 +677,16 @@ func (a *WorkerToolAPI) List() string {
 		mine = w.WorkerID
 	}
 	if len(recs) == 0 {
-		return "还没有任何 worker。如果这次工作需要一个长期共享目录(会持续多轮、多个会话),用 action=create 新建;一次性小问题可以不用 worker。"
+		return fmt.Sprintf("还没有任何 worker(名额 0/%d)。如果这次工作需要一个长期共享目录(会持续多轮、多个会话),用 action=create 新建;一次性小问题可以不用 worker。", MaxWorkers)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "共 %d 个 worker(★=本会话当前所在):\n", len(recs))
+	// The quota rides on the header: recs is exactly what Create counts (non-
+	// built-in rows), so no extra query. Stating it before a create attempt beats
+	// reporting it after one fails. An install that predates the cap can already
+	// be over it — the numerator then exceeds MaxWorkers, and the closing line
+	// says what that means.
+	fmt.Fprintf(&b, "worker 名额 %d/%d(★=本会话当前所在;固定的「%s」也占一格):\n",
+		len(recs), MaxWorkers, WorkerOtherName)
 	for _, rec := range recs {
 		mark := "-"
 		if rec.WorkerID == mine {
@@ -665,7 +698,11 @@ func (a *WorkerToolAPI) List() string {
 		}
 		fmt.Fprintf(&b, "    工作目录:%s\n", dirLabel(rec.WorkDir, ""))
 	}
-	b.WriteString("join 用 worker_id;新建用 create。")
+	if len(recs) >= MaxWorkers {
+		b.WriteString("join 用 worker_id。名额已满,create 会被拒——先删一个或加入已有的。")
+	} else {
+		b.WriteString("join 用 worker_id;新建用 create。")
+	}
 	return b.String()
 }
 
@@ -686,8 +723,11 @@ func (a *WorkerToolAPI) Create(name, summary, copyFrom string) string {
 	return fmt.Sprintf(
 		"已创建并加入 worker「%s」(id %s)。\n共享工作目录:%s\n"+
 			"本回合已建的工具仍指向旧目录,后续文件操作请用绝对路径;下一个任务起工作目录自动切到上面这个。\n"+
-			"%s",
-		rec.Name, rec.WorkerID, rec.WorkDir, conventionBlock(rec))
+			// Reported right after a create, while the model is still planning
+			// workers: it sees the room left without spending a failed call.
+			"%s\n%s",
+		rec.Name, rec.WorkerID, rec.WorkDir,
+		quotaLine(a.svc.workerCount()), conventionBlock(rec))
 }
 
 func (a *WorkerToolAPI) Join(workerID string) string {
