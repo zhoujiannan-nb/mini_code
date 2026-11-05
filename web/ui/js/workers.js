@@ -31,7 +31,7 @@ function rememberWorker(id) {
 // 不再列出 —— 归档按钮早就没了,那个桶也不会再被创建。
 function workerBuckets() {
   const out = (state.workers || []).filter(x => !x.builtin).slice();
-  out.push({ worker_id: "", name: "未分配", sessions: state.unassigned || 0 });
+  out.push({ worker_id: "", name: "未分配", sessions: state.unassigned || 0, active: state.unassignedActive || 0 });
   return out;
 }
 
@@ -52,11 +52,13 @@ async function loadWorkers() {
     const r = await api("/api/workers");
     state.workers = r.workers || [];
     state.unassigned = r.unassigned || 0;
+    state.unassignedActive = r.unassigned_active || 0;
   } catch (e) {
     // 服务未启用 worker(老服务端 / 未接线):切换条退化成只读提示
     got = false;
     state.workers = state.workers || [];
     state.unassigned = state.unassigned || 0;
+    state.unassignedActive = 0;
   }
   // 选中的 worker 被删了:回到"未分配",别把列表卡成空。只在真的拿到列表时才校准,
   // 否则一次网络抖动就会把用户正在看的 worker 踢走。
@@ -99,10 +101,18 @@ function paintWorkerBar() {
 }
 
 async function switchWorker(id) {
+  const changed = id !== workerBucketId();
   state.worker = id;
   rememberWorker(id);
   closeWorkerMenu();
   await loadSessions();
+  if (!changed) return;
+  // 换了区,右边展示的会话也跟着换:选中新列表的第一条(服务端按 updated_at 倒序,
+  // 就是侧栏最上面那条)。空区回到"新会话"草稿 —— 否则还挂着上一个区的会话,
+  // 看着像没切过去。
+  const first = (state.sessions || [])[0];
+  if (first) selectSession(first.session_id);
+  else resetToNew();
 }
 
 /* ---------------- worker 菜单(切换 / 新建)---------------- */
@@ -117,6 +127,15 @@ function wkIcon(id) {
   return '<svg class="wk-menu-ico" viewBox="0 0 24 24" width="16" height="16" fill="none" ' +
     'stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     d + "</svg>";
+}
+// worker 菜单的状态点:颜色语义与会话列表一致 —— 黄(呼吸)=还有会话在跑,
+// 绿=这个区的事都跑完了。没有会话就不上色,但格子照样占住(见 layers.css),
+// 否则数量药丸那列会随有没有点而左右漂。
+function wkDot(b) {
+  const busy = b.active || 0;
+  const cls = busy > 0 ? "running" : ((b.sessions || 0) > 0 ? "done" : "none");
+  const tip = busy > 0 ? busy + " 个会话执行中" : ((b.sessions || 0) > 0 ? "没有会话在跑" : "还没有会话");
+  return '<span class="wk-menu-dot ' + cls + '" title="' + tip + '"></span>';
 }
 function closeWorkerMenu() {
   const m = $("#worker-menu");
@@ -154,6 +173,7 @@ function openWorkerMenu(anchor) {
       '" title="' + esc(w.name) + '">' +
       wkIcon(w.worker_id) +
       '<span class="wk-menu-name">' + esc(w.name) + '</span>' +
+      wkDot(w) +
       '<span class="wk-menu-n">' + (w.sessions || 0) + '</span>' +
       // 勾永远渲染(没有就留空):占住同一格,数量药丸在每行才对齐
       '<span class="wk-menu-tick">' + (cur ? "✓" : "") + "</span></div>";

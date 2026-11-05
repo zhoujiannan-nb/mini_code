@@ -38,6 +38,9 @@ type workerView struct {
 	// sidebar must not offer to delete it.
 	Reserved  bool   `json:"reserved"`
 	Sessions  int    `json:"sessions"`
+	// Active is how many of this worker's sessions have a live task right now.
+	// The switcher turns it into a status dot: >0 = 还有在跑, 0 且 Sessions>0 = 都跑完了.
+	Active    int    `json:"active"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 }
@@ -57,6 +60,10 @@ func (s *server) handleWorkersList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]workerView, 0, len(workers))
+	// Busy-ness per bucket, one scan for all of them: the switcher shows a status
+	// dot (yellow while anything in the worker still runs, green when nothing
+	// does), and it has to agree with the dot on the session rows.
+	tally := s.activeByBucket()
 	for _, rec := range workers {
 		out = append(out, workerView{
 			WorkerID:  rec.WorkerID,
@@ -67,6 +74,7 @@ func (s *server) handleWorkersList(w http.ResponseWriter, r *http.Request) {
 			Builtin:   rec.Builtin,
 			Reserved:  session.IsReservedWorker(rec.WorkerID),
 			Sessions:  rec.Sessions,
+			Active:    tally[rec.WorkerID],
 			CreatedAt: rec.CreatedAt,
 			UpdatedAt: rec.UpdatedAt,
 		})
@@ -79,9 +87,35 @@ func (s *server) handleWorkersList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"workers":    out,
-		"unassigned": len(unassigned),
+		"workers": out,
+		// Same dot for the 未分配 bucket (its sessions carry worker_id "").
+		"unassigned":        len(unassigned),
+		"unassigned_active": tally[session.WorkerUnassignedID],
 	})
+}
+
+// activeByBucket counts, per worker bucket, the visible root sessions that are
+// running in this process right now. It follows exactly the rule the session
+// list uses (a live task on the session itself or on any sub-agent descendant),
+// so a worker's dot and the dot on its rows can never disagree. One scan of the
+// visible root sessions covers every bucket; failures degrade to "nothing is
+// running" rather than failing the whole switcher.
+func (s *server) activeByBucket() map[string]int {
+	store := s.be.Mgr().GetStore()
+	rows, err := store.ListBucketSummaries(session.WorkerAllID, 1000, 0)
+	if err != nil {
+		return map[string]int{}
+	}
+	children, _ := store.ChildIDsByParent()
+	hub := s.be.Hub()
+	out := make(map[string]int)
+	for _, r := range rows {
+		if !hub.ActiveTask(r.SessionID) && !childrenRunning(hub, r.SessionID, children) {
+			continue
+		}
+		out[r.WorkerID]++
+	}
+	return out
 }
 
 // handleWorkersCreate makes a worker: name/summary, an optional base directory

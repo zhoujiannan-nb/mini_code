@@ -979,6 +979,12 @@ html[data-theme="dark"] .sess-item.active:hover { background: rgba(106, 216, 108
 }
 /* 勾永远渲染(非当前项留空),占住固定一格,药丸列才不会因为某行多了 ✓ 而左移 */
 .wk-menu-tick { flex: 0 0 14px; text-align: center; color: var(--accent); font-size: 14px; font-weight: 700; }
+/* 状态点:颜色语义与会话列表完全一致 —— 黄(呼吸)=这个区还有会话在跑,
+   绿=都跑完了,空档=还没会话。空格照样渲染(同 .wk-menu-tick 的处理),
+   否则药丸列会随某行有没有点而左右漂。 */
+.wk-menu-dot { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; }
+.wk-menu-dot.running { background: var(--amber); animation: pulse 1.2s ease-in-out infinite; }
+.wk-menu-dot.done { background: var(--ok-dot); }
 /* 当前项:整块浅绿 + 图标/勾上色(.wk-menu-n 换个更亮的底,绿块上灰药丸会脏) */
 .wk-menu-item.cur { background: var(--accent-l); }
 .wk-menu-item.cur:hover { background: var(--accent-l); }

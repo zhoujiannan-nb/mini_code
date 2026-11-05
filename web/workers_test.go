@@ -118,10 +118,12 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 		Workers []struct {
 			WorkerID string `json:"worker_id"`
 			Sessions int    `json:"sessions"`
+			Active   int    `json:"active"`
 			Builtin  bool   `json:"builtin"`
 			Reserved bool   `json:"reserved"`
 		} `json:"workers"`
-		Unassigned int `json:"unassigned"`
+		Unassigned        int `json:"unassigned"`
+		UnassignedActive  int `json:"unassigned_active"`
 	}
 	workerReq(t, "GET", srv.URL+"/api/workers", "", &list)
 	// The list always carries the fixed 其他 bucket plus the one created here.
@@ -130,7 +132,8 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 		switch {
 		case wk.WorkerID == created.WorkerID:
 			mine++
-			if wk.Sessions != 1 || wk.Builtin || wk.Reserved {
+			// Nothing runs in this test yet, so the busy counter must be 0.
+			if wk.Sessions != 1 || wk.Active != 0 || wk.Builtin || wk.Reserved {
 				t.Fatalf("the created worker is reported wrong: %+v", wk)
 			}
 		case wk.WorkerID == "w-other":
@@ -537,4 +540,80 @@ func jsonEscape(s string) string {
 		panic(err)
 	}
 	return string(b[1 : len(b)-1])
+}
+
+// TestWorkersListBusyCounts pins what the sidebar switcher's status dots read:
+// every bucket carries how many of its sessions run right now, and a session
+// counts as busy even when only one of its sub-agents still runs — the same rule
+// the session rows use, so a worker's dot and the dots of its rows can't disagree.
+func TestWorkersListBusyCounts(t *testing.T) {
+	be, srv := newTestWorkerBackend(t)
+	base := t.TempDir()
+
+	code, body := doJSON(t, "POST", srv.URL+"/api/workers", `{"name":"忙的那个","summary":""}`)
+	mustOK(t, "create worker", code, body)
+	var created struct {
+		WorkerID string `json:"worker_id"`
+	}
+	if err := json.Unmarshal([]byte(body), &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+
+	inWorker, err := be.mgr.CreateSessionRecord("in worker", "build", base, nil)
+	if err != nil {
+		t.Fatalf("CreateSessionRecord: %v", err)
+	}
+	free, err := be.mgr.CreateSessionRecord("free", "build", base, nil)
+	if err != nil {
+		t.Fatalf("CreateSessionRecord: %v", err)
+	}
+	pid := free.ID()
+	kid, err := be.mgr.CreateSessionRecord("kid", "build", base, &pid)
+	if err != nil {
+		t.Fatalf("child session: %v", err)
+	}
+	if code, body = doJSON(t, "POST", srv.URL+"/api/sessions/"+inWorker.ID()+"/worker",
+		`{"worker_id":"`+created.WorkerID+`"}`); code != http.StatusOK {
+		t.Fatalf("move into worker: %d %s", code, body)
+	}
+
+	// busy reads the switcher payload: per-worker busy count + 未分配's.
+	busy := func() (map[string]int, int) {
+		t.Helper()
+		var v struct {
+			Workers []struct {
+				WorkerID string `json:"worker_id"`
+				Active   int    `json:"active"`
+			} `json:"workers"`
+			UnassignedActive int `json:"unassigned_active"`
+		}
+		workerReq(t, "GET", srv.URL+"/api/workers", "", &v)
+		out := make(map[string]int, len(v.Workers))
+		for _, wk := range v.Workers {
+			out[wk.WorkerID] = wk.Active
+		}
+		return out, v.UnassignedActive
+	}
+
+	if got, freeN := busy(); got[created.WorkerID] != 0 || freeN != 0 {
+		t.Fatalf("idle buckets reported busy: %+v / 未分配 %d", got, freeN)
+	}
+
+	// A task on the worker's own session → that bucket reads 1, 未分配 stays 0.
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	be.hub.RegisterExternalTask(inWorker.ID(), cancel)
+	if got, freeN := busy(); got[created.WorkerID] != 1 || freeN != 0 {
+		t.Fatalf("busy worker bucket: %+v / 未分配 %d", got, freeN)
+	}
+	be.hub.UnregisterExternalTask(inWorker.ID())
+
+	// A task on a sub-agent only: the sub-agent is not a root session, so the
+	// number has to come from its parent's bucket — exactly like the session row.
+	_, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	be.hub.RegisterExternalTask(kid.ID(), cancel2)
+	if got, freeN := busy(); freeN != 1 || got[created.WorkerID] != 0 {
+		t.Fatalf("sub-agent task not counted for its parent's bucket: %+v / 未分配 %d", got, freeN)
+	}
 }

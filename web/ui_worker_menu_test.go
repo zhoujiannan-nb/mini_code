@@ -57,3 +57,83 @@ func TestUnassignedBucketSortsLast(t *testing.T) {
 		t.Errorf("未分配 must be appended after the real workers:\n%s", body)
 	}
 }
+
+// TestWorkerSwitchFollowsAndShowsBusy pins two switcher behaviours:
+//
+//	(a) switching a worker also switches what the chat pane shows — the new
+//	    bucket's first row, or a fresh draft when that bucket is empty;
+//	(b) every menu row carries a status dot in the session-list colours
+//	    (amber = something still runs in that worker, green = nothing does), and
+//	    the slot is rendered even when there is nothing to say, or the count
+//	    column would drift from row to row (same treatment as the ✓ column).
+func TestWorkerSwitchFollowsAndShowsBusy(t *testing.T) {
+	js := jsModulesForTest(t)
+
+	sw := jsBlockForTest(t, js, "async function switchWorker(id)")
+	for _, want := range []string{
+		"const first = (state.sessions || [])[0]",
+		"selectSession(first.session_id)",
+		"resetToNew()",
+	} {
+		if !strings.Contains(sw, want) {
+			t.Errorf("switchWorker no longer follows the switch (%s missing):\n%s", want, sw)
+		}
+	}
+
+	if !strings.Contains(js, "state.unassignedActive") {
+		t.Error(`workers.js dropped state.unassignedActive (the 未分配 bucket's busy count)`)
+	}
+	menu := jsBlockForTest(t, js, "function openWorkerMenu(anchor)")
+	// NB: match the class attribute in full — "wk-menu-n" is a prefix of
+	// "wk-menu-name", so bare prefixes would both land on the same index.
+	name, dot, count := strings.Index(menu, `class="wk-menu-name"`), strings.Index(menu, "wkDot(w)"), strings.Index(menu, `class="wk-menu-n"`)
+	if !(name >= 0 && dot > name && count > dot) {
+		t.Errorf("the status dot must be rendered per row, between the name and the count: name=%d dot=%d count=%d\n%s",
+			name, dot, count, menu)
+	}
+
+	// Colours come from the same theme variables the session rows use, so the
+	// two dots can never drift apart.
+	css := uiSource(t)
+	for _, rule := range []struct{ sel, color string }{
+		{".wk-menu-dot.running", "var(--amber)"},
+		{".wk-menu-dot.done", "var(--ok-dot)"},
+	} {
+		body := cssRuleForTest(t, css, rule.sel)
+		if !strings.Contains(body, rule.color) {
+			t.Errorf("%s should use %s (the session dot colour):\n%s", rule.sel, rule.color, body)
+		}
+	}
+	if slot := cssRuleForTest(t, css, ".wk-menu-dot"); !strings.Contains(slot, "flex: 0 0 7px") {
+		t.Errorf("the dot slot must be fixed-width so the count column does not drift:\n%s", slot)
+	}
+}
+
+// jsBlockForTest returns the source of a top-level function, from its signature
+// to the first line that closes it.
+func jsBlockForTest(t *testing.T, js, signature string) string {
+	t.Helper()
+	start := strings.Index(js, signature)
+	if start < 0 {
+		t.Fatalf("the UI lost %s", signature)
+	}
+	block := js[start:]
+	if end := strings.Index(block, "\n}"); end > 0 {
+		block = block[:end]
+	}
+	return block
+}
+
+// cssRuleForTest returns one CSS rule's body (up to its closing brace).
+func cssRuleForTest(t *testing.T, css, selector string) string {
+	t.Helper()
+	start := strings.Index(css, selector)
+	if start < 0 {
+		t.Fatalf("the stylesheets lost %s", selector)
+	}
+	rule := css[start:]
+	if end := strings.Index(rule, "}"); end > 0 {
+		rule = rule[:end]
+	}
+	return rule
+}
