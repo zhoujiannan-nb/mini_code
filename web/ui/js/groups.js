@@ -35,13 +35,27 @@ function userAvatarBox(cls) {
   return '<div class="' + cls + '-fallback" data-uav="' + cls + '" title="点击设置用户头像" ' +
     'style="background:' + USER_FALLBACK_BG + ';color:#fff">你</div>';
 }
-// agent 头像块:首字(会话名)+ 按会话 id 哈希取色,每 agent 固定,不做上传
+// agent 头像块:统一默认头像(墨色 + "M"),不再从会话派生(标题首字 + id 哈希色)。
+// state.agentAvatar 非空(以后设置里上传)→ 渲染图片;data-aav 记录基础类名,
+// 换头像后 paintAgentAvatarDom() 原地重绘。照 userAvatarBox 那套结构写的。
+const AGENT_DEFAULT_LETTER = "M";
 function agentAvatarBox(cls) {
   const s = state.sessions.find(x => x.session_id === state.current);
   const name = (s && s.title) || "Mini Code";
-  const seed = state.current || "minicode";
-  return '<div class="' + cls + '-fallback" style="background:' + hashColor(seed) + '" ' +
-    'title="' + esc(name) + '">' + esc(firstChar(name)) + "</div>";
+  if (state.agentAvatar) {
+    return '<div class="' + cls + '" data-aav="' + cls + '" title="' + esc(name) + '">' +
+      '<img src="' + state.agentAvatar + '" alt="agent 头像"></div>';
+  }
+  return '<div class="' + cls + '-fallback agent-ava" data-aav="' + cls + '" title="' + esc(name) + '">' +
+    AGENT_DEFAULT_LETTER + "</div>";
+}
+// agent 头像变更后:页面里所有 agent 头像原地重绘(TODO 设置页加上传入口后接这里)
+function paintAgentAvatarDom() {
+  document.querySelectorAll("[data-aav]").forEach(el => {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = agentAvatarBox(el.dataset.aav);
+    el.replaceWith(tmp.firstElementChild);
+  });
 }
 // 头像变更(上传/移除)后:页面里所有用户头像原地重绘,不用整页刷新
 function paintUserAvatarDom() {

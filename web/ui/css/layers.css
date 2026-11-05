@@ -858,8 +858,8 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
    暗色下 --ink 自动变近白、--accent-l 变半透明绿,不需要额外写 dark 分支。
    ===================================================================== */
 .new-btn {
-  /* 高度按设计稿再压一档:46 → 32(-30%),字号跟着从 15 收到 14 */
-  margin: 14px var(--side-inset) 0; height: 32px; padding: 0 12px;
+  /* 高度:上一版 46 → 32 压过头了,回一点 → 35(约为原 46 的 -24%) */
+  margin: 14px var(--side-inset) 0; height: 35px; padding: 0 12px;
   background: var(--ink); color: var(--ink-fg);
   border: none; border-radius: 999px;
   font-size: 14px; font-weight: 600; letter-spacing: .02em;
@@ -867,14 +867,13 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
 }
 .new-btn:hover { background: var(--ink-h); }
 
-/* worker 条:八成透明白(--surface-a 就是 .80,暗色自动换成 .80 深灰),
-   加 blur 让透出来的侧栏绿渐变是柔的而不是脏的。高度 44 → 31(-30%)。 */
+/* worker 条:100% 透底 —— 不要任何填充色,也不做 blur,它就等于侧栏背景本身。
+   只留一道极淡描边勾出胶囊轮廓(描边不是"底色";连描边也想去掉就删 border 那行)。
+   高度跟着 new-btn 一起回到 34。 */
 .worker-bar {
-  margin: 12px var(--side-inset) 0; min-height: 31px; padding: 2px 5px 2px 12px; gap: 0;
-  background: var(--surface-a);
-  backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  margin: 12px var(--side-inset) 0; min-height: 34px; padding: 2px 5px 2px 12px; gap: 0;
+  background: transparent;
   border: 1px solid var(--border); border-radius: 999px;
-  box-shadow: 0 1px 3px rgba(18, 20, 16, .07);
 }
 .wk-label { font-size: 12px; }
 /* worker 与名字之间的分隔竖线(设计稿里那道浅灰 "|",用色块不用字符,免得随字体漂) */
@@ -883,7 +882,7 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
 .wk-name { font-size: 13.5px; color: var(--title); }
 .wk-pick { gap: 4px; padding: 0; }
 .wk-add {
-  width: 26px; height: 26px; margin-left: 5px; line-height: 24px; font-size: 14px;
+  width: 28px; height: 28px; margin-left: 5px; line-height: 26px; font-size: 14px;
   border: 1px solid var(--border2); border-radius: 50%;
   background: transparent; color: var(--text2);
 }
@@ -891,11 +890,11 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
 .worker-sub { margin: 5px calc(var(--side-inset) + 4px) 0; }
 
 /* 会话列表:偏白卡片,比 worker 条再透一档(--card-a=.72),同样带 blur。
-   scrollbar-gutter: stable —— 出现滚动条时右侧让出 6px,不出现时也预留同样的
-   6px,这样卡片内左右两条内缝永远等宽(之前有滚动条时右边明显窄)。 */
+   这里原来加了 scrollbar-gutter: stable —— 结果卡片内右内缝 = padding 6 + gutter 6
+   = 12px,左边只有 6px,整列看着偏右。gutter 只在滚动条那一侧(右)预留,天生不对称,
+   删掉它:左右各 6px,出现滚动条时只是右边内容窄 6px,不再整体错位。 */
 .sess-list {
   margin: 12px var(--side-inset) 0; padding: 6px;
-  scrollbar-gutter: stable;
   background: var(--card-a);
   backdrop-filter: blur(14px) saturate(1.25); -webkit-backdrop-filter: blur(14px) saturate(1.25);
   border: 1px solid var(--border); border-radius: 20px;
@@ -916,3 +915,12 @@ html[data-theme="dark"] .sess-item.active,
 html[data-theme="dark"] .sess-item.active:hover { background: rgba(106, 216, 108, .14); }
 /* 群聊区跟着同一份内缩,和上面的卡片左右完全对齐 */
 .group-sec { margin-left: var(--side-inset); margin-right: var(--side-inset); }
+
+/* agent 默认头像:统一一张脸 —— 墨色块 + 字母 M(和"新建会话"那颗胶囊同色系),
+   不再按"会话标题首字 + 会话 id 哈希色"取色(同一个 agent 换个会话就换脸,设计稿没这东西)。
+   设置里以后能传自定义图(state.agentAvatar),那时走 <img> 分支,这两条规则自然不参与。
+   双类选择器(0,2,0)稳压 base.css 里的 .c-avatar-fallback(color:#fff)/.chat-ava。 */
+.c-avatar-fallback.agent-ava,
+.chat-ava.agent-ava { background: var(--ink); color: var(--ink-fg); }
+.chat-ava { overflow: hidden; }
+.chat-ava img { width: 100%; height: 100%; display: block; object-fit: cover; }

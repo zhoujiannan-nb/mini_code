@@ -10,18 +10,24 @@ function setChatTitle(title, sub) {
   $("#chat-sub").textContent = sub || "";
   paintChatAva(title);
 }
-// 聊天头头像:仅单聊显示(agent 首字+哈希色,与消息区同一套取色);群聊/新会话隐藏
+// 聊天头头像:仅单聊显示。用统一的 agent 默认头像(和消息区 agentAvatarBox 同一张脸),
+// 群聊/新会话隐藏。设了自定义图 state.agentAvatar 就显示图片。
 function paintChatAva(title) {
   const el = $("#chat-ava");
   if (!el) return;
-  if (state.current && !state.currentGroup) {
-    el.textContent = firstChar(title);
-    el.style.background = hashColor(state.current);
-    el.style.display = "flex";
-  } else {
+  if (!state.current || state.currentGroup) {
     el.textContent = "";
     el.style.display = "none";
+    return;
   }
+  if (state.agentAvatar) {
+    el.classList.remove("agent-ava");
+    el.innerHTML = '<img src="' + state.agentAvatar + '" alt="agent 头像">';
+  } else {
+    el.className = "chat-ava agent-ava";
+    el.textContent = AGENT_DEFAULT_LETTER;
+  }
+  el.style.display = "flex";
 }
 
 /* ---------------- Token 用量(composer 下方) ---------------- */

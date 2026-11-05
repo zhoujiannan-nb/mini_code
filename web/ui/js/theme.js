@@ -77,6 +77,10 @@ const state = {
   current: null,      // 当前会话 id,null = 新会话
   workDir: "",        // 当前会话的工作目录(聊天里的相对路径按它解析)
   userAvatar: "",     // 用户头像 data URL(全局,存服务端配置;"" = 首字+哈希色回退)
+  // agent 头像 data URL(全局)。"" = 统一默认头像(墨色 + 字母 M)。
+  // TODO(设置页):config.Config 加 agent_avatar 字段 + 设置里加上传入口,
+  // 存好之后 paintAgentAvatarDom() 和 paintChatAva() 会自动切到图片。
+  agentAvatar: "",
   running: false,     // 当前会话是否有活动任务(以服务端为准)
    pendingTask: null,  // 等待 session_created 的 task_id
     recentCreated: [], // 最近收到的 session_created 事件队列(竞态兜底:事件比 POST 响应早到时,响应回来按 task_id 精确匹配接管)
