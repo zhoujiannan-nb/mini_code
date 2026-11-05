@@ -72,8 +72,13 @@ func (pb *PromptBuilder) registerDefaultTools() {
 	pb.Tools.Register(tools.NewWriteFileTool(ws))
 	pb.Tools.Register(tools.NewEditFileTool(ws))
 	pb.Tools.Register(tools.NewDeleteFileTool(ws))
-	pb.Tools.Register(tools.NewMoveFileTool(ws))
-	pb.Tools.Register(tools.NewCopyFileTool(ws))
+	// move_file / copy_file are intentionally NOT registered: two independent
+	// measurements (an 82-sample ablation and 257 real tool calls on the live
+	// instance) recorded zero uses, and the environment section already teaches
+	// the cmd/Unix spellings of copy/move/ren. The implementations stay in
+	// tools/fileops.go, so a worker that wants a guaranteed-atomic copy/rename
+	// can register them back with one line each. Saving is 837 + 577 = 1414 B
+	// of tool schema per request (~400 tok of cache-busting prefix).
 	pb.Tools.Register(tools.NewListDirTool(ws))
 	pb.Tools.Register(tools.NewGlobTool(ws))
 	pb.Tools.Register(tools.NewExecTool(120, ws))

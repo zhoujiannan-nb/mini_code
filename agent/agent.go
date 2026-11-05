@@ -52,13 +52,13 @@ func BuildAgentConfig() *AgentConfig {
 			"write_file":  "allow",
 			"edit_file":   "allow",
 			"delete_file": "allow",
-			"move_file":   "allow",
-			"copy_file":   "allow",
-			"task":        "allow",
-			"task_output": "allow",
-			"task_status": "allow",
-			"task_cancel": "allow",
-			"task_list":   "allow",
+			// move_file / copy_file dropped from the default toolset (see
+			// session.registerDefaultTools) — no permission entry to grant.
+			"task":            "allow",
+			"task_output":     "allow",
+			"task_status":     "allow",
+			"task_cancel":     "allow",
+			"task_list":       "allow",
 			"context_usage":   "allow", // read context token usage (paired with compact_context)
 			"compact_context": "allow", // actively request context compaction
 		}),
@@ -80,8 +80,8 @@ func WorkAgentConfig() *AgentConfig {
 			"write_file":  "allow",
 			"edit_file":   "allow",
 			"delete_file": "allow",
-			"move_file":   "allow",
-			"copy_file":   "allow",
+			// move_file / copy_file dropped from the default toolset (see
+			// session.registerDefaultTools).
 		}),
 	}
 }
