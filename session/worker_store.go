@@ -348,6 +348,25 @@ func (s *SessionStore) ListWorkerSessions(workerID string) ([]string, error) {
 	return out, nil
 }
 
+// RelabelWorkerSession rewrites one stored session's worker_name metadata, for
+// the sessions of a renamed worker that nobody has loaded into memory. A session
+// of a different worker is left alone (defensive: the ids come from the worker's
+// own bucket, and a stray write would rewrite another line of work's prompt).
+func (s *SessionStore) RelabelWorkerSession(sessionID, workerID, name string) error {
+	rec, err := s.Get(sessionID)
+	if err != nil || rec == nil {
+		return err
+	}
+	if rec.WorkerID != workerID {
+		return nil
+	}
+	if rec.Metadata == nil {
+		rec.Metadata = map[string]interface{}{}
+	}
+	rec.Metadata[workerNameMetaKey] = name
+	return s.Update(rec)
+}
+
 func workerFromRow(row map[string]interface{}) *WorkerRecord {
 	return &WorkerRecord{
 		WorkerID:  asString(row["worker_id"]),

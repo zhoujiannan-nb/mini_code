@@ -773,3 +773,84 @@ func TestWorkerOtherIsFixed(t *testing.T) {
 		t.Fatalf("worker #%d should have been refused", MaxWorkers+1)
 	}
 }
+
+// TestWorkerRename covers the label-only rename: the row, the labels each session
+// carries (they reach the model through the notice and the tool results) and the
+// refusals. The shared directory never moves — paths in files, tool results and
+// history already point at it.
+func TestWorkerRename(t *testing.T) {
+	mgr, svc := newTestWorkerEnv(t)
+	a := mustSession(t, mgr, "会话A")
+	w, err := svc.Create("gpu-bench", "跑 GPU 推理基准", a.WorkDir(), "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := svc.Join(a.ID(), w.WorkerID); err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+	if err := svc.Rename(w.WorkerID, "显卡推理基准"); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	rec, err := svc.Get(w.WorkerID)
+	if err != nil || rec == nil || rec.Name != "显卡推理基准" {
+		t.Fatalf("the row kept its old name: %+v (%v)", rec, err)
+	}
+	if rec.WorkDir != w.WorkDir {
+		t.Fatalf("renaming must not move the workspace: %q -> %q", w.WorkDir, rec.WorkDir)
+	}
+	if _, name, dir := a.WorkerSnapshot(); name != "显卡推理基准" || dir != w.WorkDir {
+		t.Fatalf("the session label was not relabeled: name=%q dir=%q", name, dir)
+	}
+	// The label reaches the model through the worker notice and the tool results
+	// (never the system prompt), so a rename costs no prefix cache — and the
+	// model-facing text must show the new name.
+	info := svc.ToolAPIFor(a.ID()).WorkerInfo()
+	if !strings.Contains(info, "本会话属于 worker「显卡推理基准」") {
+		t.Fatalf("the session still reports the old label: %q", info)
+	}
+	// A session of the same worker that nobody has loaded still gets relabeled.
+	other, err := mgr.CreateSessionRecord("会话B", "build", a.WorkDir(), nil)
+	if err != nil {
+		t.Fatalf("CreateSessionRecord: %v", err)
+	}
+	if _, err := svc.Join(other.ID(), w.WorkerID); err != nil {
+		t.Fatalf("Join(2nd): %v", err)
+	}
+	if err := svc.Rename(w.WorkerID, "推理基准 v2"); err != nil {
+		t.Fatalf("Rename #2: %v", err)
+	}
+	sess, err := mgr.Get(other.ID())
+	if err != nil || sess == nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if _, name, _ := sess.WorkerSnapshot(); name != "推理基准 v2" {
+		t.Fatalf("the second session kept the old label: %q", name)
+	}
+	// Refusals: empty, too long, a name that is taken, the fixed 其他, a
+	// built-in bucket, and path separators (the name also names a directory).
+	if err := svc.Rename(w.WorkerID, "  "); err == nil {
+		t.Fatal("an empty name was accepted")
+	}
+	if err := svc.Rename(w.WorkerID, strings.Repeat("长", MaxWorkerNameRunes+1)); err == nil {
+		t.Fatal("an oversized name was accepted")
+	}
+	if _, err := svc.Create("别的线", "", a.WorkDir(), ""); err != nil {
+		t.Fatalf("Create(2): %v", err)
+	}
+	if err := svc.Rename(w.WorkerID, "别的线"); err == nil {
+		t.Fatal("a duplicate name was accepted")
+	}
+	if err := svc.Rename(WorkerOtherID, "改名试试"); err == nil {
+		t.Fatal("the fixed 其他 worker was renamed")
+	}
+	if err := svc.Rename(WorkerArchivedID, "改名试试"); err == nil {
+		t.Fatal("a built-in bucket was renamed")
+	}
+	if err := svc.Rename(w.WorkerID, "a/b"); err == nil {
+		t.Fatal("a name with a path separator was accepted")
+	}
+	// Renaming to the same name is a no-op, not an error.
+	if err := svc.Rename(w.WorkerID, "推理基准 v2"); err != nil {
+		t.Fatalf("renaming to the same name should be silent: %v", err)
+	}
+}

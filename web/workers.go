@@ -157,6 +157,32 @@ func (s *server) handleWorkersSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"worker_id": id, "summary": strings.TrimSpace(req.Summary)})
 }
 
+// handleWorkersRename relabels a worker. Only the label moves: the shared
+// directory keeps its name (every session, tool result and file name already
+// references that path), and the worker-name label each session carries in its
+// own metadata is rewritten in the same call — see session.WorkerService.Rename.
+func (s *server) handleWorkersRename(w http.ResponseWriter, r *http.Request) {
+	wsvc := s.workerService()
+	if wsvc == nil {
+		writeErr(w, http.StatusServiceUnavailable, "worker 功能未启用")
+		return
+	}
+	id := r.PathValue("id")
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if err := wsvc.Rename(id, name); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"worker_id": id, "name": name})
+}
+
 // handleWorkersDelete deletes a worker together with every session in it (the
 // workspace directory on disk is left alone).
 func (s *server) handleWorkersDelete(w http.ResponseWriter, r *http.Request) {

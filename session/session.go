@@ -262,6 +262,20 @@ func (s *Session) SetWorkerMembership(workerID, name, workDir string) {
 	s.store.Update(s.record)
 }
 
+// setWorkerNameLabel refreshes only the worker NAME this session carries in its
+// metadata (rendered into its system prompt). Rename is the only thing that does
+// this after the join: the directory and the membership stay as they were, so the
+// session's files and paths never move.
+func (s *Session) setWorkerNameLabel(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.record.Metadata == nil {
+		s.record.Metadata = map[string]interface{}{}
+	}
+	s.record.Metadata[workerNameMetaKey] = name
+	s.store.Update(s.record)
+}
+
 // WorkerSnapshot returns what this session carries for its worker (id, display
 // name, shared directory).
 func (s *Session) WorkerSnapshot() (workerID, name, dir string) {

@@ -144,6 +144,7 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /api/workers", s.handleWorkersList)
 	mux.HandleFunc("POST /api/workers", s.handleWorkersCreate)
 	mux.HandleFunc("POST /api/workers/{id}/summary", s.handleWorkersSummary)
+	mux.HandleFunc("POST /api/workers/{id}/rename", s.handleWorkersRename)
 	mux.HandleFunc("DELETE /api/workers/{id}", s.handleWorkersDelete)
 	mux.HandleFunc("GET /api/workers/{id}/note", s.handleWorkersNoteGet)
 	mux.HandleFunc("POST /api/workers/{id}/note", s.handleWorkersNoteWrite)

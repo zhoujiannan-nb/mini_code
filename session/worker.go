@@ -185,8 +185,7 @@ func validateWorkerName(name string) error {
 
 // UpdateSummary rewrites the summary other sessions read when they decide to
 // join. It never touches the directory (so no prompt of an existing session can
-// shift), and the name is left alone — renaming a worker would make its
-// sessions' snapshots disagree with the row, which is a trade not worth it.
+// shift); renaming is a separate call, see Rename.
 func (w *WorkerService) UpdateSummary(workerID, summary string) error {
 	summary = strings.TrimSpace(summary)
 	if len([]rune(summary)) > MaxWorkerSummaryRunes {
@@ -201,6 +200,74 @@ func (w *WorkerService) UpdateSummary(workerID, summary string) error {
 	}
 	rec.Summary = summary
 	return w.store.UpdateWorker(rec)
+}
+
+// Rename relabels a worker. Renaming used to be refused because every session of
+// the worker carries the name in its own metadata and a stale snapshot would
+// disagree with the row; this rewrites the row and those labels together.
+//
+// The label only ever reaches a model through the worker notice and the tool
+// results — never the system prompt — so renaming costs no prefix cache.
+//
+// The shared directory keeps its original name on purpose — sessions, tool
+// results and file names already hold that absolute path, and moving a workspace
+// out from under a running session breaks every one of them. The directory name
+// is an implementation detail; the label is what people read.
+func (w *WorkerService) Rename(workerID, newName string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return fmt.Errorf("worker 名称不能为空")
+	}
+	if len([]rune(newName)) > MaxWorkerNameRunes {
+		return fmt.Errorf("worker 名称过长(最多 %d 字)", MaxWorkerNameRunes)
+	}
+	if err := validateWorkerName(newName); err != nil {
+		return err
+	}
+	rec, err := w.store.GetWorker(workerID)
+	if err != nil {
+		return err
+	}
+	if rec == nil {
+		return fmt.Errorf("worker 不存在: %s", workerID)
+	}
+	if IsReservedWorker(workerID) {
+		return fmt.Errorf("「%s」是固定的兜底 worker,名字写死了", rec.Name)
+	}
+	if rec.Builtin {
+		return fmt.Errorf("%s 是内置分桶,不是工作线,不能改名", rec.Name)
+	}
+	if existing, err := w.store.GetWorkerByName(newName); err == nil && existing != nil && existing.WorkerID != workerID {
+		return fmt.Errorf("已经有一个同名 worker:%s(id %s)。换个名字,或者直接加入那个。", newName, existing.WorkerID)
+	}
+	if rec.Name == newName {
+		return nil
+	}
+	old := rec.Name
+	rec.Name = newName
+	if err := w.store.UpdateWorker(rec); err != nil {
+		return err
+	}
+	// Relabel the sessions: live ones through the Session (its record is the one
+	// in memory and would otherwise be written back with the old name later),
+	// the rest straight through the store.
+	n := 0
+	if ids, err := w.store.ListWorkerSessions(workerID); err == nil {
+		for _, sid := range ids {
+			if sess, err := w.mgr.Get(sid); err == nil && sess != nil {
+				sess.setWorkerNameLabel(newName)
+				n++
+				continue
+			}
+			if err := w.store.RelabelWorkerSession(sid, workerID, newName); err == nil {
+				n++
+			}
+		}
+	}
+	slog.Info("worker renamed", "worker", workerID, "from", old, "to", newName, "relabeled", n, "dir", rec.WorkDir)
+	return nil
 }
 
 // Delete removes a worker and every session in it (sub-agent children included,

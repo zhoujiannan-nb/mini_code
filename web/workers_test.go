@@ -177,6 +177,25 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 	code, body = doJSON(t, "POST", srv.URL+"/api/workers/"+created.WorkerID+"/summary", `{"summary":"换成带宽测试"}`)
 	mustOK(t, "POST summary", code, body)
 
+	// Rename: only the label moves — the workspace stays put and each session's
+	// own worker-name label follows (it is rendered into their prompts). The
+	// fixed 其他 has a written-in-stone name.
+	code, body = doJSON(t, "POST", srv.URL+"/api/workers/"+created.WorkerID+"/rename", `{"name":"带宽基准"}`)
+	mustOK(t, "POST rename", code, body)
+	if !strings.Contains(body, "带宽基准") {
+		t.Fatalf("rename echoed the wrong name: %s", body)
+	}
+	if _, name, dir := live.WorkerSnapshot(); name != "带宽基准" || dir != filepath.Clean(created.WorkDir) {
+		t.Fatalf("the session kept the old label: name=%q dir=%q", name, dir)
+	}
+	if fi, err := os.Stat(created.WorkDir); err != nil || !fi.IsDir() {
+		t.Fatalf("renaming moved the workspace: %v", err)
+	}
+	code, body = doJSON(t, "POST", srv.URL+"/api/workers/w-other/rename", `{"name":"改名试试"}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("renaming 其他 should be refused, got %d (%s)", code, body)
+	}
+
 	// Deleting the worker takes its sessions with it and keeps the workspace.
 	var del struct {
 		DeletedSessions int `json:"deleted_sessions"`

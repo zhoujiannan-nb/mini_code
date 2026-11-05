@@ -82,15 +82,17 @@ function paintWorkerBar() {
     // 噪音,还老跟下拉菜单打架 —— 删了。空的 .worker-sub 由 CSS 的 :empty 折叠,不留空隙。
     sub.innerHTML = "";
   } else {
-    // 固定的「其他」能写公约、能改摘要,但删不掉 —— 不渲染 🗑。
+    // 固定的「其他」能写公约、能改摘要,但删不掉、名字也写死了 —— 不渲染 🗑 和改名。
     sub.innerHTML =
       '<button class="wk-sub-btn" id="wk-note-btn" title="查看/编辑公约(共享给这个 worker 的全部会话)">📄 公约</button>' +
       '<button class="wk-sub-btn" id="wk-summary-btn" title="改写摘要(新会话靠它决定加入哪个 worker)">✎ 摘要</button>' +
       (w.reserved ? "" :
+        '<button class="wk-sub-btn" id="wk-rename-btn" title="改名(只改名字:目录不动,会话里的路径不受影响)">✎ 名称</button>' +
         '<button class="wk-sub-btn wk-sub-danger" id="wk-del-btn" title="删除 worker 及其全部会话(目录保留)">🗑</button>');
     const bind = (sel, fn) => { const el = $(sel); if (el) el.addEventListener("click", fn); };
     bind("#wk-note-btn", () => openNoteEditor(w.worker_id));
     bind("#wk-summary-btn", () => editSummary(w.worker_id));
+    bind("#wk-rename-btn", () => renameWorker(w.worker_id));
     bind("#wk-del-btn", () => deleteWorker(w.worker_id));
   }
 }
@@ -222,6 +224,24 @@ async function editSummary(workerID) {
   } catch (err) { toast("更新失败:" + err.message, "err"); }
 }
 
+async function renameWorker(workerID) {
+  const w = (state.workers || []).find(x => x.worker_id === workerID);
+  const cur = w ? w.name || "" : "";
+  const ans = prompt("Worker 改名。\n只改名字:共享目录的名字不动(会话、工具结果里已经写满了那条绝对路径),会话里显示的 worker 名字会一起更新。", cur);
+  if (ans == null) return; // 取消:什么都不写
+  const name = ans.trim();
+  if (!name || name === cur) return;
+  try {
+    await api("/api/workers/" + workerID + "/rename", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    toast("已改名为:" + name, "ok");
+    await loadWorkers();
+  } catch (err) { toast("改名失败:" + err.message, "err"); }
+}
+
 async function deleteWorker(workerID) {
   const w = (state.workers || []).find(x => x.worker_id === workerID);
   const n = w ? w.sessions || 0 : 0;
@@ -236,7 +256,8 @@ async function deleteWorker(workerID) {
 }
 
 /* ---------------- 公约(存在 worker 记录里,带版本)---------------- */
-// 人编辑 = 授权本身;agent 想改必须由审批弹窗确认(session/gate.go)。
+// 公约只有这一条写路径:人在这里改 = 授权本身。模型侧只有 note_read,tools 里
+// 没有 note_write(它会影响同 worker 的全部会话,不该由 agent 代改)。
 // 保存即升版本:同 worker 的会话下一轮各自收到一条更新消息,已有对话不动。
 async function openNoteEditor(workerID) {
   let data;
