@@ -858,7 +858,7 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
    暗色下 --ink 自动变近白、--accent-l 变半透明绿,不需要额外写 dark 分支。
    ===================================================================== */
 .new-btn {
-  margin: 14px 14px 0; height: 46px; padding: 0 14px;
+  margin: 14px 8px 0; height: 46px; padding: 0 14px;
   background: var(--ink); color: var(--ink-fg);
   border: none; border-radius: 999px;
   font-size: 15px; font-weight: 600; letter-spacing: .02em;
@@ -866,10 +866,13 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
 }
 .new-btn:hover { background: var(--ink-h); }
 
-/* worker 条:实底白胶囊,不再压在列表上 */
+/* worker 条:八成透明白(--surface-a 就是 .80,暗色自动换成 .80 深灰),
+   加 blur 让透出来的侧栏绿渐变是柔的而不是脏的 */
 .worker-bar {
-  margin: 14px 14px 0; min-height: 44px; padding: 4px 6px 4px 14px; gap: 0;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+  margin: 14px 8px 0; min-height: 44px; padding: 4px 6px 4px 14px; gap: 0;
+  background: var(--surface-a);
+  backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  border: 1px solid var(--border); border-radius: 999px;
   box-shadow: 0 1px 3px rgba(18, 20, 16, .07);
 }
 .wk-label { font-size: 12px; }
@@ -880,15 +883,17 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
 .wk-add {
   width: 32px; height: 32px; margin-left: 6px; line-height: 30px; font-size: 16px;
   border: 1px solid var(--border2); border-radius: 50%;
-  background: var(--surface); color: var(--text2);
+  background: transparent; color: var(--text2);
 }
 .wk-add:hover { background: var(--accent-btn); border-color: var(--accent-btn); color: #fff; }
-.worker-sub { margin: 6px 18px 0; }
+.worker-sub { margin: 6px 12px 0; }
 
-/* 会话列表:整体包进一个偏白的圆角容器,和上面的胶囊分开 */
+/* 会话列表:偏白卡片,比 worker 条再透一档(--card-a=.72),同样带 blur */
 .sess-list {
-  margin: 12px 14px 0; padding: 6px;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
+  margin: 12px 8px 0; padding: 6px;
+  background: var(--card-a);
+  backdrop-filter: blur(14px) saturate(1.25); -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  border: 1px solid var(--border); border-radius: 20px;
   box-shadow: 0 2px 10px rgba(18, 20, 16, .06);
 }
 .sess-item { padding: 10px 12px; border-radius: 14px; margin-bottom: 4px; }
@@ -904,5 +909,5 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
 html[data-theme="dark"] .sess-item:hover { background: rgba(106, 216, 108, .10); }
 html[data-theme="dark"] .sess-item.active,
 html[data-theme="dark"] .sess-item.active:hover { background: rgba(106, 216, 108, .14); }
-/* 群聊区跟着同一份内缩,免得卡片 14px、群区 8px 对不齐 */
-.group-sec { margin-left: 14px; margin-right: 14px; }
+/* 群聊区跟着同一份内缩,免得卡片 8px、群区 14px 对不齐 */
+.group-sec { margin-left: 8px; margin-right: 8px; }
