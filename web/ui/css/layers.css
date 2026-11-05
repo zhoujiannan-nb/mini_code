@@ -858,18 +858,19 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
    暗色下 --ink 自动变近白、--accent-l 变半透明绿,不需要额外写 dark 分支。
    ===================================================================== */
 .new-btn {
-  margin: 14px 8px 0; height: 46px; padding: 0 14px;
+  /* 高度按设计稿再压一档:46 → 32(-30%),字号跟着从 15 收到 14 */
+  margin: 14px var(--side-inset) 0; height: 32px; padding: 0 12px;
   background: var(--ink); color: var(--ink-fg);
   border: none; border-radius: 999px;
-  font-size: 15px; font-weight: 600; letter-spacing: .02em;
+  font-size: 14px; font-weight: 600; letter-spacing: .02em;
   box-shadow: 0 2px 8px rgba(18, 20, 16, .14);
 }
 .new-btn:hover { background: var(--ink-h); }
 
 /* worker 条:八成透明白(--surface-a 就是 .80,暗色自动换成 .80 深灰),
-   加 blur 让透出来的侧栏绿渐变是柔的而不是脏的 */
+   加 blur 让透出来的侧栏绿渐变是柔的而不是脏的。高度 44 → 31(-30%)。 */
 .worker-bar {
-  margin: 14px 8px 0; min-height: 44px; padding: 4px 6px 4px 14px; gap: 0;
+  margin: 12px var(--side-inset) 0; min-height: 31px; padding: 2px 5px 2px 12px; gap: 0;
   background: var(--surface-a);
   backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3);
   border: 1px solid var(--border); border-radius: 999px;
@@ -877,20 +878,24 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
 }
 .wk-label { font-size: 12px; }
 /* worker 与名字之间的分隔竖线(设计稿里那道浅灰 "|",用色块不用字符,免得随字体漂) */
-.wk-div { flex: 0 0 auto; width: 1px; height: 13px; margin: 0 9px; background: var(--border2); }
-.wk-name { font-size: 14px; color: var(--accent-t); }
+.wk-div { flex: 0 0 auto; width: 1px; height: 12px; margin: 0 9px; background: var(--border2); }
+/* 桶名用正黑(--title),暗色自动翻白;之前是主色绿,和下面的会话标题抢焦点 */
+.wk-name { font-size: 13.5px; color: var(--title); }
 .wk-pick { gap: 4px; padding: 0; }
 .wk-add {
-  width: 32px; height: 32px; margin-left: 6px; line-height: 30px; font-size: 16px;
+  width: 26px; height: 26px; margin-left: 5px; line-height: 24px; font-size: 14px;
   border: 1px solid var(--border2); border-radius: 50%;
   background: transparent; color: var(--text2);
 }
 .wk-add:hover { background: var(--accent-btn); border-color: var(--accent-btn); color: #fff; }
-.worker-sub { margin: 6px 12px 0; }
+.worker-sub { margin: 5px calc(var(--side-inset) + 4px) 0; }
 
-/* 会话列表:偏白卡片,比 worker 条再透一档(--card-a=.72),同样带 blur */
+/* 会话列表:偏白卡片,比 worker 条再透一档(--card-a=.72),同样带 blur。
+   scrollbar-gutter: stable —— 出现滚动条时右侧让出 6px,不出现时也预留同样的
+   6px,这样卡片内左右两条内缝永远等宽(之前有滚动条时右边明显窄)。 */
 .sess-list {
-  margin: 12px 8px 0; padding: 6px;
+  margin: 12px var(--side-inset) 0; padding: 6px;
+  scrollbar-gutter: stable;
   background: var(--card-a);
   backdrop-filter: blur(14px) saturate(1.25); -webkit-backdrop-filter: blur(14px) saturate(1.25);
   border: 1px solid var(--border); border-radius: 20px;
@@ -909,5 +914,5 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
 html[data-theme="dark"] .sess-item:hover { background: rgba(106, 216, 108, .10); }
 html[data-theme="dark"] .sess-item.active,
 html[data-theme="dark"] .sess-item.active:hover { background: rgba(106, 216, 108, .14); }
-/* 群聊区跟着同一份内缩,免得卡片 8px、群区 14px 对不齐 */
-.group-sec { margin-left: 8px; margin-right: 8px; }
+/* 群聊区跟着同一份内缩,和上面的卡片左右完全对齐 */
+.group-sec { margin-left: var(--side-inset); margin-right: var(--side-inset); }
