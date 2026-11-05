@@ -317,7 +317,7 @@ aside {
   background: transparent; color: var(--text2); font-size: 15px; cursor: pointer; line-height: 24px;
 }
 .wk-add:hover { background: var(--accent-btn); color: #fff; }
-/* 操作行:小字按钮一排。"全部"/"未分配"没有 worker 可操作,留空即折叠。 */
+/* 操作行:小字按钮一排。"未分配"没有 worker 可操作,留空即折叠。 */
 .worker-sub {
   display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
   margin: 3px 12px 0; padding: 0 2px; min-height: 16px;

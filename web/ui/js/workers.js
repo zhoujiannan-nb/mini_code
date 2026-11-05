@@ -12,44 +12,36 @@
 const LS_WORKER_KEY = "mini_code.worker";
 
 function workerBucketId() {
-  return state.worker == null ? "*" : state.worker;
+  const id = state.worker == null ? "" : state.worker;
+  return id === "*" ? "" : id; // 老版本存过 "*",一律归到"未分配"
 }
 
 function restoreWorker() {
   try {
     const v = localStorage.getItem(LS_WORKER_KEY);
-    if (v != null) state.worker = v;
-  } catch (e) { /* 隐私模式 / 禁用存储:留在"全部" */ }
+    if (v != null) state.worker = v === "*" ? "" : v; // 老版本可能存着 "*"
+  } catch (e) { /* 隐私模式 / 禁用存储:留在"未分配" */ }
 }
 function rememberWorker(id) {
   try { localStorage.setItem(LS_WORKER_KEY, id); } catch (e) {}
 }
 
-// workerBuckets 是切换条的完整序列:全部 → 未分配 → 各 worker(内置分桶排在
-// 最后,它们平常不可见,但必须够得着 —— 旧版"已归档"的会话就在那里)。
+// workerBuckets 是切换条的全部序列:未分配 → 各 worker。没有"全部"这一档,内置分桶
+// (旧版"已归档")也不再列出 —— 归档按钮早就没了,那个桶也不会再被创建。
 function workerBuckets() {
-  const real = (state.workers || []).filter(w => !w.builtin);
-  const builtin = (state.workers || []).filter(w => w.builtin);
-  const out = [
-    { worker_id: "*", name: "全部", sessions: real.reduce((n, w) => n + (w.sessions || 0), 0) + (state.unassigned || 0) },
-    { worker_id: "", name: "未分配", sessions: state.unassigned || 0 },
-  ];
-  for (const w of real) out.push(w);
-  for (const w of builtin) out.push(w);
+  const out = [{ worker_id: "", name: "未分配", sessions: state.unassigned || 0 }];
+  for (const w of (state.workers || []).filter(x => !x.builtin)) out.push(w);
   return out;
 }
 
 function workerLabel(id) {
-  if (id === "*" || id == null) return "全部";
-  if (id === "") return "未分配";
+  if (id === "" || id == null || id === "*") return "未分配";
   const w = (state.workers || []).find(x => x.worker_id === id);
   return w ? w.name : "未知 worker";
 }
 
 function workerEmptyHint() {
-  const id = workerBucketId();
-  if (id === "*") return '暂无会话<br>发送第一条消息开始';
-  if (id === "") return '暂无未分配会话<br>新建会话时选「未分配」即由 agent 自己判断归属';
+  if (workerBucketId() === "") return '暂无未分配会话<br>新建会话时选「未分配」即由 agent 自己判断归属';
   return '这个 worker 还没有会话<br>点「＋ 新建会话」直接在这里开工,或把别的会话 📁 移进来';
 }
 
@@ -65,12 +57,12 @@ async function loadWorkers() {
     state.workers = state.workers || [];
     state.unassigned = state.unassigned || 0;
   }
-  // 选中的 worker 被删了:回到"全部",别把列表卡成空。只在真的拿到列表时才校准,
-  // 否则一次网络抖动就会把用户正在看的 worker 踢回"全部"。
+  // 选中的 worker 被删了:回到"未分配",别把列表卡成空。只在真的拿到列表时才校准,
+  // 否则一次网络抖动就会把用户正在看的 worker 踢走。
   const id = workerBucketId();
-  if (got && id !== "*" && id !== "" && !state.workers.some(w => w.worker_id === id)) {
-    state.worker = "*";
-    rememberWorker("*");
+  if (got && id !== "" && !state.workers.some(w => w.worker_id === id)) {
+    state.worker = "";
+    rememberWorker("");
   }
   paintWorkerBar();
 }
@@ -80,17 +72,14 @@ function paintWorkerBar() {
   if (!name) return;
   const id = workerBucketId();
   const w = (state.workers || []).find(x => x.worker_id === id);
-  const count = id === "*"
-    ? workerBuckets()[0].sessions
-    : (id === "" ? (state.unassigned || 0) : (w ? w.sessions || 0 : 0));
+  const count = id === "" ? (state.unassigned || 0) : (w ? w.sessions || 0 : 0);
   name.textContent = (w ? w.name : workerLabel(id)) + (count ? " · " + count : "");
 
   const sub = $("#worker-sub");
   if (!sub) return;
   if (!w || !w.work_dir) {
-    // "全部"/"未分配"没有共享目录,原来那行解释性小字("全部:不区分 worker…"、
-    // "未分配:新会话会自己判断…")是纯噪音,还老跟下拉菜单打架 —— 删了。
-    // 空的 .worker-sub 由 CSS 的 :empty 折叠,不留空隙。
+    // "未分配"没有共享目录,原来那行解释性小字("未分配:新会话会自己判断…")是纯
+    // 噪音,还老跟下拉菜单打架 —— 删了。空的 .worker-sub 由 CSS 的 :empty 折叠,不留空隙。
     sub.innerHTML = "";
   } else {
     sub.innerHTML =
@@ -112,12 +101,10 @@ async function switchWorker(id) {
 }
 
 /* ---------------- worker 菜单(切换 / 新建)---------------- */
-// 菜单图标:内置分桶各有一张固定的脸(照下拉设计稿),真 worker 一律文件夹。
+// 菜单图标:未分配是一格虚线框,真 worker 一律文件夹。
 // 用内联 SVG 不用 emoji —— emoji 在不同字体下大小/基线全飘,颜色也没法跟主题走。
 const WK_ICONS = {
-  "*": '<path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3.5 12.6 12 17.3l8.5-4.7"/>',
   "": '<rect x="4.2" y="4.2" width="15.6" height="15.6" rx="3.2" stroke-dasharray="3.6 3"/>',
-  "w-archived": '<path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1Z"/>',
 };
 const WK_ICON_FOLDER = '<path d="M4 7.2A2.2 2.2 0 0 1 6.2 5h3.4l1.8 2.2H17.8A2.2 2.2 0 0 1 20 9.4v7.4A2.2 2.2 0 0 1 17.8 19H6.2A2.2 2.2 0 0 1 4 16.8V7.2Z"/>';
 function wkIcon(id) {
@@ -138,7 +125,7 @@ function openWorkerMenu(anchor) {
   if (!menu) return;
   if (menu.classList.contains("open")) { closeWorkerMenu(); return; }
   const id = workerBucketId();
-  // 设计稿里没有"切换 Worker"这行小标题:条上已经写着 worker | 全部 · 3,不再重复一遍
+  // 条上已经写着 worker | 未分配 · 3,菜单里不再重复一行"切换 Worker"小标题
   let html = "";
   for (const w of workerBuckets()) {
     const cur = w.worker_id === id;
@@ -168,7 +155,6 @@ function openWorkerMoveMenu(sess, anchor) {
   const cur = sess.worker_id || "";
   let html = '<div class="wk-menu-head">移动到 Worker</div>';
   for (const w of workerBuckets()) {
-    if (w.builtin && w.worker_id !== cur) continue; // 内置分桶只给已经在里面的会话看到
     html += '<div class="wk-menu-item' + (w.worker_id === cur ? " cur" : "") + '" data-id="' + esc(w.worker_id) + '">' +
       wkIcon(w.worker_id) +
       '<span class="wk-menu-name">' + esc(w.name) + '</span>' +
@@ -229,7 +215,7 @@ async function deleteWorker(workerID) {
   try {
     const r = await api("/api/workers/" + workerID, { method: "DELETE" });
     toast("已删除(" + (r.deleted_sessions || 0) + " 个会话)", "ok");
-    if (workerBucketId() === workerID) { state.worker = "*"; rememberWorker("*"); }
+    if (workerBucketId() === workerID) { state.worker = ""; rememberWorker(""); }
     await loadWorkers();
     await loadSessions();
   } catch (err) { toast("删除失败:" + err.message, "err"); }

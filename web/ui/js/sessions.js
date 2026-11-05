@@ -1,9 +1,10 @@
 /* ---------------- 会话列表 ---------------- */
 // 列表按 worker(工作大类)分桶:GET /api/sessions?worker=<id>。
-// state.worker: "*" = 全部 | "" = 未分配 | 其余 = worker_id(见 workers.js)。
+// state.worker: "" = 未分配 | 其余 = worker_id(见 workers.js;没有"全部"这一档)。
 async function loadSessions(select) {
   try {
-    state.sessions = await api("/api/sessions?worker=" + encodeURIComponent(state.worker == null ? "*" : state.worker));
+    const bucket = typeof workerBucketId === "function" ? workerBucketId() : (state.worker || "");
+    state.sessions = await api("/api/sessions?worker=" + encodeURIComponent(bucket));
   } catch (e) { return; }
   renderSessions();
   syncRunning();

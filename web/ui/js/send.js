@@ -51,8 +51,8 @@ async function send() {
       body.thinking = state.thinking || "";               // 新会话:思考开关(空 = 模型默认)
       body.reasoning_effort = state.reasoningEffort || ""; // 新会话:思考深度(空 = 模型默认)
       // 新会话:侧边栏选中了某个 worker 就直接建在它里面(第一条消息即带 worker
-      // 上下文,不会中途换前缀);"全部"/"未分配"下留空,由模型自己判断归属。
-      if (state.worker && state.worker !== "*") body.worker_id = state.worker;
+      // 上下文,不会中途换前缀);"未分配"下留空,由模型自己判断归属。
+      if (state.worker) body.worker_id = state.worker;
     }
     const r = await api("/api/messages", {
       method: "POST",
