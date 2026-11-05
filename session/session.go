@@ -497,6 +497,9 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 				}
 			}
 		}
+		// Give the session a real title, from the request prefix this task just
+		// left warm in the provider's cache (fire-and-forget, see title.go).
+		s.maybeGenerateTitle(loop.ToolSchemas(), result.Messages)
 		return result.Content, reasoning, nil
 	}
 
@@ -607,6 +610,15 @@ type SessionManager struct {
 
 	compactionMu sync.RWMutex
 	compactionOn bool // default true (legacy behavior); hot-swappable via SetCompactionEnabled
+
+	// titleOn / titleModel are the automatic session-title policy (see
+	// title.go): whether a finished first task earns the session a
+	// model-written title, and which model writes it. Off until the
+	// runtime wires it, so a test talking to a fake provider never fires
+	// the extra request.
+	titleMu    sync.RWMutex
+	titleOn    bool
+	titleModel string
 
 	// modes is the authoritative, race-free view of each session's
 	// permission mode. The runtime gate reads it on every tool call while
@@ -852,9 +864,18 @@ func (m *SessionManager) RenameSession(sessionID, title string) error {
 	if err := m.store.SetTitle(sessionID, title); err != nil {
 		return err
 	}
+	// A human rename is permanent: automatic titling never touches this session
+	// again (title.go). Column write first, then the in-memory copy.
+	if err := m.store.SetTitleSrc(sessionID, TitleSrcUser); err != nil {
+		slog.Warn("title source not recorded", "session", sessionID, "err", err)
+	}
 	m.mu.Lock()
 	if s, ok := m.sessions[sessionID]; ok {
 		s.record.Title = title
+		if s.record.Metadata == nil {
+			s.record.Metadata = map[string]interface{}{}
+		}
+		s.record.Metadata[titleSrcMetaKey] = TitleSrcUser
 	}
 	m.mu.Unlock()
 	slog.Info("session renamed", "session", sessionID, "title", title)

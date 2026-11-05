@@ -1414,6 +1414,13 @@ func (l *AgentLoop) toToolSchemas(defs []provider.ToolSchema) []provider.ToolSch
 	return result
 }
 
+// ToolSchemas returns the tool list this loop sends — the other half of the
+// request prefix. An auxiliary call (a session title, a compaction summary) has
+// to carry the same list to stay inside the provider's cached prefix.
+func (l *AgentLoop) ToolSchemas() []provider.ToolSchema {
+	return l.toToolSchemas(l.toolDefinitions)
+}
+
 // chatWithRetry wraps ChatStream with bounded retries for transient
 // transport-level failures (connection reset, stream dropped mid-response,
 // server timeout). Retrying is safe and idempotent: the assistant message is

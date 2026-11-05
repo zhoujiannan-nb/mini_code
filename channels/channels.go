@@ -683,7 +683,9 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 	}
 
 	// The message does not belong to any session: create a new one.
-	title := truncateRunes(strings.TrimSpace(m.Content), 40)
+	// The title is a placeholder until the session's first finished task gets it a
+	// real one (session/title.go); the length lives with that logic.
+	title := truncateRunes(strings.TrimSpace(m.Content), session.FallbackTitleRunes)
 	if title == "" {
 		title = "Chat"
 	}

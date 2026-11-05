@@ -118,6 +118,9 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 	}
 	mgr.SetModels(clients, cfg.DefaultModel)
 	mgr.SetCompactionEnabled(cfg.Compaction())
+	// Automatic session titles (session/title.go): one cached auxiliary request
+	// after a session's first finished task, unless the config turns it off.
+	mgr.SetTitlePolicy(cfg.TitleAutoEnabled(), cfg.TitleModel)
 
 	workDir, _ := os.Getwd()
 
@@ -300,6 +303,7 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 	modelsChanged := string(oldModelsJSON) != string(newModelsJSON)
 
 	if !modelsChanged && old.WebPort == cfg.WebPort && old.Compaction() == cfg.Compaction() &&
+		old.TitleAutoEnabled() == cfg.TitleAutoEnabled() && old.TitleModel == cfg.TitleModel &&
 		old.UserAvatar == cfg.UserAvatar && old.AgentAvatar == cfg.AgentAvatar &&
 		config.SameBootAnim(old.BootAnim, cfg.BootAnim) {
 		return &web.SaveResult{Message: "配置没有变化"}, nil
@@ -325,6 +329,18 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 			notes = append(notes, "上下文自动压缩已开启")
 		} else {
 			notes = append(notes, "上下文自动压缩已关闭")
+		}
+	}
+	if old.TitleAutoEnabled() != cfg.TitleAutoEnabled() || old.TitleModel != cfg.TitleModel {
+		rt.mgr.SetTitlePolicy(cfg.TitleAutoEnabled(), cfg.TitleModel)
+		if !cfg.TitleAutoEnabled() {
+			notes = append(notes, "会话自动标题已关闭(保留首句截断的标题)")
+		} else {
+			label := cfg.TitleModel
+			if label == "" {
+				label = "沿用会话自己的模型"
+			}
+			notes = append(notes, "会话自动标题已开启(标题模型:"+label+")")
 		}
 	}
 	if modelsChanged {

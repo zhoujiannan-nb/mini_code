@@ -379,6 +379,25 @@ func (s *SessionStore) SetTitle(sessionID, title string) error {
 	return err
 }
 
+// SetTitleSrc records where a session's title came from (see session/title.go:
+// "" = the truncation fallback, "tried", "model", "user"). Only the metadata
+// column is written, so — like SetTitle — this can neither clobber the agent
+// loop's concurrent per-turn message persistence nor be clobbered by it, and it
+// does not bump updated_at (a title is a label, not conversation activity).
+func (s *SessionStore) SetTitleSrc(sessionID, src string) error {
+	rec, err := s.Get(sessionID)
+	if err != nil || rec == nil {
+		return err
+	}
+	if rec.Metadata == nil {
+		rec.Metadata = map[string]interface{}{}
+	}
+	rec.Metadata[titleSrcMetaKey] = src
+	metaJSON, _ := json.Marshal(rec.Metadata)
+	_, err = s.db.Execute("UPDATE sessions SET metadata=? WHERE session_id=?", string(metaJSON), sessionID)
+	return err
+}
+
 // SetModelKey switches the session's model (config model name; empty =
 // default model). Like SetMode it is a targeted update and bumps
 // updated_at, so the session jumps to the top of the list on switch.

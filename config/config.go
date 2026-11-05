@@ -24,6 +24,19 @@ type AppConfig struct {
 	// older config file still unmarshals.
 	CompactionEnabled *bool `json:"compaction_enabled,omitempty"`
 
+	// TitleAuto controls whether a session gets a model-written title after its
+	// first finished task (nil/true = on, false = keep the truncated first
+	// message). The request reuses the conversation the task just sent, so the
+	// provider answers from its prefix cache: the cost is the tail plus ~50
+	// output tokens. A title renamed by hand is never overwritten either way.
+	TitleAuto *bool `json:"title_auto,omitempty"`
+
+	// TitleModel names the model entry that writes titles ("" = each session's
+	// own model, which is the default and the cheapest option because it keeps
+	// that session's cached prefix). An unknown name falls back to the default
+	// model.
+	TitleModel string `json:"title_model,omitempty"`
+
 	WebPort int `json:"web_port"`
 	// UserAvatar is the web user's avatar: a data URL
 	// (data:image/jpeg|png|webp;base64,...) uploaded from the UI.
@@ -47,6 +60,11 @@ type AppConfig struct {
 // that used to allow turning it off let sessions run into provider-side length
 // errors, so it was removed. The config key is still parsed for compatibility.
 func (c *AppConfig) Compaction() bool { return true }
+
+// TitleAutoEnabled reports whether sessions get a model-written title after their
+// first finished task. Default on: the request rides on a warm prefix cache and a
+// hand-made title is pinned anyway.
+func (c *AppConfig) TitleAutoEnabled() bool { return c.TitleAuto == nil || *c.TitleAuto }
 
 // ModelByName returns the model entry with the given name, or nil.
 func (c *AppConfig) ModelByName(name string) *ModelConfig {
