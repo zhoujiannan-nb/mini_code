@@ -151,8 +151,11 @@ func TestSessionTitleGeneratedAfterFirstTask(t *testing.T) {
 	probe := &titleProbe{}
 	mgr := newTitleEnv(t, probe)
 	mgr.SetTitlePolicy(true, "")
-	s := mustSession(t, mgr, "帮我给 nginx 打开 gzip 支持,配置写在 conf.d 里,别的都不要动")
-	titlePrompt(t, s, "帮我给 nginx 打开 nginx gzip")
+	// Production shape: the hub names a new session after its first message, so
+	// the title here must equal the goal or the guard would read it as a rename.
+	goal := "帮我给 nginx 打开 gzip 支持"
+	s := mustSession(t, mgr, goal)
+	titlePrompt(t, s, goal)
 
 	if got := awaitTitle(t, mgr, s.ID(), "配置 nginx 的 gzip", 5*time.Second); got != "配置 nginx 的 gzip" {
 		t.Fatalf("the title was not generated (still %q)", got)
@@ -302,6 +305,53 @@ func TestTitleFailureKeepsPlaceholder(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if n := probe.titleCalls(); n != 1 {
 		t.Fatalf("%d title requests, want 1 (failures are not retried)", n)
+	}
+}
+
+// TestLegacyRenamedTitleIsPinned: sessions renamed before title_src existed carry
+// no marker, so the shape of the title is the only evidence. A title that is not a
+// truncation of the first message was typed by someone and gets pinned.
+func TestLegacyRenamedTitleIsPinned(t *testing.T) {
+	probe := &titleProbe{}
+	mgr := newTitleEnv(t, probe)
+	mgr.SetTitlePolicy(true, "")
+	s := mustSession(t, mgr, "nginx 排错") // a hand-made title, years old in DB terms
+	titlePrompt(t, s, "帮我把这个报错的栈贴给你看看")
+	time.Sleep(300 * time.Millisecond)
+	if n := probe.titleCalls(); n != 0 {
+		t.Fatalf("a hand-made title was still taken apart for a title (%d calls)", n)
+	}
+	rec, _ := mgr.GetStore().Get(s.ID())
+	if rec.Title != "nginx 排错" {
+		t.Fatalf("the hand-made title was overwritten: %q", rec.Title)
+	}
+	if got := metadataString(rec, titleSrcMetaKey); got != TitleSrcUser {
+		t.Fatalf("title_src = %q, want %q (pinned so this is decided once)", got, TitleSrcUser)
+	}
+}
+
+func TestLooksLikePlaceholder(t *testing.T) {
+	long := strings.Repeat("长", 50)
+	longMsg := []provider.Message{{Role: "system", Content: "s"}, {Role: "user", Content: long}}
+	if !looksLikePlaceholder(string([]rune(long)[:FallbackTitleRunes])+"…", longMsg) {
+		t.Fatal("a cut-off placeholder was not recognised")
+	}
+	if !looksLikePlaceholder("短消息", []provider.Message{{Role: "user", Content: "短消息"}}) {
+		t.Fatal("a short placeholder was not recognised")
+	}
+	if looksLikePlaceholder("nginx 排错", longMsg) {
+		t.Fatal("a hand-made title looked like a placeholder")
+	}
+	if looksLikePlaceholder("x", nil) {
+		t.Fatal("a session without messages has nothing to compare against")
+	}
+	// A compaction instruction is injected, not typed by the user.
+	notices := []provider.Message{
+		BuildCompactRequest(""),
+		{Role: "user", Content: "真实第一句"},
+	}
+	if !looksLikePlaceholder("真实第一句", notices) {
+		t.Fatal("an injected compaction instruction must be skipped")
 	}
 }
 

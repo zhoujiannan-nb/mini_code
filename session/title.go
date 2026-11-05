@@ -117,6 +117,25 @@ func sanitizeTitle(raw string) string {
 	return strings.TrimSpace(s)
 }
 
+// looksLikePlaceholder reports whether a title is what the hub wrote when the
+// session was created: the first user message, cut to FallbackTitleRunes (plus the
+// ellipsis that cut adds). Anything else was typed by someone, so titles must not
+// touch it. This is what protects a hand-made title from before titles existed —
+// those sessions have no marker to read.
+func looksLikePlaceholder(title string, messages []provider.Message) bool {
+	for _, m := range messages {
+		if m.Role != "user" || IsWorkerNotice(m) || IsCompactRequest(m) {
+			continue
+		}
+		want := strings.TrimSpace(m.GetText())
+		if r := []rune(want); len(r) > FallbackTitleRunes {
+			want = string(r[:FallbackTitleRunes]) + "…"
+		}
+		return strings.TrimSpace(title) == want
+	}
+	return false
+}
+
 // --- policy ---
 
 // SetTitlePolicy wires automatic titling: whether a finished first task earns the
@@ -177,6 +196,15 @@ func (s *Session) maybeGenerateTitle(schemas []provider.ToolSchema, messages []p
 	if !root || title == "" || src != TitleSrcFallback {
 		return
 	}
+	// A session created before titles existed carries no marker at all, and its
+	// title may have been typed by hand long ago. A hand-made title is not a
+	// truncation of the first message, so it gets pinned instead of overwritten.
+	if src == TitleSrcFallback && !looksLikePlaceholder(title, messages) {
+		s.manager.pinTitle(s.ID())
+		slog.Info("existing title kept (it was not a truncation of the first message)",
+			"session", s.ID(), "title", title)
+		return
+	}
 	if !s.manager.markTitleTried(s.ID()) {
 		return
 	}
@@ -209,6 +237,25 @@ func (m *SessionManager) markTitleTried(sessionID string) bool {
 		return false
 	}
 	return true
+}
+
+// pinTitle records a title as human-chosen, for the sessions that were renamed
+// before title_src existed and so carry no marker.
+func (m *SessionManager) pinTitle(sessionID string) {
+	if err := m.store.SetTitleSrc(sessionID, TitleSrcUser); err != nil {
+		slog.Warn("title source not recorded", "session", sessionID, "err", err)
+		return
+	}
+	m.mu.Lock()
+	if s, ok := m.sessions[sessionID]; ok {
+		s.mu.Lock()
+		if s.record.Metadata == nil {
+			s.record.Metadata = map[string]interface{}{}
+		}
+		s.record.Metadata[titleSrcMetaKey] = TitleSrcUser
+		s.mu.Unlock()
+	}
+	m.mu.Unlock()
 }
 
 // generateTitle asks for a title and applies it. Every failure path is silent by
