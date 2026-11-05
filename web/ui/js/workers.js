@@ -94,7 +94,6 @@ function paintWorkerBar() {
     sub.innerHTML = "";
   } else {
     sub.innerHTML =
-      '<span class="wk-sub-dir" title="' + esc(w.work_dir) + '\n共享工作目录">📂 ' + esc(shortPath(w.work_dir, 34)) + '</span>' +
       '<button class="wk-sub-btn" id="wk-note-btn" title="查看/编辑公约(共享给这个 worker 的全部会话)">📄 公约</button>' +
       '<button class="wk-sub-btn" id="wk-summary-btn" title="改写摘要(新会话靠它决定加入哪个 worker)">✎ 摘要</button>' +
       '<button class="wk-sub-btn wk-sub-danger" id="wk-del-btn" title="删除 worker 及其全部会话(目录保留)">🗑</button>';
@@ -103,14 +102,6 @@ function paintWorkerBar() {
     bind("#wk-summary-btn", () => editSummary(w.worker_id));
     bind("#wk-del-btn", () => deleteWorker(w.worker_id));
   }
-}
-
-// shortPath 只影响显示:长路径中间省略,鼠标悬停看全文。
-function shortPath(p, keep) {
-  if (!p) return "";
-  const runes = [...p];
-  if (runes.length <= keep) return p;
-  return "…" + runes.slice(runes.length - keep).join("");
 }
 
 async function switchWorker(id) {

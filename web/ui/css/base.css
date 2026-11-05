@@ -317,14 +317,13 @@ aside {
   background: transparent; color: var(--text2); font-size: 15px; cursor: pointer; line-height: 24px;
 }
 .wk-add:hover { background: var(--accent-btn); color: #fff; }
-/* 目录 + 操作行:小字,悬停看全路径。"全部"/"未分配"没有目录可显示,留空即折叠。 */
+/* 操作行:小字按钮一排。"全部"/"未分配"没有 worker 可操作,留空即折叠。 */
 .worker-sub {
   display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
   margin: 3px 12px 0; padding: 0 2px; min-height: 16px;
   font-size: 11px; color: var(--text3);
 }
 .worker-sub:empty { display: none; }
-.wk-sub-dir { flex: 1 1 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wk-sub-tip { flex: 1 1 100%; }
 .wk-sub-btn {
   border: none; background: transparent; color: var(--text3); cursor: pointer;
