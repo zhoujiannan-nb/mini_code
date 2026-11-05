@@ -890,16 +890,17 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
 .worker-sub { margin: 5px calc(var(--side-inset) + 4px) 0; }
 
 /* 会话列表:偏白卡片,比 worker 条再透一档(--card-a=.72),同样带 blur。
-   左右内缝的算术(之前两版都没算对,所以你先说偏右又说偏左):
-   · 只写 padding: 6px → 有滚动条时右边要多占 6px(滚动条吃在 padding 之内),
-     变成左 6 / 右 12 → 内容看着偏左。
-   · 再加 scrollbar-gutter: stable → gutter 是"额外预留"6px,右内缝变 6+6=12,
-     还是不平等。
-   正确写法:保留 gutter(滚动条出现/消失都不跳动),但把右内缝交给它,
-   padding-right 归零 → 左 6px、右 6px(gutter),恒等。 */
+   左右内缝这笔账我连错两版,现在拿 Chrome 实测对齐(base.css 的
+   `* { scrollbar-width: thin }` 会让 layers.css 的 ::-webkit-scrollbar{width:6px}
+   整条失效 —— 真实滚动条/gutter 是 10px,不是 6px,之前全按 6px 算所以必错):
+   · 只 padding:6px      → 左 6,右 6+10(滚动条) = 16 → 内容偏左(你那张图)
+   · 加 gutter + padding:6/6 → 右内缝 6+10 = 16,还是偏左
+   · gutter + padding 6/0  → 左 6,右 10 → 反过来偏右 4px
+   正确:gutter 交给滚动条占,左内缝就写它的真实宽度 10px → 左右恒等(实测 11/11,
+   各含 1px 卡片描边)。顺带把 scrollbar-width 显式写在这条上,不再靠 `*` 继承。 */
 .sess-list {
-  margin: 12px var(--side-inset) 0; padding: 6px 0 6px 6px;
-  scrollbar-gutter: stable;
+  margin: 12px var(--side-inset) 0; padding: 6px 0 6px 10px;
+  scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--scroll) transparent;
   background: var(--card-a);
   backdrop-filter: blur(14px) saturate(1.25); -webkit-backdrop-filter: blur(14px) saturate(1.25);
   border: 1px solid var(--border); border-radius: 20px;
@@ -951,7 +952,7 @@ html[data-theme="dark"] .sess-item.active:hover { background: rgba(106, 216, 108
    大圆角 + 柔阴影 + 一行一项(图标 / 名字 / 数量药丸),当前项浅绿底 + 右侧绿 ✓,
    顶部一道小尖角指回 worker 条。图标是内联 SVG,颜色跟 currentColor 走。 */
 .worker-menu {
-  min-width: 236px; padding: 8px;
+  min-width: 224px; padding: 8px;
   border: 1px solid var(--border); border-radius: 20px;
   box-shadow: 0 16px 40px rgba(18, 20, 16, .16), 0 2px 8px rgba(18, 20, 16, .08);
 }
@@ -965,7 +966,11 @@ html[data-theme="dark"] .sess-item.active:hover { background: rgba(106, 216, 108
   padding: 0 10px; border-radius: 14px; font-size: 14px;
 }
 .wk-menu-ico { flex: 0 0 auto; color: var(--text2); }
-.wk-menu-name { font-weight: 600; color: var(--title); }
+/* 名字不撑满,但也要成"一列":base.css 的 flex:1 1 auto 会把药丸顶到最右(你红箭头
+   指的空白就是那块);纯 flex:0 1 auto 又会让每行药丸随名字长短漂移。
+   照设计稿给名字一个固定列宽 → 三行药丸左缘对齐成一列,右边留出稿子里的余量。
+   超长 worker 名靠 base.css 的 ellipsis 截断(整名看 title)。 */
+.wk-menu-name { flex: 0 0 108px; font-weight: 600; color: var(--title); }
 /* 数量做成灰底药丸(设计稿那颗),不再是贴在名字后面的裸数字 */
 .wk-menu-n {
   flex: 0 0 auto; min-width: 26px; padding: 2px 8px;

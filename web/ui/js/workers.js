@@ -152,7 +152,8 @@ function openWorkerMenu(anchor) {
   let html = "";
   for (const w of workerBuckets()) {
     const cur = w.worker_id === id;
-    html += '<div class="wk-menu-item' + (cur ? " cur" : "") + '" data-id="' + esc(w.worker_id) + '">' +
+    html += '<div class="wk-menu-item' + (cur ? " cur" : "") + '" data-id="' + esc(w.worker_id) +
+      '" title="' + esc(w.name) + '">' +
       wkIcon(w.worker_id) +
       '<span class="wk-menu-name">' + esc(w.name) + '</span>' +
       '<span class="wk-menu-n">' + (w.sessions || 0) + '</span>' +
