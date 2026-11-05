@@ -86,18 +86,31 @@ function paintWorkerBar() {
     sub.innerHTML = "";
   } else {
     // 固定的「其他」能写公约、能改摘要,但删不掉、名字也写死了 —— 不渲染 🗑 和改名。
+    // 「＋ 会话」所有 worker 都有:在这里建的会话默认就归这个 worker(见 send.js)。
     sub.innerHTML =
       '<button class="wk-sub-btn" id="wk-note-btn" title="查看/编辑公约(共享给这个 worker 的全部会话)">📄 公约</button>' +
       '<button class="wk-sub-btn" id="wk-summary-btn" title="改写摘要(新会话靠它决定加入哪个 worker)">✎ 摘要</button>' +
       (w.reserved ? "" :
-        '<button class="wk-sub-btn" id="wk-rename-btn" title="改名(只改名字:目录不动,会话里的路径不受影响)">✎ 名称</button>' +
-        '<button class="wk-sub-btn wk-sub-danger" id="wk-del-btn" title="删除 worker 及其全部会话(目录保留)">🗑</button>');
+        '<button class="wk-sub-btn" id="wk-rename-btn" title="改名(只改名字:目录不动,会话里的路径不受影响)">✎ 名称</button>') +
+      '<button class="wk-sub-btn" id="wk-new-sess-btn" title="在这个 worker 里新建会话(发出第一条消息即归属这里)">＋ 会话</button>' +
+      (w.reserved ? "" :
+        '<button class="wk-sub-btn wk-sub-danger" id="wk-del-btn" title="删除工作区及其全部会话(需手打确认语;目录保留)">🗑</button>');
     const bind = (sel, fn) => { const el = $(sel); if (el) el.addEventListener("click", fn); };
     bind("#wk-note-btn", () => openNoteEditor(w.worker_id));
     bind("#wk-summary-btn", () => editSummary(w.worker_id));
     bind("#wk-rename-btn", () => renameWorker(w.worker_id));
+    bind("#wk-new-sess-btn", newSessionInWorker);
     bind("#wk-del-btn", () => deleteWorker(w.worker_id));
   }
+}
+
+// 在当前 worker 里新建会话:回到草稿并聚焦输入框。send.js 发第一条消息时会带上
+// state.worker,会话一出生就在这个 worker 下面(共享目录、公约都跟着)。
+function newSessionInWorker() {
+  if (state.currentGroup && typeof exitGroupView === "function") exitGroupView();
+  resetToNew();
+  const input = $("#input");
+  if (input) input.focus();
 }
 
 async function switchWorker(id) {
@@ -263,16 +276,32 @@ async function renameWorker(workerID) {
   } catch (err) { toast("改名失败:" + err.message, "err"); }
 }
 
+// WK_DELETE_CONFIRM is what the user has to type, verbatim, before a worker goes
+// away. Deleting one takes every session in it with it, so a stray click on 🗑
+// must not be enough — the click-only confirm() it used to have was one reflex away from mass deletion.
+const WK_DELETE_CONFIRM = "我确认删除工作区";
+
 async function deleteWorker(workerID) {
   const w = (state.workers || []).find(x => x.worker_id === workerID);
   const n = w ? w.sessions || 0 : 0;
-  if (!confirm("删除 worker「" + (w ? w.name : workerID) + "」?\n里面的 " + n + " 个会话会一并删除(共享目录里的文件保留在磁盘上)。")) return;
+  const typed = (prompt(
+    "删除工作区「" + (w ? w.name : workerID) + "」会一并删掉里面的 " + n +
+    " 个会话(共享目录里的文件保留在磁盘)。\n要删请一字不差地输入:" + WK_DELETE_CONFIRM,
+    "") || "").trim();
+  if (typed !== WK_DELETE_CONFIRM) {
+    if (typed) toast("没删:确认语要一模一样(" + WK_DELETE_CONFIRM + ")", "err");
+    return;
+  }
+  // 展示区里那条可能正是这个区名下的 —— 它会被一起删掉,删完得回草稿,别对着
+  // 一条已经不存在的会话。先记住它归属哪个区(列表里的 worker_id)。
+  const shown = (state.sessions || []).find(x => x.session_id === state.current);
   try {
     const r = await api("/api/workers/" + workerID, { method: "DELETE" });
     toast("已删除(" + (r.deleted_sessions || 0) + " 个会话)", "ok");
     if (workerBucketId() === workerID) { state.worker = ""; rememberWorker(""); }
     await loadWorkers();
     await loadSessions();
+    if (shown && shown.worker_id === workerID) resetToNew();
   } catch (err) { toast("删除失败:" + err.message, "err"); }
 }
 

@@ -137,3 +137,55 @@ func cssRuleForTest(t *testing.T, css, selector string) string {
 	}
 	return rule
 }
+
+// TestWorkerBarNewSessionAndTypedDelete pins two things about the worker
+// sub-bar (📄 公约 / ✎ 摘要 / ✎ 名称 / ＋ 会话 / 🗑):
+//
+//	(a) it can start a session for that worker, and a session started there is
+//	    born inside the worker — the send path attaches the selected worker to the
+//	    first message, so the session gets its shared dir and 公约 from the start;
+//	(b) deleting a worker takes a typed phrase, not one click: deleting one takes
+//	    every session in it along with it.
+func TestWorkerBarNewSessionAndTypedDelete(t *testing.T) {
+	js := jsModulesForTest(t)
+
+	bar := jsBlockForTest(t, js, "function paintWorkerBar()")
+	newBtn, delBtn := strings.Index(bar, `id="wk-new-sess-btn"`), strings.Index(bar, `id="wk-del-btn"`)
+	switch {
+	case newBtn < 0:
+		t.Error(`the worker bar lost ＋ 会话 (#wk-new-sess-btn)`)
+	case delBtn >= 0 && delBtn < newBtn:
+		t.Errorf("＋ 会话 must be rendered before 🗑 (right after 名称): new=%d del=%d", newBtn, delBtn)
+	}
+	if !strings.Contains(bar, `bind("#wk-new-sess-btn", newSessionInWorker)`) {
+		t.Error(`#wk-new-sess-btn is not wired to newSessionInWorker`)
+	}
+
+	draft := jsBlockForTest(t, js, "function newSessionInWorker()")
+	for _, want := range []string{"resetToNew()", `$("#input")`} {
+		if !strings.Contains(draft, want) {
+			t.Errorf("newSessionInWorker should carry %s:\n%s", want, draft)
+		}
+	}
+	// The other half of "created here, lives here" is the send path: a session
+	// created from the draft carries the selected worker.
+	if !strings.Contains(js, "if (state.worker) body.worker_id = state.worker;") {
+		t.Error("a new session no longer carries the selected worker (send.js)")
+	}
+
+	del := jsBlockForTest(t, js, "async function deleteWorker(workerID)")
+	if !strings.Contains(js, `const WK_DELETE_CONFIRM = "我确认删除工作区"`) {
+		t.Error(`the typed delete phrase ("我确认删除工作区") is gone`)
+	}
+	if !strings.Contains(del, "prompt(") || !strings.Contains(del, "typed !== WK_DELETE_CONFIRM") {
+		t.Errorf("deleteWorker must ask for the phrase and match it exactly:\n%s", del)
+	}
+	if strings.Contains(del, "if (!confirm(") {
+		t.Errorf("deleteWorker is back to the one-click confirm() — a worker takes all its sessions with it:\n%s", del)
+	}
+	// Deleting also took the shown session with it → the pane must not keep
+	// rendering a conversation that no longer exists.
+	if !strings.Contains(del, "shown.worker_id === workerID") || !strings.Contains(del, "resetToNew()") {
+		t.Errorf("deleteWorker should fall back to a draft when the shown session was in that worker:\n%s", del)
+	}
+}
