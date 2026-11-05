@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -18,12 +17,13 @@ import (
 )
 
 // titleInstructionNeedle identifies the auxiliary title request among the calls a
-// fake model server sees. Keep it in sync with titleInstruction.
-const titleInstructionNeedle = "Name the conversation above"
+// fake model server sees. Keep it in sync with titleRequest.
+const titleInstructionNeedle = "Name the request below"
 
 type capturedCall struct {
 	messages  []interface{}
 	tools     string // serialized tools field
+	thinking  string // serialized thinking field (only providers with a switch send it)
 	titleCall bool
 }
 
@@ -41,6 +41,7 @@ func (p *titleProbe) handle(rw http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	msgs, _ := body["messages"].([]interface{})
 	toolsJSON, _ := json.Marshal(body["tools"])
+	thinkingJSON, _ := json.Marshal(body["thinking"])
 	isTitle := false
 	if len(msgs) > 0 {
 		if m, ok := msgs[len(msgs)-1].(map[string]interface{}); ok {
@@ -50,7 +51,7 @@ func (p *titleProbe) handle(rw http.ResponseWriter, r *http.Request) {
 		}
 	}
 	p.mu.Lock()
-	p.calls = append(p.calls, capturedCall{messages: msgs, tools: string(toolsJSON), titleCall: isTitle})
+	p.calls = append(p.calls, capturedCall{messages: msgs, tools: string(toolsJSON), thinking: string(thinkingJSON), titleCall: isTitle})
 	p.mu.Unlock()
 
 	reply := "好的"
@@ -100,10 +101,18 @@ func (p *titleProbe) lastTaskCall() (capturedCall, bool) {
 
 func newTitleEnv(t *testing.T, probe *titleProbe) *SessionManager {
 	t.Helper()
+	return newTitleEnvProvider(t, probe, "vllm")
+}
+
+// newTitleEnvProvider is newTitleEnv on a chosen provider type. The DeepSeek one
+// exists to prove the thinking switch really goes out on a naming call (see
+// TestTitleRequestTurnsThinkingOff) — vLLM has no switch to observe.
+func newTitleEnvProvider(t *testing.T, probe *titleProbe, providerType string) *SessionManager {
+	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(probe.handle))
 	t.Cleanup(ts.Close)
 	client, err := provider.NewModelClient(config.ModelConfig{
-		Provider: "vllm", BaseURL: ts.URL, APIKey: "test",
+		Provider: providerType, BaseURL: ts.URL, APIKey: "test",
 		ModelName: "test-model", MaxTokens: 200, ContextWindow: 4096,
 	})
 	if err != nil {
@@ -144,9 +153,9 @@ func titlePrompt(t *testing.T, s *Session, goal string) {
 }
 
 // TestSessionTitleGeneratedAfterFirstTask is the whole mechanism: the placeholder
-// title is replaced by the model's, the auxiliary request reuses the conversation
-// prefix (that is the caching the design buys), the instruction is never
-// persisted, and it happens exactly once per session.
+// title is replaced by the model's, the naming call is one small user message with
+// no tools, the instruction is never persisted, and it happens exactly once per
+// session.
 func TestSessionTitleGeneratedAfterFirstTask(t *testing.T) {
 	probe := &titleProbe{}
 	mgr := newTitleEnv(t, probe)
@@ -163,8 +172,10 @@ func TestSessionTitleGeneratedAfterFirstTask(t *testing.T) {
 	if n := probe.titleCalls(); n != 1 {
 		t.Fatalf("%d title requests, want exactly 1", n)
 	}
-	// The prefix: everything the task sent, then the assistant reply, then the
-	// instruction. Anything else and the provider would recompute the context.
+	// The naming call is its own small request: one user message quoting the first
+	// ask, no assistant turns, no tools. Assistant turns would drag in
+	// reasoning_content semantics (DeepSeek rejects them while thinking is on), and
+	// a tool list invites the model to start the task instead of naming it.
 	task, ok := probe.lastTaskCall()
 	if !ok {
 		t.Fatal("the fake model never saw a task request")
@@ -175,17 +186,21 @@ func TestSessionTitleGeneratedAfterFirstTask(t *testing.T) {
 			titleCall = c
 		}
 	}
-	if len(titleCall.messages) <= len(task.messages) {
-		t.Fatalf("the title request must extend the task request: %d vs %d messages",
-			len(titleCall.messages), len(task.messages))
+	if len(titleCall.messages) != 1 {
+		t.Fatalf("the title request must be a single message, got %d", len(titleCall.messages))
 	}
-	for i, m := range task.messages {
-		if !reflect.DeepEqual(m, titleCall.messages[i]) {
-			t.Fatalf("message %d differs, so the cached prefix was broken:\ntask  %+v\ntitle %+v", i, m, titleCall.messages[i])
-		}
+	one, _ := titleCall.messages[0].(map[string]interface{})
+	if role, _ := one["role"].(string); role != "user" {
+		t.Fatalf("the title request must be one user message, got role %v", one["role"])
 	}
-	if titleCall.tools != task.tools {
-		t.Fatalf("the tool list changed, which also breaks the prefix:\ntask  %s\ntitle %s", task.tools, titleCall.tools)
+	if body, _ := one["content"].(string); !strings.Contains(body, goal) {
+		t.Errorf("the title request does not quote the first message:\n%s", body)
+	}
+	if titleCall.tools != "null" {
+		t.Errorf("the title request carried a tool list: %s (task request carries %s)", titleCall.tools, task.tools)
+	}
+	if len(task.tools) < 20 {
+		t.Errorf("fixture sanity: the task request should carry tools to contrast with, got %q", task.tools)
 	}
 	// Nothing of the auxiliary turn is persisted into the session.
 	rec, err := mgr.GetStore().Get(s.ID())
@@ -360,7 +375,7 @@ func TestSanitizeTitle(t *testing.T) {
 		{"Title: **配置 nginx 的 gzip**\n后面这一行会被丢掉", "配置 nginx 的 gzip"},
 		{"标题：修一下 worker 列表", "修一下 worker 列表"},
 		{"「修一下 worker 列表」", "修一下 worker 列表"},
-		{"\"Fix the worker list.\"", "Fix the worker list"},
+		{"\"Fix the list.\"", "Fix the list"},
 		{"   \n\n   真实一行   ", "真实一行"},
 		{"修复\u200b渲染\u200e问题", "修复渲染问题"},
 		{"带\x00控制\x1b字符", "带控制字符"},
@@ -380,5 +395,103 @@ func TestSanitizeTitle(t *testing.T) {
 	}
 	if got := sanitizeTitle(strings.Repeat("长", 60)); len([]rune(got)) != GeneratedTitleRunes {
 		t.Errorf("cjk title not capped: %d runes", len([]rune(got)))
+	}
+}
+
+// TestTitleRequestTurnsThinkingOff: naming a session is not a reasoning task, so on
+// a provider with a thinking switch the naming call must go out switched OFF while
+// the task request next to it keeps the model's own default. This is the field
+// failure the design change is about: a thinking model spent the output budget on
+// its draft and answered with finish=length and no title, so no session ever got a
+// generated one.
+func TestTitleRequestTurnsThinkingOff(t *testing.T) {
+	probe := &titleProbe{}
+	mgr := newTitleEnvProvider(t, probe, "deepseek")
+	mgr.SetTitlePolicy(true, "")
+	goal := "帮我看看这个 nginx 的报错"
+	s := mustSession(t, mgr, goal)
+	titlePrompt(t, s, goal)
+	if got := awaitTitle(t, mgr, s.ID(), "配置 nginx 的 gzip", 5*time.Second); got != "配置 nginx 的 gzip" {
+		t.Fatalf("no title generated on a DeepSeek-shaped provider (still %q)", got)
+	}
+
+	var titleCall, taskCall capturedCall
+	for _, c := range probe.snapshot() {
+		if c.titleCall {
+			titleCall = c
+		} else {
+			taskCall = c
+		}
+	}
+	if titleCall.thinking != `{"type":"disabled"}` {
+		t.Fatalf("the naming call carried thinking %s, want {\"type\":\"disabled\"}", titleCall.thinking)
+	}
+	// Sanity on the other side: the switch is per call, not a global mute. DeepSeek
+	// thinks by default, so the task request carries thinking enabled — the naming
+	// call is the only place it goes off.
+	if taskCall.thinking != `{"type":"enabled"}` {
+		t.Errorf("the task request should keep the model's own thinking default, got %s", taskCall.thinking)
+	}
+}
+
+// TestTitleRequestQuotesOnlyTheFirstMessage: the naming call carries the first thing
+// a human typed, and nothing else — injected notices name nothing, and a huge paste
+// is cut rather than sent whole.
+func TestTitleRequestQuotesOnlyTheFirstMessage(t *testing.T) {
+	probe := &titleProbe{}
+	mgr := newTitleEnv(t, probe)
+	mgr.SetTitlePolicy(true, "")
+	full := strings.Repeat("很长的报错日志 ", 120) // 960 runes, well past titleInputRunes
+	// The hub's placeholder: the first message cut to FallbackTitleRunes. Hand the
+	// session anything else and it reads as a hand-typed title, which gets pinned
+	// rather than renamed (TestLegacyRenamedTitleIsPinned covers that path).
+	placeholder := string([]rune(full)[:FallbackTitleRunes]) + "…"
+	s := mustSession(t, mgr, placeholder)
+	// Three turns, not the usual one: a 960-rune first message can leave the loop
+	// doing context housekeeping before it answers, and this test is only about the
+	// naming call that follows the task.
+	if _, _, err := s.Prompt(context.Background(), full, nil, 3); err != nil {
+		t.Fatalf("Prompt(%q…): %v", full[:60], err)
+	}
+	if got := awaitTitle(t, mgr, s.ID(), "配置 nginx 的 gzip", 5*time.Second); got != "配置 nginx 的 gzip" {
+		t.Fatalf("no title generated (still %q)", got)
+	}
+	var titleCall capturedCall
+	for _, c := range probe.snapshot() {
+		if c.titleCall {
+			titleCall = c
+		}
+	}
+	one, _ := titleCall.messages[0].(map[string]interface{})
+	body, _ := one["content"].(string)
+	const marker = "Request:\n"
+	i := strings.Index(body, marker)
+	if i < 0 {
+		t.Fatalf("the request does not hold the quoted ask:\n%.120s", body)
+	}
+	quoted := body[i+len(marker):]
+	// The loop may already have trimmed an oversized message before it reached the
+	// history, so what this test pins is the ceiling and the head, not a length.
+	if n := len([]rune(quoted)); n > titleInputRunes+1 {
+		t.Fatalf("the quoted request is %d runes, over the cap of %d", n, titleInputRunes)
+	}
+	if head := string([]rune(full)[:30]); !strings.Contains(quoted, head) {
+		t.Errorf("the naming request does not quote the start of the first message:\n%.120s", quoted)
+	}
+}
+
+// TestTitleQuoteCaps: the cap is its own cheap decision — name a pasted log from
+// its head, never send it whole.
+func TestTitleQuoteCaps(t *testing.T) {
+	long := strings.Repeat("很长的报错日志 ", 300) // 2400 runes
+	q := titleQuote(long)
+	if n := len([]rune(q)); n != titleInputRunes+1 { // +1 for the ellipsis
+		t.Errorf("titleQuote of a 2400-rune ask = %d runes, want %d", n, titleInputRunes+1)
+	}
+	if !strings.HasSuffix(q, "…") {
+		t.Errorf("a capped quote should end with the ellipsis, got %q", q[len(q)-20:])
+	}
+	if got := titleQuote("修一下 worker 列表"); got != "修一下 worker 列表" {
+		t.Errorf("a short ask was altered: %q", got)
 	}
 }

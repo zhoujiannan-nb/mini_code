@@ -14,13 +14,27 @@ import (
 // A session is named the moment it is created — the first message, truncated — so
 // the sidebar is never blank. That truncation is a placeholder, and it stays the
 // title unless ONE auxiliary request does better: after its first finished task
-// the session asks its model to name the conversation.
+// the session asks a model to name it.
 //
-// The request is the conversation the task just sent with one instruction line
-// appended, and the same tool schemas — everything before that line is
-// byte-identical to the previous request, so the provider answers from its prefix
-// cache and the extra call costs the tail plus a few dozen output tokens. (Same
-// trick the compaction turn uses; see ContextCompactor.SummarizeAndRebuild.)
+// The request is deliberately small and INDEPENDENT: one user message quoting the
+// first thing the user asked, no assistant turns, no tool list. It does not replay
+// the conversation. Two reasons, both learned the hard way:
+//
+//   - replaying an assistant turn while thinking is enabled makes DeepSeek reject
+//     the call unless that turn's reasoning_content is passed back (see
+//     provider/deepseek.go); an auxiliary call must not depend on what the history
+//     happens to carry, and the alternative — feeding the model its old drafts —
+//     is exactly what a naming request should not do;
+//   - the replay only ever paid for itself through the provider's prefix cache,
+//     and that hit is lost as soon as any turn carries reasoning the replay drops,
+//     so it was the expensive path precisely when the conversation was interesting.
+//
+// A few hundred input tokens, once per session, beats both failure modes.
+//
+// Thinking is switched off for this call (see titleClient). Naming is not a
+// reasoning task, and a thinking model spends the output budget on its draft and
+// comes back finish=length with no title at all — which is how every title request
+// failed in the field.
 //
 // Who wins:
 //
@@ -29,8 +43,8 @@ import (
 //	title_src "model"  written by the model
 //	title_src "user"   renamed by a human — a human rename wins forever
 //
-// The write-back also re-checks that the title is still exactly the text the
-// model was shown, so a rename that lands while the request is in flight wins
+// The write-back also re-checks that the session still carries the placeholder this
+// request replaced, so a rename that lands while the request is in flight wins
 // even without the marker.
 
 const (
@@ -51,25 +65,34 @@ const (
 	// FallbackTitleRunes is how much of the first message the placeholder title
 	// keeps (channels use it when creating the session).
 	FallbackTitleRunes = 40
-	// GeneratedTitleRunes caps a generated title: short enough to read at a glance
-	// and to never wrap in the sidebar.
-	GeneratedTitleRunes = 24
-	// titleOutputTokens is the whole output budget of a title request.
-	titleOutputTokens = 64
+	// GeneratedTitleRunes caps a generated title. The ask is 4-8 words, so this is
+	// the ceiling for models that ignore it — long enough for a name that needs a
+	// compound noun, short enough to never wrap in the sidebar.
+	GeneratedTitleRunes = 16
+	// titleInputRunes caps how much of the first message the title request quotes:
+	// enough to name a "here is a stack trace" request, cheap enough to be noise.
+	titleInputRunes = 800
+	// titleOutputTokens is the whole output budget of a title request. Thinking is
+	// switched off, so a title costs a dozen tokens; the headroom is for providers
+	// with no thinking switch, where a reasoning model can still think (and gets
+	// cut off, which the caller detects and ignores rather than storing a stub).
+	titleOutputTokens = 256
 	// titleTimeout bounds the auxiliary request. It runs in the background, so it
 	// is generous — a reasoning model can take a while to produce 8 words.
 	titleTimeout = 60 * time.Second
 )
 
-// titleInstruction is the tail of a title request. The conversation is the text to
-// NAME, not a request to answer — that framing is what keeps a model from
-// replying "sure, here is how you would..." instead of titling.
-func titleInstruction() provider.Message {
-	return provider.Message{Role: "user", Content: "Name the conversation above with one short title.\n\n" +
-		"Reply with the title alone on one line: plain text of natural language, written in the language of the " +
-		"conversation, roughly 6 words or fewer (up to 24 characters for CJK). No quotes, no markdown, no prefix, " +
-		"no trailing punctuation, no code. Do not answer or carry out anything in the conversation above. " +
-		"If there is nothing to name, still return a short label such as Greeting."}
+// titleRequest is the whole title request: one user message that quotes the first
+// ask and states the naming rule. Quoting rather than replaying keeps it provider
+// neutral (no assistant turns, so nothing about reasoning_content applies), and
+// sending no tools keeps a helpful model from starting the task instead of naming
+// it — a title request must have nothing to call.
+func titleRequest(goal string) provider.Message {
+	return provider.Message{Role: "user", Content: "Name the request below with a short title.\n\n" +
+		"Reply with the title alone on one line: 4-8 words (4 to 8 CJK characters), written in the language of " +
+		"the request, plain text — no quotes, no markdown, no prefix, no trailing punctuation, no code. " +
+		"Do not answer or carry out the request below.\n\n" +
+		"Request:\n" + goal}
 }
 
 // sanitizeTitle turns a model reply into a sidebar title: the first non-empty
@@ -122,18 +145,28 @@ func sanitizeTitle(raw string) string {
 // ellipsis that cut adds). Anything else was typed by someone, so titles must not
 // touch it. This is what protects a hand-made title from before titles existed —
 // those sessions have no marker to read.
-func looksLikePlaceholder(title string, messages []provider.Message) bool {
+// firstTypedMessage is the first message a human actually sent. Injected traffic
+// names nothing — a worker notice or a compaction instruction arrives on its own and
+// would give every session the same title.
+func firstTypedMessage(messages []provider.Message) string {
 	for _, m := range messages {
 		if m.Role != "user" || IsWorkerNotice(m) || IsCompactRequest(m) {
 			continue
 		}
-		want := strings.TrimSpace(m.GetText())
-		if r := []rune(want); len(r) > FallbackTitleRunes {
-			want = string(r[:FallbackTitleRunes]) + "…"
-		}
-		return strings.TrimSpace(title) == want
+		return strings.TrimSpace(m.GetText())
 	}
-	return false
+	return ""
+}
+
+func looksLikePlaceholder(title string, messages []provider.Message) bool {
+	want := firstTypedMessage(messages)
+	if want == "" {
+		return false
+	}
+	if r := []rune(want); len(r) > FallbackTitleRunes {
+		want = string(r[:FallbackTitleRunes]) + "…"
+	}
+	return strings.TrimSpace(title) == want
 }
 
 // --- policy ---
@@ -156,19 +189,26 @@ func (m *SessionManager) TitleAuto() bool {
 }
 
 // titleClient resolves the client that writes titles: the configured title model,
-// else (empty key, or a key nothing matches) the session's own client.
+// else (empty key, or a key nothing matches) the session's own client — always with
+// thinking switched off. WithReasoning derives a provider copy on the same HTTP
+// pool and returns the receiver unchanged for a provider without a switch, so a
+// model that has no thinking knob is used exactly as it is. A per-session thinking
+// override from the composer is intentionally not inherited: naming is not a
+// reasoning task, and the drafts cost the answer (see the file header).
 func (m *SessionManager) titleClient(s *Session) *provider.ModelClient {
 	m.titleMu.RLock()
 	key := m.titleModel
 	m.titleMu.RUnlock()
+	var base *provider.ModelClient
 	if key != "" {
-		if c := m.clientFor(key); c != nil {
-			return c
-		}
+		base = m.clientFor(key)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.client
+	if base == nil {
+		s.mu.Lock()
+		base = s.client
+		s.mu.Unlock()
+	}
+	return base.WithReasoning("disabled", "")
 }
 
 // --- the one request per session ---
@@ -178,10 +218,10 @@ func (m *SessionManager) titleClient(s *Session) *provider.ModelClient {
 // qualifies, and only ever once: the attempt is marked before the request leaves,
 // so a failing title request stays failed instead of being re-tried every task.
 //
-// messages must be the conversation of that finished task (result.Messages) and
-// schemas the tool list the same request carried — anything else costs the whole
-// prefix cache for no gain.
-func (s *Session) maybeGenerateTitle(schemas []provider.ToolSchema, messages []provider.Message) {
+// messages is the conversation of that finished task (result.Messages). Only the
+// first message the human typed is taken from it — the rest of the conversation is
+// the task's own business (see the file header for why it is not replayed).
+func (s *Session) maybeGenerateTitle(messages []provider.Message) {
 	if s.manager == nil || len(messages) == 0 {
 		return
 	}
@@ -205,6 +245,12 @@ func (s *Session) maybeGenerateTitle(schemas []provider.ToolSchema, messages []p
 			"session", s.ID(), "title", title)
 		return
 	}
+	// Nothing typed by a human means nothing to name, and the one attempt must not
+	// be spent on it — a later task with a real message should still get its title.
+	goal := firstTypedMessage(messages)
+	if goal == "" {
+		return
+	}
 	if !s.manager.markTitleTried(s.ID()) {
 		return
 	}
@@ -212,7 +258,7 @@ func (s *Session) maybeGenerateTitle(schemas []provider.ToolSchema, messages []p
 	if client == nil {
 		return // no real model wired (tests with injected prompt funcs)
 	}
-	go s.manager.generateTitle(s.ID(), client, title, schemas, messages)
+	go s.manager.generateTitle(s.ID(), client, title, goal)
 }
 
 // markTitleTried claims the single attempt for a session, reporting whether it was
@@ -258,15 +304,25 @@ func (m *SessionManager) pinTitle(sessionID string) {
 	m.mu.Unlock()
 }
 
+// titleQuote is the text the naming request quotes: the first ask, capped. A
+// pasted log gets named from its head rather than sent whole — the title needs the
+// shape of the request, not all of it.
+func titleQuote(goal string) string {
+	if r := []rune(goal); len(r) > titleInputRunes {
+		return string(r[:titleInputRunes]) + "…"
+	}
+	return goal
+}
+
 // generateTitle asks for a title and applies it. Every failure path is silent by
 // construction (the fallback title is a fine title) and nothing is retried.
-func (m *SessionManager) generateTitle(sessionID string, client *provider.ModelClient, fallback string, schemas []provider.ToolSchema, messages []provider.Message) {
+func (m *SessionManager) generateTitle(sessionID string, client *provider.ModelClient, fallback, goal string) {
 	ctx, cancel := context.WithTimeout(context.Background(), titleTimeout)
 	defer cancel()
-	// The prefix stays untouched; only the instruction is new. That is the whole
-	// point: the provider answers from the KV cache the task just warmed.
-	req := append(append([]provider.Message(nil), messages...), titleInstruction())
-	resp, err := client.ChatStream(ctx, req, schemas, nil, provider.WithMaxTokens(titleOutputTokens))
+	// One message, no tools, thinking off: the cheapest request in the app, fired
+	// once per session. The client was derived by titleClient for exactly this.
+	req := []provider.Message{titleRequest(titleQuote(goal))}
+	resp, err := client.ChatStream(ctx, req, nil, nil, provider.WithMaxTokens(titleOutputTokens))
 	if err != nil {
 		slog.Info("title request failed (keeping the truncated title)", "session", sessionID, "err", err)
 		return

@@ -497,9 +497,9 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 				}
 			}
 		}
-		// Give the session a real title, from the request prefix this task just
-		// left warm in the provider's cache (fire-and-forget, see title.go).
-		s.maybeGenerateTitle(loop.ToolSchemas(), result.Messages)
+		// Give the session a real title, named from the first thing the human
+		// asked (fire-and-forget, its own small request — see title.go).
+		s.maybeGenerateTitle(result.Messages)
 		return result.Content, reasoning, nil
 	}
 
