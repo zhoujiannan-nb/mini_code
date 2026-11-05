@@ -118,7 +118,7 @@ async function switchWorker(id) {
   state.worker = id;
   rememberWorker(id);
   closeWorkerMenu();
-  await loadSessions();
+  await loadSessions(null, true);
   if (!changed) return;
   // 换了区,右边展示的会话也跟着换:选中新列表的第一条(服务端按 updated_at 倒序,
   // 就是侧栏最上面那条)。空区回到"新会话"草稿 —— 否则还挂着上一个区的会话,
@@ -295,14 +295,28 @@ async function deleteWorker(workerID) {
   // 展示区里那条可能正是这个区名下的 —— 它会被一起删掉,删完得回草稿,别对着
   // 一条已经不存在的会话。先记住它归属哪个区(列表里的 worker_id)。
   const shown = (state.sessions || []).find(x => x.session_id === state.current);
+  // 删除要连带干掉名下所有会话,服务端同步做完才回话;这几秒最不该看到的就是
+  // "还停留在旧列表上"。所以先清空摆骨架,🗑 同时置灰防重复点。
+  const delBtn = $("#wk-del-btn");
+  if (delBtn) { delBtn.disabled = true; delBtn.textContent = "删除中…"; }
+  beginSessionsRefresh();
   try {
     const r = await api("/api/workers/" + workerID, { method: "DELETE" });
     toast("已删除(" + (r.deleted_sessions || 0) + " 个会话)", "ok");
     if (workerBucketId() === workerID) { state.worker = ""; rememberWorker(""); }
     await loadWorkers();
-    await loadSessions();
+    await loadSessions(null, true);
     if (shown && shown.worker_id === workerID) resetToNew();
-  } catch (err) { toast("删除失败:" + err.message, "err"); }
+  } catch (err) {
+    toast("删除失败:" + err.message, "err");
+    // 没删成也得把列表拉回真实状态,别停在骨架或空列表上。
+    await loadSessions(null, true);
+  } finally {
+    // 子栏多半已被 loadWorkers 重画过(那颗 🗑 是新节点、默认就能点),这里只
+    // 在节点还活着时恢复,免得把一个已经不存在的按钮改来改去。
+    const btn = $("#wk-del-btn");
+    if (btn) { btn.disabled = false; btn.textContent = "🗑"; }
+  }
 }
 
 /* ---------------- 公约(存在 worker 记录里,带版本)---------------- */

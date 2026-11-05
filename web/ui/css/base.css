@@ -45,7 +45,8 @@
    --accent-btn-h: #2e6c50;/* hover(白字 6.2:1) */
    --accent-t: #1f5138;    /* 主色文字(AAA ≥8.6:1) */
    --ok-dot: #2f8f56;      /* 状态"完成"圆点 */
-   --accent-l: #eaf7e7;    /* 主色极浅底(Qoder 亮色 primary-bg) */
+    --accent-l: #eaf7e7;    /* 主色极浅底(Qoder 亮色 primary-bg) */
+    --accent-h: #d9efd4;    /* 主色浅底 hover:比 --accent-l 深一档,按钮/菜单项 hover 专用 */
    --accent-b: #bfe3c6;
    --ink: #141412;         /* 墨色实心按钮(发送/新建/确认) */
    --ink-h: #2a2b28;
@@ -141,7 +142,8 @@
    --accent-btn-h: #4aa377;/* hover */
    --accent-t: #a0eb9d;  /* 主色文字(AAA ≥9:1) */
    --ok-dot: #4ed17e;
-   --accent-l: rgba(106,216,108,.13);
+    --accent-l: rgba(106,216,108,.13);
+    --accent-h: rgba(106,216,108,.24);  /* hover:比 --accent-l 深一档 */
    --accent-b: rgba(106,216,108,.42);
    --ink: #f2f2ef;       /* 暗色下的主按钮 = 近白墨色 + 深色字(DSH 配方) */
    --ink-h: #ffffff;
@@ -279,6 +281,13 @@ aside {
 .s.failed { background: var(--red); }
 .s.interrupted { background: var(--amber); }
 .s.idle { background: var(--border2); }
+/* 会话列表的骨架占位:切换 worker / 删 worker 时先清空再拉,那几百毫秒摆三行
+   影子行(形状和真行一致,真数据落地时不跳版),而不是留着上一个 worker 的旧行。 */
+.sess-skeleton { pointer-events: none; }
+.sess-skeleton .sk { border-radius: 999px; background: var(--hover-2); animation: sess-sk 1.1s ease-in-out infinite; }
+.sess-skeleton .sk-title { width: 62%; height: 13px; }
+.sess-skeleton .sk-meta { width: 38%; height: 9px; margin-top: 8px; animation-delay: .15s; }
+@keyframes sess-sk { 0%, 100% { opacity: .85; } 50% { opacity: .3; } }
 .del-btn {
   position: absolute; right: 8px; top: 8px; width: 20px; height: 20px;
   border: none; border-radius: var(--r-xs); background: transparent; color: var(--text3);
@@ -328,8 +337,11 @@ aside {
 .wk-sub-btn {
   border: none; background: transparent; color: var(--text3); cursor: pointer;
   font-size: 11px; padding: 1px 4px; border-radius: var(--r-xs);
+  transition: background .12s ease, color .12s ease;
 }
-.wk-sub-btn:hover { background: var(--hover-2); color: var(--title); }
+/* hover 走主色浅底(以前是中性灰 --hover-2,和整套绿主题不搭,看着像没上色的网页控件)。
+   文字同时换成主色深字,浅绿底上对比仍然 ≥8:1。🗑 保持红色:破坏性动作不该长得像普通按钮。 */
+.wk-sub-btn:hover { background: var(--accent-h); color: var(--accent-t); }
 .wk-sub-danger:hover { background: var(--red-btn); color: #fff; }
 /* worker 菜单(切换 / 移动到)。注意背景必须是实色的 --surface:之前写的
    var(--panel) 在调色板里根本不存在,解析成透明 → 菜单叠在会话列表上时
@@ -345,7 +357,7 @@ aside {
   display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer;
   border-radius: var(--r-sm); font-size: 13px; color: var(--title);
 }
-.wk-menu-item:hover { background: var(--hover); }
+.wk-menu-item:hover { background: var(--accent-h); }
 .wk-menu-item.cur { background: var(--hover-2); }
 .wk-menu-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wk-menu-n { font-size: 11px; color: var(--text3); }

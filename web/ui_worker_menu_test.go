@@ -189,3 +189,69 @@ func TestWorkerBarNewSessionAndTypedDelete(t *testing.T) {
 		t.Errorf("deleteWorker should fall back to a draft when the shown session was in that worker:\n%s", del)
 	}
 }
+
+// TestSessionListRefreshPlaceholder pins the refresh UX: a worker switch or a
+// worker delete must clear the list and show a skeleton instead of leaving the
+// previous worker's rows on screen (the delete waits on the server deleting every
+// session in it, which is exactly the moment stale rows read as "nothing happened").
+func TestSessionListRefreshPlaceholder(t *testing.T) {
+	js := jsModulesForTest(t)
+
+	begin := jsBlockForTest(t, js, "function beginSessionsRefresh()")
+	for _, want := range []string{"state.sessions = []", "sessionsLoading = true", "renderSessions()"} {
+		if !strings.Contains(begin, want) {
+			t.Errorf("beginSessionsRefresh should %s:\n%s", want, begin)
+		}
+	}
+	load := jsBlockForTest(t, js, "async function loadSessions(select, fresh)")
+	if !strings.Contains(load, "if (fresh) beginSessionsRefresh();") {
+		t.Errorf("loadSessions must clear-then-fetch when asked:\n%s", load)
+	}
+	if !strings.Contains(load, "sessionsError = (e && e.message) || String(e)") {
+		t.Errorf("a failed refresh must be reported (silently returning kept the old rows on screen):\n%s", load)
+	}
+	paint := jsBlockForTest(t, js, "function renderSessions()")
+	if !strings.Contains(paint, "sessSkeleton()") || !strings.Contains(paint, "sessionsError") {
+		t.Errorf("renderSessions should paint the skeleton and the failure hint:\n%s", paint)
+	}
+	sk := jsBlockForTest(t, js, "function sessSkeleton()")
+	if !strings.Contains(sk, "for (let i = 0; i < 3; i++)") || !strings.Contains(sk, "sess-skeleton") {
+		t.Errorf("the placeholder should be a few ghost rows:\n%s", sk)
+	}
+	sw := jsBlockForTest(t, js, "async function switchWorker(id)")
+	if !strings.Contains(sw, "loadSessions(null, true)") {
+		t.Errorf("switchWorker must refresh with the placeholder:\n%s", sw)
+	}
+	del := jsBlockForTest(t, js, "async function deleteWorker(workerID)")
+	if !strings.Contains(del, "beginSessionsRefresh()") || !strings.Contains(del, "delBtn.disabled = true") {
+		t.Errorf("deleteWorker must clear the list up front and grey out 🗑 while it runs:\n%s", del)
+	}
+}
+
+// TestWorkerControlsHoverGreen pins the hover colours of the worker controls to
+// the theme's own light green: they used to hover to a neutral grey, which looked
+// like an unstyled web control next to everything else, and the current menu row
+// hovered to its own selected colour, so hovering did nothing.
+func TestWorkerControlsHoverGreen(t *testing.T) {
+	css := uiSource(t)
+	for _, sel := range []string{".wk-sub-btn:hover", ".wk-menu-item:hover", ".wk-menu-item.cur:hover"} {
+		rule := cssRuleForTest(t, css, sel)
+		if !strings.Contains(rule, "var(--accent-h)") {
+			t.Errorf("%s should hover to the light-green --accent-h:\n%s", sel, rule)
+		}
+	}
+	if btn := cssRuleForTest(t, css, ".wk-sub-btn:hover"); !strings.Contains(btn, "var(--accent-t)") {
+		t.Errorf("the hover label should use the primary text colour:\n%s", btn)
+	}
+	// Both themes need the variable, or dark mode hovers to nothing.
+	if n := strings.Count(css, "--accent-h:"); n < 2 {
+		t.Errorf("--accent-h must be defined in the light and the dark palette, found %d", n)
+	}
+	// The delete button keeps its destructive red.
+	if d := cssRuleForTest(t, css, ".wk-sub-danger:hover"); strings.Contains(d, "--accent-h") {
+		t.Errorf("🗑 should stay red on hover:\n%s", d)
+	}
+	if sk := cssRuleForTest(t, css, ".sess-skeleton .sk"); !strings.Contains(sk, "animation:") {
+		t.Errorf("the skeleton rows should breathe:\n%s", sk)
+	}
+}

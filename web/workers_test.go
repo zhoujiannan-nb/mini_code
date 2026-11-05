@@ -617,3 +617,82 @@ func TestWorkersListBusyCounts(t *testing.T) {
 		t.Fatalf("sub-agent task not counted for its parent's bucket: %+v / 未分配 %d", got, freeN)
 	}
 }
+
+// TestWorkersDeleteRemovesSessionsIncludingARunningOne is the API half of "the
+// sidebar did not refresh after I deleted the worker": the delete must return on
+// its own, and every session of the worker (its sub-agents included) must be gone
+// from every bucket right after — otherwise the client is left staring at rows
+// that no longer exist. A session with a live task is the interesting case.
+func TestWorkersDeleteRemovesSessionsIncludingARunningOne(t *testing.T) {
+	be, srv := newTestWorkerBackend(t)
+	base := t.TempDir()
+
+	code, body := doJSON(t, "POST", srv.URL+"/api/workers", `{"name":"要删的区","summary":""}`)
+	mustOK(t, "create worker", code, body)
+	var created struct {
+		WorkerID string `json:"worker_id"`
+	}
+	if err := json.Unmarshal([]byte(body), &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+
+	mk := func(title string, parent *string) string {
+		t.Helper()
+		s, err := be.mgr.CreateSessionRecord(title, "build", base, parent)
+		if err != nil {
+			t.Fatalf("CreateSessionRecord(%s): %v", title, err)
+		}
+		return s.ID()
+	}
+	s1 := mk("跑着的会话", nil)
+	s2 := mk("闲着的会话", nil)
+	pid := s1
+	kid := mk("子 agent", &pid)
+	for _, sid := range []string{s1, s2} {
+		if code, body = doJSON(t, "POST", srv.URL+"/api/sessions/"+sid+"/worker",
+			`{"worker_id":"`+created.WorkerID+`"}`); code != http.StatusOK {
+			t.Fatalf("move %s: %d %s", sid, code, body)
+		}
+	}
+	// The worker's first session has a live task, as when you delete the worker
+	// you are currently watching work.
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	be.hub.RegisterExternalTask(s1, cancel)
+
+	// A hung delete shows up as a client timeout: the UI would otherwise sit
+	// there with the old rows on screen and no explanation.
+	cl := &http.Client{Timeout: 8 * time.Second}
+	req, err := http.NewRequest(http.MethodDelete, srv.URL+"/api/workers/"+created.WorkerID, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatalf("delete worker: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete worker: status %d, body %s", resp.StatusCode, raw)
+	}
+	var gone struct {
+		DeletedSessions int `json:"deleted_sessions"`
+	}
+	if err := json.Unmarshal(raw, &gone); err != nil {
+		t.Fatalf("decode delete reply %q: %v", raw, err)
+	}
+	if gone.DeletedSessions != 2 {
+		t.Fatalf("deleted_sessions = %d, want the 2 root sessions of the worker", gone.DeletedSessions)
+	}
+
+	for _, q := range []string{"", "?worker=", "?worker=" + created.WorkerID} {
+		var left []SessionSummary
+		workerReq(t, "GET", srv.URL+"/api/sessions"+q, "", &left)
+		for _, s := range left {
+			if s.SessionID == s1 || s.SessionID == s2 || s.SessionID == kid {
+				t.Fatalf("session %s survived the worker delete (list %q): %+v", s.SessionID, q, left)
+			}
+		}
+	}
+}

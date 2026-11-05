@@ -1,11 +1,46 @@
 /* ---------------- 会话列表 ---------------- */
 // 列表按 worker(工作大类)分桶:GET /api/sessions?worker=<id>。
 // state.worker: "" = 未分配 | 其余 = worker_id(见 workers.js;没有"全部"这一档)。
-async function loadSessions(select) {
+// 列表刷新中的两个状态:切换 worker / 删 worker 会先清空再拉(fresh),那几百毫秒
+// 摆骨架而不是留着上一个 worker 的旧行;拉失败要说出来,静默 return 会让旧行一直
+// 挂在界面上,谁也不知道其实没刷出来。
+let sessionsLoading = false;
+let sessionsError = "";
+
+// beginSessionsRefresh empties the list and paints the skeleton right away, so a
+// slow round trip never leaves another worker's rows on screen.
+function beginSessionsRefresh() {
+  sessionsError = "";
+  state.sessions = [];
+  sessionsLoading = true;
+  renderSessions();
+}
+
+// sessSkeleton is the "拉列表中" placeholder: three ghost rows in the shape of a
+// session row, so the panel does not jump when the real rows land.
+function sessSkeleton() {
+  let html = "";
+  for (let i = 0; i < 3; i++) {
+    html += '<div class="sess-item sess-skeleton" aria-hidden="true">' +
+      '<div class="sk sk-title"></div><div class="sk sk-meta"></div></div>';
+  }
+  return html;
+}
+
+async function loadSessions(select, fresh) {
+  const bucket = typeof workerBucketId === "function" ? workerBucketId() : (state.worker || "");
+  if (fresh) beginSessionsRefresh();
   try {
-    const bucket = typeof workerBucketId === "function" ? workerBucketId() : (state.worker || "");
     state.sessions = await api("/api/sessions?worker=" + encodeURIComponent(bucket));
-  } catch (e) { return; }
+    sessionsError = "";
+  } catch (e) {
+    sessionsLoading = false;
+    // 后台轮询失败不吓人(留着旧行,下一轮自己收敛);用户主动切换/删除时清空了,
+    // 那就必须告诉他为什么是空的。
+    if (fresh) { sessionsError = (e && e.message) || String(e); renderSessions(); }
+    return;
+  }
+  sessionsLoading = false;
   renderSessions();
   syncRunning();
   if (state.current) loadChildren(); // 子任务状态随列表一起收敛
@@ -46,6 +81,12 @@ function syncRunning() {
 function renderSessions() {
   const list = $("#sess-list");
   list.innerHTML = "";
+  if (sessionsLoading) { list.innerHTML = sessSkeleton(); return; }
+  if (sessionsError) {
+    list.innerHTML = '<div class="empty-hint">会话列表没刷出来：' + esc(sessionsError) +
+      '<br>30s 轮询会自动重试,切一下 worker 也能立刻重来</div>';
+    return;
+  }
   // 「会话 N」分组标题已删（计数在 worker 条的名字后面，不再重复一遍）
   if (state.sessions.length === 0) {
     list.innerHTML = '<div class="empty-hint">' + workerEmptyHint() + '</div>';

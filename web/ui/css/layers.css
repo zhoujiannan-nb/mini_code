@@ -964,6 +964,7 @@ html[data-theme="dark"] .sess-item.active:hover { background: rgba(106, 216, 108
 .wk-menu-item {
   display: flex; align-items: center; gap: 10px; min-height: 42px;
   padding: 0 10px; border-radius: 14px; font-size: 14px;
+  transition: background .12s ease;
 }
 .wk-menu-ico { flex: 0 0 auto; color: var(--text2); }
 /* 名字是"一列":固定列宽 → 每行数量药丸的左缘对齐(纯 flex:1 会把药丸顶到最右,
@@ -987,7 +988,7 @@ html[data-theme="dark"] .sess-item.active:hover { background: rgba(106, 216, 108
 .wk-menu-dot.done { background: var(--ok-dot); }
 /* 当前项:整块浅绿 + 图标/勾上色(.wk-menu-n 换个更亮的底,绿块上灰药丸会脏) */
 .wk-menu-item.cur { background: var(--accent-l); }
-.wk-menu-item.cur:hover { background: var(--accent-l); }
+.wk-menu-item.cur:hover { background: var(--accent-h); }
 .wk-menu-item.cur .wk-menu-ico,
 .wk-menu-item.cur .wk-menu-tick { color: var(--accent); }
 .wk-menu-item.cur .wk-menu-n { background: rgba(255, 255, 255, .7); color: var(--accent-t); }
