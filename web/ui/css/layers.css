@@ -952,12 +952,12 @@ html[data-theme="dark"] .sess-item.active:hover { background: rgba(106, 216, 108
    大圆角 + 柔阴影 + 一行一项(图标 / 名字 / 数量药丸),当前项浅绿底 + 右侧绿 ✓,
    顶部一道小尖角指回 worker 条。图标是内联 SVG,颜色跟 currentColor 走。 */
 .worker-menu {
-  min-width: 224px; padding: 8px;
+  min-width: 224px; max-width: calc(100vw - 16px); padding: 8px;
   border: 1px solid var(--border); border-radius: 20px;
   box-shadow: 0 16px 40px rgba(18, 20, 16, .16), 0 2px 8px rgba(18, 20, 16, .08);
 }
-.worker-menu::before {           /* 尖角:骑在菜单上缘的旋转小方块 */
-  content: ""; position: absolute; top: -6px; left: 26px; width: 11px; height: 11px;
+.worker-menu::before {           /* 尖角:骑在菜单上缘的旋转小方块,--wk-arrow-x 由 JS 指回锚点 */
+  content: ""; position: absolute; top: -6px; left: var(--wk-arrow-x, 26px); width: 11px; height: 11px;
   background: var(--surface); border-left: 1px solid var(--border); border-top: 1px solid var(--border);
   transform: rotate(45deg);
 }
@@ -966,18 +966,19 @@ html[data-theme="dark"] .sess-item.active:hover { background: rgba(106, 216, 108
   padding: 0 10px; border-radius: 14px; font-size: 14px;
 }
 .wk-menu-ico { flex: 0 0 auto; color: var(--text2); }
-/* 名字不撑满,但也要成"一列":base.css 的 flex:1 1 auto 会把药丸顶到最右(你红箭头
-   指的空白就是那块);纯 flex:0 1 auto 又会让每行药丸随名字长短漂移。
-   照设计稿给名字一个固定列宽 → 三行药丸左缘对齐成一列,右边留出稿子里的余量。
-   超长 worker 名靠 base.css 的 ellipsis 截断(整名看 title)。 */
-.wk-menu-name { flex: 0 0 108px; font-weight: 600; color: var(--title); }
+/* 名字是"一列":固定列宽 → 每行数量药丸的左缘对齐(纯 flex:1 会把药丸顶到最右,
+    纯 auto 又会随名字长短漂移)。列宽从 108 提到 168:以前菜单被侧栏右缘剪掉,
+    长名字连省略号都看不到;现在菜单挂在 body 下(见 index.html),列宽够放得下,
+    再长就走 base.css 的 ellipsis,整名看 title。 */
+.wk-menu-name { flex: 0 1 168px; min-width: 0; font-weight: 600; color: var(--title); }
 /* 数量做成灰底药丸(设计稿那颗),不再是贴在名字后面的裸数字 */
 .wk-menu-n {
   flex: 0 0 auto; min-width: 26px; padding: 2px 8px;
   border-radius: 999px; background: var(--hover-2);
   color: var(--text2); font-size: 12px; font-weight: 600; text-align: center;
 }
-.wk-menu-tick { flex: 0 0 auto; color: var(--accent); font-size: 14px; font-weight: 700; }
+/* 勾永远渲染(非当前项留空),占住固定一格,药丸列才不会因为某行多了 ✓ 而左移 */
+.wk-menu-tick { flex: 0 0 14px; text-align: center; color: var(--accent); font-size: 14px; font-weight: 700; }
 /* 当前项:整块浅绿 + 图标/勾上色(.wk-menu-n 换个更亮的底,绿块上灰药丸会脏) */
 .wk-menu-item.cur { background: var(--accent-l); }
 .wk-menu-item.cur:hover { background: var(--accent-l); }

@@ -120,6 +120,22 @@ function closeWorkerMenu() {
   if (note) note.remove();
 }
 
+// 摆放下拉。菜单挂在 body 下(见 index.html 的注释:侧栏的 backdrop-filter 会把
+// 后代 fixed 元素关进侧栏盒子,菜单会被侧栏右缘剪掉)。这里再按视口夹一次上下左右,
+// 并把上缘的尖角挪回锚点下方 —— 窄窗口、贴近屏幕底部时都不会被切。
+function placeWorkerMenu(menu, anchor) {
+  const r = anchor && anchor.getBoundingClientRect
+    ? anchor.getBoundingClientRect()
+    : { left: 12, bottom: 120, width: 200 };
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  const left = Math.max(8, Math.min(r.left, Math.max(8, window.innerWidth - w - 8)));
+  const top = Math.max(8, Math.min(r.bottom + 4, Math.max(8, window.innerHeight - h - 8)));
+  menu.style.left = left + "px";
+  menu.style.top = top + "px";
+  const tip = r.left + r.width / 2 - left - 5; // ::before 是 11px 宽的小方块
+  menu.style.setProperty("--wk-arrow-x", Math.max(20, Math.min(tip, Math.max(20, w - 32))) + "px");
+}
+
 function openWorkerMenu(anchor) {
   const menu = $("#worker-menu");
   if (!menu) return;
@@ -134,15 +150,12 @@ function openWorkerMenu(anchor) {
       wkIcon(w.worker_id) +
       '<span class="wk-menu-name">' + esc(w.name) + '</span>' +
       '<span class="wk-menu-n">' + (w.sessions || 0) + '</span>' +
-      (cur ? '<span class="wk-menu-tick">✓</span>' : "") + "</div>";
+      // 勾永远渲染(没有就留空):占住同一格,数量药丸在每行才对齐
+      '<span class="wk-menu-tick">' + (cur ? "✓" : "") + "</span></div>";
   }
   menu.innerHTML = html;
   menu.classList.add("open");
-  if (anchor) {
-    const r = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { bottom: 120, left: 16 };
-    menu.style.top = (r.bottom + 4) + "px";
-    menu.style.left = Math.max(8, r.left) + "px";
-  }
+  placeWorkerMenu(menu, anchor);
   menu.querySelectorAll(".wk-menu-item").forEach(el => {
     el.addEventListener("click", () => switchWorker(el.dataset.id));
   });
@@ -158,17 +171,16 @@ function openWorkerMoveMenu(sess, anchor) {
     html += '<div class="wk-menu-item' + (w.worker_id === cur ? " cur" : "") + '" data-id="' + esc(w.worker_id) + '">' +
       wkIcon(w.worker_id) +
       '<span class="wk-menu-name">' + esc(w.name) + '</span>' +
-      '<span class="wk-menu-n">' + (w.worker_id === cur ? "当前" : "") + '</span></div>';
+      '<span class="wk-menu-n">' + (w.worker_id === cur ? "当前" : "") + "</span></div>";
   }
   menu.innerHTML = html;
   menu.classList.add("open");
-  const r = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { bottom: 160, left: 16 };
-  menu.style.top = Math.max(8, Math.min(window.innerHeight - 260, r.bottom + 4)) + "px";
-  menu.style.left = Math.max(8, r.left) + "px";
+  placeWorkerMenu(menu, anchor);
+  const target = sess.session_id;
   menu.querySelectorAll(".wk-menu-item").forEach(el => {
     el.addEventListener("click", () => {
       closeWorkerMenu();
-      moveSessionToWorker(sess.session_id, el.dataset.id, cur);
+      moveSessionToWorker(target, el.dataset.id, cur);
     });
   });
 }

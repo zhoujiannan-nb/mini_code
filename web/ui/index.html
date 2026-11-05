@@ -233,7 +233,6 @@ window.__mcBoot = __mcBoot;
       <button class="wk-add" id="btn-new-worker" title="新建 worker(工作大类:共享目录 + 公约)">＋</button>
     </div>
     <div class="worker-sub" id="worker-sub"></div>
-    <div class="worker-menu" id="worker-menu"></div>
     <div class="sess-list" id="sess-list"></div>
     <div class="group-sec" id="group-sec">
       <div class="sec-head group-head">
@@ -245,6 +244,10 @@ window.__mcBoot = __mcBoot;
       <div class="group-list" id="group-list"></div>
     </div>
   </aside>
+  <!-- worker 下拉(切换 / 移动到)必须挂在 body 下:aside 带 backdrop-filter,
+       会把自己变成后代 position:fixed 的包含块 —— 菜单放在侧栏里就会被侧栏右缘
+       剪掉,worker 名读不全(而且 JS 算的 left/top 是视口坐标,会被再偏移一次)。 -->
+  <div class="worker-menu" id="worker-menu"></div>
 <main>
 <header>
   <div class="spacer"></div>
