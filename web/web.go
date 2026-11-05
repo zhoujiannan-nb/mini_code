@@ -148,7 +148,6 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /api/workers/{id}/note", s.handleWorkersNoteGet)
 	mux.HandleFunc("POST /api/workers/{id}/note", s.handleWorkersNoteWrite)
 	mux.HandleFunc("POST /api/sessions/{id}/worker", s.handleSessionsMoveWorker)
-	mux.HandleFunc("POST /api/sessions/{id}/worker/refresh", s.handleSessionsWorkerRefresh)
 	mux.HandleFunc("GET /api/sessions/{id}/children", s.handleListChildren)
 	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
@@ -497,17 +496,6 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 	rec := sess.Record()
 	all := sess.SnapshotMessages()
-	// A worker brief is injected context, not something the user typed: it is
-	// persisted so the model keeps seeing it, but rendering it would put a
-	// thousand-character "user" bubble into every worker session's transcript.
-	// The token count below keeps it — that part of the context really is there.
-	msgs := make([]provider.Message, 0, len(all))
-	for _, m := range all {
-		if session.IsWorkerBrief(m) {
-			continue
-		}
-		msgs = append(msgs, m)
-	}
 	sum := s.summarize(rec)
 	if !sum.Active {
 		// 与列表一致:后台子 agent 还在跑时,主会话按"运行中"返回
@@ -520,9 +508,9 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session":  sum,
-		"messages": msgs,
+		"messages": all,
 		// Token estimate for the composer footer (xx/context_window). Counted
-		// over the full context, injected briefs included.
+		// over the full context, worker notices included.
 		"tokens": util.CountMessagesTokens(all),
 		// Context window of THIS session's model (the token bar must track
 		// the per-session model, not the global default).

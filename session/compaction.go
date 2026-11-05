@@ -210,7 +210,7 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 			}
 			continue
 		}
-		if IsCompactRequest(m) || IsUsageNotice(m) || IsWorkerBrief(m) {
+		if IsCompactRequest(m) || IsUsageNotice(m) || IsWorkerNotice(m) {
 			continue
 		}
 		history = append(history, m)

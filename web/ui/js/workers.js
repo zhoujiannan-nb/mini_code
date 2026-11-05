@@ -1,12 +1,13 @@
 /* ---------------- Worker(工作大类)----------------
- * 一个 worker = 一条工作线:一个共享工作目录 + 一份共享公约(worker.md)。
+ * 一个 worker = 一条工作线:一个共享工作目录 + 一份共享公约(存在 worker 记录里,带版本)。
  * 这里的职责:切换条(‹ worker ›)、按 worker 过滤会话列表、把会话移动到
- * worker(原"归档"按钮的位置)、以及公约的查看/编辑/刷新。
+ * worker(原"归档"按钮的位置)、以及公约的查看/编辑。
  *
- * 会话侧的注入规则在服务端(session/worker.go):会话加入时把目录和公约快照写
- * 进会话记录,之后磁盘上的公约再怎么改都不会动这个会话;生效方式是往对话尾部
- * 追加一条"worker 简报"消息(和用量提醒、压缩摘要同一套路),所以前缀缓存不会被
- * 击穿。这里的"刷新公约"也只是让它追加一条新简报,最新的为准(不动已有内容)。
+ * 会话侧的注入规则在服务端(session/worker.go):每个任务开始时检查一次 —— 没归属
+ * worker 就插一条加入提醒;已归属但持有的公约版本落后,就插一条最新公约。都是往
+ * 对话尾部追加(和用量提醒、压缩摘要同一套路),前缀缓存不受影响;消息发送成功后
+ * 才随对话一起落库,所以那一条就是它的"已消费"凭证。保存公约即升版本,同 worker 的
+ * 会话下一轮各自收到更新,不需要这里的任何按钮。
  */
 const LS_WORKER_KEY = "mini_code.worker";
 
@@ -96,12 +97,10 @@ function paintWorkerBar() {
       '<span class="wk-sub-dir" title="' + esc(w.work_dir) + '\n共享工作目录">📂 ' + esc(shortPath(w.work_dir, 34)) + '</span>' +
       '<button class="wk-sub-btn" id="wk-note-btn" title="查看/编辑公约(共享给这个 worker 的全部会话)">📄 公约</button>' +
       '<button class="wk-sub-btn" id="wk-summary-btn" title="改写摘要(新会话靠它决定加入哪个 worker)">✎ 摘要</button>' +
-      (state.current ? '<button class="wk-sub-btn" id="wk-refresh-btn" title="把最新公约装进当前会话:下一条消息追加一条新简报,已有内容不动">↻ 刷新</button>' : "") +
       '<button class="wk-sub-btn wk-sub-danger" id="wk-del-btn" title="删除 worker 及其全部会话(目录保留)">🗑</button>';
     const bind = (sel, fn) => { const el = $(sel); if (el) el.addEventListener("click", fn); };
     bind("#wk-note-btn", () => openNoteEditor(w.worker_id));
     bind("#wk-summary-btn", () => editSummary(w.worker_id));
-    bind("#wk-refresh-btn", () => refreshCurrentNote());
     bind("#wk-del-btn", () => deleteWorker(w.worker_id));
   }
 }
@@ -199,7 +198,7 @@ function openWorkerMoveMenu(sess, anchor) {
 
 /* ---------------- 新建 / 改名 / 删除 ---------------- */
 async function createWorker() {
-  const name = (prompt("新建 Worker(工作大类):名称\n会在工作区里创建 worker-<名字> 目录,里面的 worker.md 是共享公约", "") || "").trim();
+  const name = (prompt("新建 Worker(工作大类):名称\n会在工作区里创建 worker-<名字> 目录(共享公约存在 worker 记录里)", "") || "").trim();
   if (!name) return;
   const summary = (prompt("这个 worker 在做什么?(新会话判断归属时看这段)", "") || "").trim();
   try {
@@ -245,10 +244,9 @@ async function deleteWorker(workerID) {
   } catch (err) { toast("删除失败:" + err.message, "err"); }
 }
 
-/* ---------------- 公约(worker.md)---------------- */
+/* ---------------- 公约(存在 worker 记录里,带版本)---------------- */
 // 人编辑 = 授权本身;agent 想改必须由审批弹窗确认(session/gate.go)。
-// 保存后正在跑的会话仍用自己那份快照 —— 这是刻意的(不让磁盘改动影响在跑的会话);
-// 要让某个会话立刻换版就点 ↻,它会追加一条新简报。
+// 保存即升版本:同 worker 的会话下一轮各自收到一条更新消息,已有对话不动。
 async function openNoteEditor(workerID) {
   let data;
   try { data = await api("/api/workers/" + workerID + "/note"); }
@@ -261,10 +259,10 @@ async function openNoteEditor(workerID) {
   box.className = "wk-note";
   box.innerHTML =
     '<div class="wk-note-head">公约 · ' + esc(workerLabel(workerID)) + '</div>' +
-    '<div class="wk-note-path" title="' + esc(data.path || "") + '">' + esc(data.path || "(该 worker 没有目录)") + '</div>' +
+    '<div class="wk-note-path">当前版本:v' + (data.ver || 0) + '</div>' +
     '<textarea class="wk-note-area" spellcheck="false"></textarea>' +
     '<div class="wk-note-foot">' +
-    '<span class="wk-note-tip">保存后运行中的会话不变;点 ↻ 刷新才装进当前会话</span>' +
+    '<span class="wk-note-tip">保存后同 worker 的会话下一轮自动收到更新</span>' +
     '<button class="wk-note-btn" id="wk-note-cancel">关闭</button>' +
     '<button class="wk-note-btn primary" id="wk-note-save">保存</button></div>';
   document.body.appendChild(box);
@@ -273,26 +271,19 @@ async function openNoteEditor(workerID) {
   box.querySelector("#wk-note-cancel").addEventListener("click", () => { const el = $("#wk-note-box"); if (el) el.remove(); });
   box.querySelector("#wk-note-save").addEventListener("click", async () => {
     try {
-      await api("/api/workers/" + workerID + "/note", {
+      const r = await api("/api/workers/" + workerID + "/note", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: area.value }),
       });
-      toast("公约已保存", "ok");
+      toast("公约已保存到 v" + (r.ver || 1), "ok");
       const el = $("#wk-note-box");
       if (el) el.remove();
+      await loadWorkers();
     } catch (err) { toast("保存失败:" + err.message, "err"); }
   });
   area.focus();
   area.setSelectionRange(area.value.length, area.value.length);
-}
-
-async function refreshCurrentNote() {
-  if (!state.current) { toast("先打开一个会话", "err"); return; }
-  try {
-    const r = await api("/api/sessions/" + state.current + "/worker/refresh", { method: "POST" });
-    toast(r.changed ? "已装好最新公约(下一条消息会带上一条新简报)" : "公约没有变化", "ok");
-  } catch (e) { toast("刷新失败:" + e.message, "err"); }
 }
 
 /* ---------------- 事件绑定(由 app.js 的 init 调用)---------------- */

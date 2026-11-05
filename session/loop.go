@@ -129,11 +129,11 @@ type AgentLoop struct {
 	// new prompt. Set via SetInjections before Run.
 	injections func() []string
 
-	// workerBrief renders the worker brief (worker.go) whenever the loop asks:
-	// the session's own snapshot is the source, so a join or a note_refresh made
-	// mid-task shows up on the next turn. Appended to the tail, never inserted
-	// into the middle. Set via SetWorkerBrief before Run.
-	workerBrief func() provider.Message
+	// workerNotice renders the worker notice (worker.go) at the start of a task:
+	// the join reminder when the session has no worker, or the latest 公约 when the
+	// version this conversation carries is behind. Appended to the tail, never
+	// inserted into the middle. Set via SetWorkerNotice before Run.
+	workerNotice func([]provider.Message) provider.Message
 
 	// calib overrides the shared token calibrator (token_calib.go) when set
 	// (tests); nil = look up the calibrator for this loop's model + toolset.
@@ -153,10 +153,12 @@ func (l *AgentLoop) SetUserImages(images []string) { l.userImages = images }
 // next turn (and persisted with it). Must be called before Run.
 func (l *AgentLoop) SetInjections(fn func() []string) { l.injections = fn }
 
-// SetWorkerBrief installs the worker-brief provider. The loop renders it at the
-// start of every turn and appends it when it differs from the newest brief
-// already in the conversation (see applyWorkerBrief). Must be called before Run.
-func (l *AgentLoop) SetWorkerBrief(fn func() provider.Message) { l.workerBrief = fn }
+// SetWorkerNotice installs the worker-notice provider. The loop renders it once,
+// at the start of the task, and appends it when it has something to say (see
+// applyWorkerNotice). Must be called before Run.
+func (l *AgentLoop) SetWorkerNotice(fn func([]provider.Message) provider.Message) {
+	l.workerNotice = fn
+}
 
 // SetTokenCalibrator overrides the shared token calibrator (mainly for
 // tests). Must be called before Run; nil restores the shared per-model
@@ -542,36 +544,28 @@ func (l *AgentLoop) maybeInjectUsageReminder(messages []provider.Message, tokens
 
 // autoCompactLimit is the token count at which the loop compacts on its own: 95% of
 // the model's usable input budget, the same denominator the notices quote.
-// applyWorkerBrief keeps the session's worker state present in the conversation.
-//
-// Append-only on purpose: the brief is a plain user message added to the tail, so
-// the request stays an exact extension of the previous one and the provider keeps
-// hitting its prefix cache. Refreshing a 公约 therefore appends a NEWER brief
-// instead of rewriting the one already in the history — the newest brief is the
-// current state, and the brief text says so.
-//
-// When the newest brief already carries the same signature, nothing is appended at
-// all: an unchanged worker costs zero bytes for the rest of the session's life.
-// Nothing is ever removed here; the rebuild after a compaction drops briefs (they
-// are derived data), and the next turn simply appends a fresh one.
-func (l *AgentLoop) applyWorkerBrief(messages []provider.Message) []provider.Message {
-	if l.workerBrief == nil {
-		return messages
-	}
-	want := l.workerBrief()
-	sig := workerBriefSignatureOf(want)
-	if sig == "" {
-		return messages // nothing to say (no service, sub-agent, built-in bucket)
-	}
-	if _, cur := lastWorkerBrief(messages); cur == sig {
-		return messages // already current
-	}
-	slog.Info("appending worker brief", "chars", len(want.GetText()))
-	return append(messages, want)
-}
-
 func (l *AgentLoop) autoCompactLimit() int {
 	return InputBudgetFraction(l.client.GetMaxInput(), compactInputFraction)
+}
+
+// applyWorkerNotice appends the worker notice when there is one: the join reminder,
+// or a 公约 newer than the version this conversation already carries. It runs once
+// per task, so a task is reminded at most once — if the session does not resolve
+// the worker, the next task asks again.
+//
+// Append-only on purpose: the request stays an exact extension of the previous one
+// and keeps hitting the provider's prefix cache. A compaction drops notices (they
+// are derived data), so the next task simply appends a fresh one.
+func (l *AgentLoop) applyWorkerNotice(messages []provider.Message) []provider.Message {
+	if l.workerNotice == nil {
+		return messages
+	}
+	want := l.workerNotice(messages)
+	if strings.TrimSpace(want.GetText()) == "" {
+		return messages // nothing to say (sub-agent, built-in bucket, already current)
+	}
+	slog.Info("appending worker notice", "chars", len(want.GetText()))
+	return append(messages, want)
 }
 
 func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, history []provider.Message) (*LoopResult, error) {
@@ -615,6 +609,9 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 	} else {
 		// Anywhere else a stale instruction would only confuse the model.
 		messages = StripCompactRequests(messages)
+		// Worker notice: the join reminder or a newer 公约, once per task — appended
+		// as a plain user message, never as a rewritten prefix.
+		messages = l.applyWorkerNotice(messages)
 	}
 
 	for turn := 1; turn <= l.maxTurns; turn++ {
@@ -639,11 +636,6 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				slog.Info("injected queued user message", "turn", turn, "chars", len(t))
 			}
 		}
-
-		// Worker brief: the session's worker identity, shared workspace and 公约 as
-		// a special user message, appended when it is new or has changed (a join
-		// made mid-task, or a note_refresh). Appending only — see applyWorkerBrief.
-		messages = l.applyWorkerBrief(messages)
 
 		// ---- Compaction: the next model call becomes the summarization turn.
 		//

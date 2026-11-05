@@ -48,8 +48,8 @@ type PromptBuilder struct {
 	taskTool    *tools.TaskTool
 	workDir     string
 	// Worker content deliberately does NOT live here: the system prompt is frozen
-	// into the stored history after the first turn, so the worker's identity and
-	// 公约 travel as a special user message instead (Session.WorkerBrief).
+	// into the stored history after the first turn, so the join reminder and the
+	// 公约 travel as a user message instead (Session.WorkerNotice).
 }
 
 func NewPromptBuilder(config *agent.AgentConfig, workDir string) *PromptBuilder {
@@ -122,7 +122,7 @@ func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string 
 		parts = append(parts, "\n# Working Directory\n\nThe current working directory is: "+workDir+"\nAll file operations must be confined to this directory.\n")
 	}
 	// Worker content is not part of the system prompt (it would be frozen with
-	// it): see Session.WorkerBrief, which the loop appends as a user message.
+	// it): see Session.WorkerNotice, which the loop appends as a user message.
 	// User plugins from ~/.mini_code/plugins.md (one per line, optional
 	// "desc:" suffix). Re-read on every task, so edits to the file take
 	// effect from the next task without a restart.

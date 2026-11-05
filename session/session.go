@@ -226,28 +226,23 @@ func metadataString(rec *SessionRecord, key string) string {
 	return s
 }
 
-// Worker snapshot keys. The worker block in the system prompt is rendered ONLY
-// from these — the worker row and the convention file on disk are never read
-// while a prompt is built. That is what keeps a running session's prefix stable
-// while a human or a sibling agent edits the shared 公约.
+// Worker metadata keys: the display name and the shared directory, written when
+// the session joins. The 公约 itself lives in the worker row with a version, so a
+// running session can be told about a newer one mid-work (see WorkerNotice).
 const (
-	workerNameMetaKey     = "worker_name"
-	workerDirMetaKey      = "worker_dir"
-	workerNoteMetaKey     = "worker_note"
-	workerNotePathMetaKey = "worker_note_path"
-	workerNoteAtMetaKey   = "worker_note_at"
+	workerNameMetaKey = "worker_name"
+	workerDirMetaKey  = "worker_dir"
 )
 
 // SetWorkerMembership attaches the session to a worker (workerID == "" detaches
-// it) and writes the snapshot the prompt is rendered from: the worker's name,
-// its shared directory (which becomes the session's own working directory) and
-// the convention file's content at this moment.
+// it) and records the worker's name and shared directory, which becomes the
+// session's own working directory.
 //
 // workDir == "" leaves the session's directory alone — that is the detach case,
 // where the files it wrote stay put. Like SetGroupMembership this is a whole-row
 // write under the session lock, and it is only ever called while the session is
 // between tasks (join/leave happen at the start of a task or from the UI).
-func (s *Session) SetWorkerMembership(workerID, name, workDir, notePath, note string) {
+func (s *Session) SetWorkerMembership(workerID, name, workDir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.record.Metadata == nil {
@@ -259,27 +254,22 @@ func (s *Session) SetWorkerMembership(workerID, name, workDir, notePath, note st
 		s.record.Metadata[workerDirMetaKey] = workDir
 	}
 	if workerID == "" {
-		for _, k := range []string{workerNameMetaKey, workerDirMetaKey, workerNoteMetaKey, workerNotePathMetaKey, workerNoteAtMetaKey} {
-			delete(s.record.Metadata, k)
-		}
+		delete(s.record.Metadata, workerNameMetaKey)
+		delete(s.record.Metadata, workerDirMetaKey)
 	} else {
 		s.record.Metadata[workerNameMetaKey] = name
-		s.record.Metadata[workerNotePathMetaKey] = notePath
-		s.record.Metadata[workerNoteMetaKey] = note
-		s.record.Metadata[workerNoteAtMetaKey] = time.Now().Format(time.RFC3339)
 	}
 	s.store.Update(s.record)
 }
 
-// WorkerSnapshot returns what this session's prompt carries for its worker
-// (id, display name, shared directory, convention snapshot).
-func (s *Session) WorkerSnapshot() (workerID, name, dir, note string) {
+// WorkerSnapshot returns what this session carries for its worker (id, display
+// name, shared directory).
+func (s *Session) WorkerSnapshot() (workerID, name, dir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.record.WorkerID,
 		metadataString(s.record, workerNameMetaKey),
-		metadataString(s.record, workerDirMetaKey),
-		metadataString(s.record, workerNoteMetaKey)
+		metadataString(s.record, workerDirMetaKey)
 }
 
 // preparePromptTools assembles the agent config, the prompt builder (tool set
@@ -329,15 +319,13 @@ func (s *Session) preparePromptTools() (*agent.AgentConfig, *PromptBuilder, *too
 				}
 			}
 		}
-		// Worker (工作大类): nothing goes into the system prompt. The worker's
-		// identity, shared directory and 公约 travel as a special user message the
-		// loop appends to the tail (Session.WorkerBrief + applyWorkerBrief), which
-		// keeps the request an exact extension of the cached prefix. The tool is
-		// registered for root sessions attached or not, so joining never changes
-		// the tool list either. When the service is not wired at all, nothing is
-		// registered and the prompt stays exactly as it was.
+		// Worker (工作大类): nothing goes into the system prompt. The join reminder
+		// and the 公约 travel as one user message the loop appends once per task
+		// (Session.WorkerNotice), which keeps the request an exact extension of the
+		// cached prefix. The tool is registered for every root session, attached or
+		// not, so joining never changes the tool list either. When the service is
+		// not wired at all, nothing is registered and the prompt stays as it was.
 		if wsvc := s.manager.Workers(); wsvc != nil {
-			s.ensureNoteSnapshot()
 			if isRootSession {
 				pb.EnableWorkerTools(s.ID(), wsvc.ToolAPIFor(s.ID()))
 			}
@@ -430,11 +418,11 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	// Mid-task user messages (group-chat messages for a running session) are
 	// drained from the session at the start of every turn.
 	loop.SetInjections(s.DrainUserMessages)
-	// Worker brief (special user message): rendered from this session's snapshot on
-	// every turn, so a join or a note_refresh made mid-task reaches the model on the
-	// next turn — as an appended message, never as a rewritten prefix.
+	// Worker notice (special user message): rendered once per task, at the start of
+	// the run — the join reminder, or the latest 公约 when this conversation carries
+	// an older version. Appended, never a rewritten prefix.
 	if s.manager != nil && s.manager.Workers() != nil {
-		loop.SetWorkerBrief(s.WorkerBrief)
+		loop.SetWorkerNotice(s.WorkerNotice)
 	}
 	// Wire the shared context state (context tools) and the experimental
 	// context-usage notices toggle (session-level, default on).

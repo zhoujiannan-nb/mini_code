@@ -123,15 +123,15 @@ async function renameSession(id, currentTitle) {
 }
 
 /* ---------------- 移动到 Worker ---------------- */
-// 原"归档"按钮的位置。移动会改变会话的工作目录(变成该 worker 的共享目录),
-// 下一条消息还会带上一条 worker 简报(共享目录 + 公约)。已有内容一个字都不动,
-// 缓存照常命中 —— 但目录变了这件事要在确认框里说清,让用户自己选时机。
+// 原"归档"按钮的位置。移动会改变会话的工作目录(变成该 worker 的共享目录)。
+// 已有内容一个字都不动,缓存照常命中 —— 但目录变了这件事要在确认框里说清,
+// 让用户自己选时机。
 async function moveSessionToWorker(sid, workerID, label) {
   const target = workerLabel(workerID);
   if (target === label) { toast("会话已经在「" + label + "」", "ok"); return; }
   const hasMsg = (state.sessions.find(x => x.session_id === sid) || {}).message_count > 0;
   const tip = "把该会话移动到「" + target + "」?" +
-    (hasMsg ? "\n\n注意:之后这个会话的读写都落在该 worker 的共享目录里,下一条消息还会带上一条 worker 简报(共享目录 + 公约)。已有对话不动。" : "");
+    (hasMsg ? "\n\n注意:之后这个会话的读写都落在该 worker 的共享目录里;若该 worker 已有公约,下一条消息会把它带进来。已有对话不动。" : "");
   if (!confirm(tip)) return;
   try {
     await api("/api/sessions/" + sid + "/worker", {

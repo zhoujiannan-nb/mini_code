@@ -3,12 +3,18 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/user/mini_code/config"
 	"github.com/user/mini_code/provider"
+	"github.com/user/mini_code/tools"
 )
 
 // newTestWorkerEnv builds a session manager with the worker service wired over
@@ -66,18 +72,15 @@ func TestWorkerCreateJoinAndCascadeDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if filepath.Dir(w.NotePath) != w.WorkDir || filepath.Base(w.NotePath) != WorkerNoteFileName {
-		t.Fatalf("note path %q is not %s inside %s", w.NotePath, WorkerNoteFileName, w.WorkDir)
-	}
 	if fi, err := os.Stat(w.WorkDir); err != nil || !fi.IsDir() {
 		t.Fatalf("shared workspace missing: %v", err)
 	}
-	note, err := os.ReadFile(w.NotePath)
-	if err != nil {
-		t.Fatalf("read note: %v", err)
+	// A new worker starts with an empty, version-0 公约: nothing to broadcast yet.
+	if rec, err := svc.Get(w.WorkerID); err != nil || rec == nil || rec.Note != "" || rec.NoteVer != 0 {
+		t.Fatalf("a new worker must carry an empty v0 公约: %+v %v", rec, err)
 	}
-	if !strings.Contains(string(note), "gpu-bench") {
-		t.Fatalf("convention template does not mention the worker name: %q", string(note))
+	if _, err := os.Stat(filepath.Join(w.WorkDir, "worker.md")); !os.IsNotExist(err) {
+		t.Fatalf("the 公约 must live in the row, not in a file: %v", err)
 	}
 
 	// A duplicate name must not create a second workspace.
@@ -95,8 +98,8 @@ func TestWorkerCreateJoinAndCascadeDelete(t *testing.T) {
 	if a.WorkDir() != w.WorkDir || b.WorkDir() != w.WorkDir {
 		t.Fatalf("sessions did not share the workspace: %q %q want %q", a.WorkDir(), b.WorkDir(), w.WorkDir)
 	}
-	if _, _, _, noteA := a.WorkerSnapshot(); !strings.Contains(noteA, "gpu-bench") {
-		t.Fatalf("session A has no convention snapshot: %q", noteA)
+	if id, name, dir := a.WorkerSnapshot(); id != w.WorkerID || name != "gpu-bench" || dir != w.WorkDir {
+		t.Fatalf("session A membership = %q %q %q, want %q gpu-bench %q", id, name, dir, w.WorkerID, w.WorkDir)
 	}
 
 	// Summary update is visible to other sessions through the row.
@@ -114,7 +117,7 @@ func TestWorkerCreateJoinAndCascadeDelete(t *testing.T) {
 	if b.WorkDir() != w.WorkDir {
 		t.Fatalf("Leave changed the working directory to %q", b.WorkDir())
 	}
-	if id, _, _, _ := b.WorkerSnapshot(); id != WorkerUnassignedID {
+	if id, _, _ := b.WorkerSnapshot(); id != WorkerUnassignedID {
 		t.Fatalf("Leave left worker id %q", id)
 	}
 
@@ -143,13 +146,12 @@ func TestWorkerCreateJoinAndCascadeDelete(t *testing.T) {
 	}
 }
 
-// TestWorkerBriefStableAcrossNoteEdit is the prefix-cache guard for the worker
-// brief: the bytes a session sends must not move when a human or a sibling agent
-// edits the shared 公约, because that would recompute everything after the change
-// and the user pays for it. Only an explicit refresh adds a newer brief.
-func TestWorkerBriefStableAcrossNoteEdit(t *testing.T) {
+// TestWorkerNoteVersionNotice pins the subscription: a session is told the 公约
+// only while the version its own conversation carries is behind, and every write —
+// human through the UI or agent through the tool — bumps that version.
+func TestWorkerNoteVersionNotice(t *testing.T) {
 	mgr, svc := newTestWorkerEnv(t)
-	s := mustSession(t, mgr, "brief-stability")
+	s := mustSession(t, mgr, "note-version")
 	w, err := svc.Create("docs", "整理文档", s.WorkDir(), "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -157,63 +159,98 @@ func TestWorkerBriefStableAcrossNoteEdit(t *testing.T) {
 	if _, err := svc.Join(s.ID(), w.WorkerID); err != nil {
 		t.Fatalf("Join: %v", err)
 	}
-
-	first := s.WorkerBrief()
-	text := first.GetText()
-	if !strings.Contains(text, w.WorkDir) || !strings.Contains(text, "docs") {
-		t.Fatalf("brief does not carry the worker block:\n%s", text)
+	// v0/empty: nothing to say.
+	if n := s.WorkerNotice(nil); n.GetText() != "" {
+		t.Fatalf("an empty 公约 must not produce a notice: %q", n.GetText())
 	}
-	if !IsWorkerBrief(first) {
-		t.Fatal("the brief is not recognizable as one")
-	}
-	if got := textOf(s.WorkerBrief()); got != text {
-		t.Fatal("brief changed between two turns of the same session")
-	}
-	// The system prompt carries no worker content at all (it is frozen into the
-	// history after the first turn, so anything dynamic there would go stale).
-	if p := buildPrompt(t, s); strings.Contains(p, "worker-brief") || strings.Contains(p, w.WorkDir+"\"") {
+	// The system prompt carries no worker content at all: it is frozen into the
+	// history after the first turn, so anything dynamic there would go stale.
+	if p := buildPrompt(t, s); strings.Contains(p, "worker_notice") || strings.Contains(p, "<convention>") {
 		t.Fatal("the system prompt still carries worker content")
 	}
 
-	// A human edits the shared convention file on disk.
-	if err := os.WriteFile(w.NotePath, []byte("新约定:所有产物放到 results/ 目录\n"), 0644); err != nil {
-		t.Fatalf("write note: %v", err)
-	}
-	if got := textOf(s.WorkerBrief()); got != text {
-		t.Fatal("editing the 公约 changed a running session's brief (prefix cache broken)")
-	}
-	// The tool still shows the fresh text: reading and injecting are separate.
-	api := svc.ToolAPIFor(s.ID())
-	if !strings.Contains(api.NoteRead(), "results/") {
-		t.Fatalf("note_read did not see the new file: %q", api.NoteRead())
-	}
-
-	// Only an explicit refresh produces a newer brief.
-	changed, err := svc.RefreshNoteSnapshot(s.ID())
+	ver, err := svc.WriteNote(w.WorkerID, "所有产物放到 results/ 目录")
 	if err != nil {
-		t.Fatalf("RefreshNoteSnapshot: %v", err)
+		t.Fatalf("WriteNote: %v", err)
 	}
-	if !changed {
-		t.Fatal("RefreshNoteSnapshot reported no change")
+	if ver != 1 {
+		t.Fatalf("the first write produced v%d, want 1", ver)
 	}
-	refreshed := s.WorkerBrief()
-	if !strings.Contains(refreshed.GetText(), "results/") {
-		t.Fatalf("refreshed brief lacks the new convention:\n%s", refreshed.GetText())
+	msgs := []provider.Message{{Role: "system", Content: "SYS"}, {Role: "user", Content: "干活"}}
+	first := s.WorkerNotice(msgs)
+	if !IsWorkerNotice(first) {
+		t.Fatal("the notice is not recognizable as one")
 	}
-	if workerBriefSignatureOf(refreshed) == workerBriefSignatureOf(first) {
-		t.Fatal("the refresh produced the same signature")
+	if !strings.Contains(first.GetText(), "results/") || !strings.Contains(first.GetText(), noteMarker(w.WorkerID, 1)) {
+		t.Fatalf("the notice lacks the 公约 or its marker:\n%s", first.GetText())
 	}
-	if got := textOf(s.WorkerBrief()); got != refreshed.GetText() {
-		t.Fatal("brief kept moving after the refresh")
+	// Carrying v1 → silent.
+	held := append(append([]provider.Message(nil), msgs...), first)
+	if n := s.WorkerNotice(held); n.GetText() != "" {
+		t.Fatalf("a session holding the current version was notified again: %q", n.GetText())
+	}
+	// A newer write → told once more, with the new text.
+	if ver, err = svc.WriteNote(w.WorkerID, "第二条:commit 前先跑 go test"); err != nil || ver != 2 {
+		t.Fatalf("WriteNote v2 = %d (%v)", ver, err)
+	}
+	second := s.WorkerNotice(held)
+	if !strings.Contains(second.GetText(), "go test") || !strings.Contains(second.GetText(), noteMarker(w.WorkerID, 2)) {
+		t.Fatalf("the v2 notice is wrong:\n%s", second.GetText())
+	}
+	// A join result is a tool result: it carries the same marker, so joining
+	// consumes the version instead of repeating the text one task later.
+	api := svc.ToolAPIFor(s.ID())
+	joined := provider.Message{Role: "tool", Content: api.Join(w.WorkerID)}
+	if !strings.Contains(joined.GetText(), noteMarker(w.WorkerID, 2)) {
+		t.Fatalf("the join result lacks the current version marker: %q", joined.GetText())
+	}
+	if n := s.WorkerNotice(append(append([]provider.Message(nil), msgs...), joined)); n.GetText() != "" {
+		t.Fatalf("joining should have consumed v2: %q", n.GetText())
+	}
+	// note_read / note_write go through the row and report versions.
+	if got := api.NoteRead(); !strings.Contains(got, "v2") || !strings.Contains(got, "go test") {
+		t.Fatalf("note_read: %q", got)
+	}
+	if got := api.NoteWrite("第三条:产物放 dist/"); !strings.Contains(got, "v3") || !strings.Contains(got, noteMarker(w.WorkerID, 3)) {
+		t.Fatalf("note_write: %q", got)
+	}
+	if n := s.WorkerNotice(held); !strings.Contains(n.GetText(), "dist/") {
+		t.Fatalf("the writer's own v3 should still reach the sessions holding v1: %q", n.GetText())
 	}
 }
 
-// TestApplyWorkerBriefAppendOnly pins how the brief rides the conversation: it is
-// appended once, costs nothing while unchanged, and a refresh appends a newer one
-// instead of rewriting history (newest brief wins).
-func TestApplyWorkerBriefAppendOnly(t *testing.T) {
+// TestWorkerNoteWriteValidation: the 公约 is injected into every session of the
+// worker, so it is trimmed on the way in and an oversized write is refused
+// instead of silently truncated.
+func TestWorkerNoteWriteValidation(t *testing.T) {
 	mgr, svc := newTestWorkerEnv(t)
-	s := mustSession(t, mgr, "brief-append")
+	s := mustSession(t, mgr, "note-validation")
+	w, err := svc.Create("api", "后端接口", s.WorkDir(), "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	ver, err := svc.WriteNote(w.WorkerID, "  带空白  \n")
+	if err != nil || ver != 1 {
+		t.Fatalf("WriteNote = %d (%v)", ver, err)
+	}
+	note, got, err := svc.ReadNote(w.WorkerID)
+	if err != nil || got != 1 || note != "带空白" {
+		t.Fatalf("ReadNote = %q v%d (%v)", note, got, err)
+	}
+	if _, err := svc.WriteNote(w.WorkerID, strings.Repeat("长", MaxNoteChars+1)); err == nil {
+		t.Fatal("an oversized 公约 should be refused")
+	}
+	if _, _, err := svc.ReadNote("w-does-not-exist"); err == nil {
+		t.Fatal("ReadNote on a missing worker should error")
+	}
+}
+
+// TestApplyWorkerNoticeOncePerTask pins how the notice rides the conversation: the
+// loop appends it once at the start of a task, an up-to-date session gets nothing,
+// and the bytes already in the conversation never move.
+func TestApplyWorkerNoticeOncePerTask(t *testing.T) {
+	mgr, svc := newTestWorkerEnv(t)
+	s := mustSession(t, mgr, "notice-append")
 	w, err := svc.Create("api", "后端接口", s.WorkDir(), "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -221,89 +258,86 @@ func TestApplyWorkerBriefAppendOnly(t *testing.T) {
 	if _, err := svc.Join(s.ID(), w.WorkerID); err != nil {
 		t.Fatalf("Join: %v", err)
 	}
+	if _, err := svc.WriteNote(w.WorkerID, "新约定:results/"); err != nil {
+		t.Fatalf("WriteNote: %v", err)
+	}
 	loop := NewAgentLoop(nil, 4, nil, nil, nil, nil, nil, nil)
-	loop.SetWorkerBrief(s.WorkerBrief)
+	loop.SetWorkerNotice(s.WorkerNotice)
 
 	msgs := []provider.Message{
 		{Role: "system", Content: "SYS"},
 		{Role: "user", Content: "干活"},
 	}
-	msgs = loop.applyWorkerBrief(msgs)
-	if len(msgs) != 3 || !IsWorkerBrief(msgs[2]) {
-		t.Fatalf("brief was not appended to the tail: %+v", msgs)
+	msgs = loop.applyWorkerNotice(msgs)
+	if len(msgs) != 3 || !IsWorkerNotice(msgs[2]) {
+		t.Fatalf("notice was not appended to the tail: %+v", msgs)
 	}
-	// Unchanged worker = zero new bytes, however many turns pass.
-	for i := 0; i < 3; i++ {
-		msgs = append(msgs, provider.Message{Role: "assistant", Content: "ok"})
-		msgs = loop.applyWorkerBrief(msgs)
-	}
-	if n := countWorkerBriefs(msgs); n != 1 {
-		t.Fatalf("unchanged brief got appended %d times", n)
+	// The next task holds this version already: zero new bytes.
+	next := append(msgs, provider.Message{Role: "assistant", Content: "ok"})
+	if got := loop.applyWorkerNotice(next); len(got) != len(next) {
+		t.Fatalf("an up-to-date session got %d extra messages", len(got)-len(next))
 	}
 
-	// A note_refresh appends a NEWER brief; the old bytes stay untouched, so the
-	// provider's cached prefix still matches.
-	if err := svc.WriteNote(w.WorkerID, "新约定:results/"); err != nil {
+	// A newer 公约 appends one message; everything before it stays byte-identical,
+	// so the provider's cached prefix still matches.
+	before := append([]provider.Message(nil), next...)
+	if _, err := svc.WriteNote(w.WorkerID, "新约定:dist/"); err != nil {
 		t.Fatalf("WriteNote: %v", err)
 	}
-	before := append([]provider.Message(nil), msgs...)
-	if _, err := svc.RefreshNoteSnapshot(s.ID()); err != nil {
-		t.Fatalf("RefreshNoteSnapshot: %v", err)
-	}
-	after := loop.applyWorkerBrief(msgs)
-	if n := countWorkerBriefs(after); n != 2 {
-		t.Fatalf("refresh should append a second brief, got %d", n)
+	after := loop.applyWorkerNotice(next)
+	if n := countWorkerNotices(after); n != 2 {
+		t.Fatalf("a newer 公约 should append one notice, got %d notices", n)
 	}
 	if len(after) != len(before)+1 {
-		t.Fatal("the refresh rewrote the conversation instead of appending")
+		t.Fatal("the update rewrote the conversation instead of appending")
 	}
 	for i := range before {
 		if after[i].GetText() != before[i].GetText() {
-			t.Fatalf("message %d changed on refresh (cache broken)", i)
+			t.Fatalf("message %d changed on update (cache broken)", i)
 		}
 	}
-	if _, sig := lastWorkerBrief(after); sig != workerBriefSignatureOf(s.WorkerBrief()) {
-		t.Fatal("the newest brief is not the current one")
-	}
 
-	// A session with nothing to say (sub-agent of an unattached session) appends
-	// nothing at all.
+	// A sub-agent has nothing to say.
 	child := mustSession(t, mgr, "child")
 	child.record.ParentID = "p"
-	loop.SetWorkerBrief(child.WorkerBrief)
-	if got := loop.applyWorkerBrief(after); len(got) != len(after) {
-		t.Fatal("a silent session must not append a brief")
+	loop.SetWorkerNotice(child.WorkerNotice)
+	if got := loop.applyWorkerNotice(after); len(got) != len(after) {
+		t.Fatal("a silent session must not append a notice")
 	}
-	// An unattached root session gets the guidance brief, exactly once.
+
+	// An unattached root session is reminded once per task, and again on the task
+	// after that as long as it never resolves the worker.
 	free := mustSession(t, mgr, "free")
-	loop.SetWorkerBrief(free.WorkerBrief)
-	got := loop.applyWorkerBrief([]provider.Message{{Role: "user", Content: "hi"}})
-	if len(got) != 2 || !strings.Contains(got[1].GetText(), "workers(action=\"list\")") {
-		t.Fatalf("no guidance brief for an unattached session: %+v", got)
+	loop.SetWorkerNotice(free.WorkerNotice)
+	task1 := loop.applyWorkerNotice([]provider.Message{{Role: "user", Content: "hi"}})
+	if len(task1) != 2 || !strings.Contains(task1[1].GetText(), "还没有归属 worker") {
+		t.Fatalf("no join reminder for an unattached session: %+v", task1)
 	}
-	if got2 := loop.applyWorkerBrief(got); len(got2) != len(got) {
-		t.Fatal("the guidance brief got appended twice")
+	task2 := loop.applyWorkerNotice(append(task1, provider.Message{Role: "assistant", Content: "ok"}))
+	if countWorkerNotices(task2) != 2 {
+		t.Fatal("an unresolved reminder should come back on the next task")
 	}
-	// Compaction rebuild drops briefs (derived data); the next turn re-appends one.
-	rebuilt, ok := RebuildContext(append(got, BuildCompactRequest("")), "summary here", CompactKeepMessages, CompactKeepMaxTokens)
+
+	// A compaction rebuild drops notices (derived data); the next task re-appends one.
+	rebuilt, ok := RebuildContext(append(task2, BuildCompactRequest("")), "summary here", CompactKeepMessages, CompactKeepMaxTokens)
 	if !ok {
 		t.Fatal("RebuildContext refused")
 	}
-	if countWorkerBriefs(rebuilt) != 0 {
-		t.Fatal("a stale brief survived the compaction rebuild")
+	if countWorkerNotices(rebuilt) != 0 {
+		t.Fatal("a stale notice survived the compaction rebuild")
 	}
-	if got3 := loop.applyWorkerBrief(rebuilt); countWorkerBriefs(got3) != 1 {
-		t.Fatal("the brief was not re-created after a rebuild")
+	if got := loop.applyWorkerNotice(rebuilt); countWorkerNotices(got) != 1 {
+		t.Fatal("the notice was not re-created after a rebuild")
 	}
 }
 
 // textOf reads a message body (GetText has a pointer receiver).
 func textOf(m provider.Message) string { return m.GetText() }
 
-func countWorkerBriefs(messages []provider.Message) int {
+func countWorkerNotices(messages []provider.Message) int {
 	n := 0
 	for _, m := range messages {
-		if IsWorkerBrief(m) {
+		if IsWorkerNotice(m) {
 			n++
 		}
 	}
@@ -450,10 +484,11 @@ func TestWorkerBucketsAndArchiveMigration(t *testing.T) {
 	}
 }
 
-// TestWorkerSnapshotOnRestart checks the snapshot survives a reopen: a session
-// reloaded from the database must render exactly the prompt it rendered before,
-// and must not silently re-read the (possibly edited) convention file.
-func TestWorkerSnapshotOnRestart(t *testing.T) {
+// TestWorkerMembershipOnRestart checks a reopened session still knows its worker
+// (id, name, shared directory) and that its notice behaviour follows the row's
+// version — the version lives in the conversation, so a restart neither re-reads
+// nor forgets anything.
+func TestWorkerMembershipOnRestart(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "agent.db")
 	mgr, err := NewSessionManager(nil, dbPath)
 	if err != nil {
@@ -470,9 +505,16 @@ func TestWorkerSnapshotOnRestart(t *testing.T) {
 	if _, err := svc.Join(s.ID(), w.WorkerID); err != nil {
 		t.Fatalf("Join: %v", err)
 	}
-	before := buildPrompt(t, s)
-	if err := os.WriteFile(w.NotePath, []byte("磁盘上已经改掉了\n"), 0644); err != nil {
-		t.Fatalf("write note: %v", err)
+	if _, err := svc.WriteNote(w.WorkerID, "第一条约定"); err != nil {
+		t.Fatalf("WriteNote: %v", err)
+	}
+	// The conversation holds v1 through the join result.
+	held := []provider.Message{
+		{Role: "user", Content: "干活"},
+		{Role: "tool", Content: svc.ToolAPIFor(s.ID()).Join(w.WorkerID)},
+	}
+	if n := s.WorkerNotice(held); n.GetText() != "" {
+		t.Fatalf("the join should have consumed v1: %q", n.GetText())
 	}
 	if err := mgr.Close(); err != nil {
 		t.Fatalf("Close manager: %v", err)
@@ -490,11 +532,18 @@ func TestWorkerSnapshotOnRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload session: %v", err)
 	}
-	if after := buildPrompt(t, loaded); after != before {
-		t.Fatal("a reloaded session re-read the convention file (prefix cache broken)")
+	if id, name, dir := loaded.WorkerSnapshot(); id != w.WorkerID || name != "notes" || dir != w.WorkDir {
+		t.Fatalf("reloaded membership = %q %q %q, want %q notes %q", id, name, dir, w.WorkerID, w.WorkDir)
 	}
-	if _, _, _, note := loaded.WorkerSnapshot(); strings.Contains(note, "磁盘上已经改掉了") {
-		t.Fatal("snapshot was refreshed by the restart")
+	// Same version → still silent after the restart; a new write → told again.
+	if n := loaded.WorkerNotice(held); n.GetText() != "" {
+		t.Fatalf("a reloaded session re-sent a consumed 公约: %q", n.GetText())
+	}
+	if _, err := svc2.WriteNote(w.WorkerID, "第二条约定"); err != nil {
+		t.Fatalf("WriteNote: %v", err)
+	}
+	if n := loaded.WorkerNotice(held); !strings.Contains(n.GetText(), "第二条约定") {
+		t.Fatalf("a reloaded session did not get the update: %q", n.GetText())
 	}
 }
 
@@ -522,9 +571,6 @@ func TestStaleSessionIDErrorsNotPanics(t *testing.T) {
 	if err := svc.Move(gone, WorkerArchivedID); err == nil {
 		t.Error("Move(内置分桶) 对不存在的会话应返回错误")
 	}
-	if _, err := svc.RefreshNoteSnapshot(gone); err == nil {
-		t.Error("RefreshNoteSnapshot 对不存在的会话应返回错误")
-	}
 }
 
 // TestWorkerNameValidation: the name reaches the sidebar, the model-facing
@@ -543,5 +589,129 @@ func TestWorkerNameValidation(t *testing.T) {
 		if _, err := svc.Create(good, "", base, ""); err != nil {
 			t.Errorf("Create(%q) 不该被拒绝: %v", good, err)
 		}
+	}
+}
+
+// TestMigrateLegacyWorkerNoteIntoRow: a database from the worker.md era must not
+// silently lose its 公约 — the file's content becomes version 1 on the next open.
+func TestMigrateLegacyWorkerNoteIntoRow(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "agent.db")
+	store, err := NewSessionStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+	defer store.Close()
+	dir := t.TempDir()
+	notePath := filepath.Join(dir, "worker.md")
+	if err := os.WriteFile(notePath, []byte("# 老 worker · 工作公约\n\n产物放 dist/\n"), 0644); err != nil {
+		t.Fatalf("write legacy note: %v", err)
+	}
+	// Reshape the table into its pre-version shape: note_path, no note/note_ver.
+	for _, q := range []string{
+		`DROP TABLE workers`,
+		`CREATE TABLE workers (
+			worker_id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			summary TEXT NOT NULL DEFAULT '',
+			work_dir TEXT NOT NULL DEFAULT '',
+			note_path TEXT NOT NULL DEFAULT '',
+			builtin INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT,
+			updated_at TEXT)`,
+	} {
+		if _, err := store.db.Execute(q); err != nil {
+			t.Fatalf("reshape workers table: %v", err)
+		}
+	}
+	if _, err := store.db.Execute(
+		`INSERT INTO workers (worker_id, name, summary, work_dir, note_path, builtin, created_at, updated_at)
+		 VALUES ('w-old', '老 worker', '旧摘要', ?, ?, 0, '', '')`, dir, notePath); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+
+	store.migrateWorkerNote()
+
+	rec, err := store.GetWorker("w-old")
+	if err != nil || rec == nil {
+		t.Fatalf("GetWorker: %+v %v", rec, err)
+	}
+	if !strings.Contains(rec.Note, "产物放 dist/") {
+		t.Fatalf("the legacy file was not imported: %q", rec.Note)
+	}
+	if rec.NoteVer != 1 {
+		t.Fatalf("imported 公约 version = %d, want 1", rec.NoteVer)
+	}
+	// Idempotent: a second pass never bumps it again.
+	store.migrateWorkerNote()
+	if rec, err := store.GetWorker("w-old"); err != nil || rec == nil || rec.NoteVer != 1 {
+		t.Fatalf("re-running the migration changed the version: %+v %v", rec, err)
+	}
+}
+
+// TestWorkerNoticeOncePerRun is the requirement itself: one task, however many
+// turns it runs, is reminded exactly once — appended before the first request, so
+// it reaches the model on turn one and never repeats inside the task.
+func TestWorkerNoticeOncePerRun(t *testing.T) {
+	mgr, svc := newTestWorkerEnv(t)
+	s := mustSession(t, mgr, "once-per-run")
+	w, err := svc.Create("api", "后端接口", s.WorkDir(), "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := svc.Join(s.ID(), w.WorkerID); err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+	if _, err := svc.WriteNote(w.WorkerID, "约定:跑分统一用 bench.py"); err != nil {
+		t.Fatalf("WriteNote: %v", err)
+	}
+
+	var requests int64
+	ts := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt64(&requests, 1)
+		rw.Header().Set("Content-Type", "text/event-stream")
+		if n <= 2 { // two tool turns: one task spans three model requests
+			fmt.Fprintf(rw, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_%d\",\"type\":\"function\",\"function\":{\"name\":\"probetool\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n", n)
+		} else {
+			rw.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		}
+		rw.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer ts.Close()
+
+	client, err := provider.NewModelClient(config.ModelConfig{
+		Provider: "vllm", BaseURL: ts.URL, APIKey: "test",
+		ModelName: "test-model", MaxTokens: 100, ContextWindow: 4096,
+	})
+	if err != nil {
+		t.Fatalf("NewModelClient: %v", err)
+	}
+	defer client.Close()
+	reg := tools.NewToolRegistry()
+	reg.Register(&probeTool{})
+	loop := NewAgentLoop(client, 5, reg, nil, nil, nil, nil, nil)
+	loop.compactionOn = false
+	loop.SetWorkerNotice(s.WorkerNotice)
+
+	res, err := loop.Run(context.Background(), "SYS", "干活", nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	calls := int(atomic.LoadInt64(&requests))
+	if calls < 3 {
+		t.Fatalf("the fake model answered %d requests; this test needs a multi-turn task", calls)
+	}
+	if n := countWorkerNotices(res.Messages); n != 1 {
+		t.Fatalf("a %d-request task carried %d notices, want exactly 1", calls, n)
+	}
+	// It rides right behind the user message, before any reply of this task.
+	at := -1
+	for i, m := range res.Messages {
+		if IsWorkerNotice(m) {
+			at = i
+			break
+		}
+	}
+	if at < 1 || res.Messages[at-1].Role != "user" {
+		t.Fatalf("the notice is not the message right after the user turn: %+v", res.Messages)
 	}
 }

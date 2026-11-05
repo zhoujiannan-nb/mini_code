@@ -14,6 +14,7 @@ package session
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/user/mini_code/util"
@@ -39,16 +40,24 @@ const WorkerArchivedID = "w-archived"
 const WorkerArchivedName = "已归档"
 
 // WorkerRecord is one worker: what it is about, where its shared workspace
-// lives, and where its convention file is.
+// lives, and its convention text (stored in this row, versioned).
 type WorkerRecord struct {
 	WorkerID string `json:"worker_id"`
 	Name     string `json:"name"`
 	// Summary is the short "what this worker is for" blurb the model reads when
 	// it decides which worker to join. Kept short on purpose (see the tool).
-	Summary   string `json:"summary"`
-	WorkDir   string `json:"work_dir"`
-	NotePath  string `json:"note_path"`
-	Builtin   bool   `json:"builtin"`
+	Summary string `json:"summary"`
+	WorkDir string `json:"work_dir"`
+	// Note is the 公约 itself, and NoteVer its version. Both live in the row:
+	// there is no convention file on disk. Every write bumps NoteVer, and a
+	// session whose conversation carries an older version gets one update
+	// message on its next task (see Session.WorkerNotice).
+	Note    string `json:"note"`
+	NoteVer int    `json:"note_ver"`
+	Builtin bool   `json:"builtin"`
+	// NotePath is legacy: the worker.md every worker used to own. Kept only so
+	// migrateWorkerNote can import its content; nothing else reads it.
+	NotePath  string `json:"-"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 	// Sessions is the number of root sessions in this bucket; filled by the
@@ -56,22 +65,63 @@ type WorkerRecord struct {
 	Sessions int `json:"sessions"`
 }
 
-// initWorkers creates the workers table, adds sessions.worker_id and moves the
-// legacy archived flag into the built-in bucket. Called from SessionStore.initDB.
+// initWorkers creates the workers table, adds sessions.worker_id, imports the
+// legacy worker.md into the row and moves the legacy archived flag into the
+// built-in bucket. Called from SessionStore.initDB.
 func (s *SessionStore) initWorkers() {
 	s.db.InitTable(`CREATE TABLE IF NOT EXISTS workers (
 		worker_id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
 		summary TEXT NOT NULL DEFAULT '',
 		work_dir TEXT NOT NULL DEFAULT '',
-		note_path TEXT NOT NULL DEFAULT '',
+		note TEXT NOT NULL DEFAULT '',
+		note_ver INTEGER NOT NULL DEFAULT 0,
 		builtin INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT,
 		updated_at TEXT
 	)`)
 	s.migrateWorkerID()
+	s.migrateWorkerNote()
 	s.migrateArchivedToWorker()
 	s.db.InitIndex(`CREATE INDEX IF NOT EXISTS idx_sessions_worker ON sessions(worker_id)`)
+}
+
+// workerCols is the column list every worker SELECT shares. note_path stays in
+// it only for the migration below; it is empty for every worker created now.
+const workerCols = "worker_id, name, summary, work_dir, note, note_ver, builtin, created_at, updated_at"
+
+// migrateWorkerNote adds workers.note/note_ver and imports the content of the
+// worker.md each row used to point at, once, as version 1. Without the import a
+// database from before the change would silently lose every 公约.
+func (s *SessionStore) migrateWorkerNote() {
+	rows, err := s.db.FetchAll("PRAGMA table_info(workers)")
+	if err != nil {
+		return
+	}
+	have := map[string]bool{}
+	for _, row := range rows {
+		have[fmt.Sprint(row["name"])] = true
+	}
+	if !have["note"] {
+		s.db.Execute("ALTER TABLE workers ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+	}
+	if !have["note_ver"] {
+		s.db.Execute("ALTER TABLE workers ADD COLUMN note_ver INTEGER NOT NULL DEFAULT 0")
+	}
+	if !have["note_path"] {
+		return // a database that never had a convention file
+	}
+	legacy, err := s.db.FetchAll("SELECT worker_id, note, note_path FROM workers WHERE COALESCE(note_path, '') <> '' AND COALESCE(note, '') = ''")
+	if err != nil {
+		return
+	}
+	for _, row := range legacy {
+		note, err := readWorkerNote(asString(row["note_path"]))
+		if err != nil || strings.TrimSpace(note) == "" {
+			continue
+		}
+		s.db.Execute("UPDATE workers SET note = ?, note_ver = 1 WHERE worker_id = ?", note, asString(row["worker_id"]))
+	}
 }
 
 // migrateWorkerID adds sessions.worker_id to databases created before the
@@ -105,7 +155,7 @@ func (s *SessionStore) migrateArchivedToWorker() {
 	if existing, _ := s.db.FetchOne("SELECT worker_id FROM workers WHERE worker_id = ?", WorkerArchivedID); existing == nil {
 		now := time.Now().Format(time.RFC3339)
 		s.db.Execute(
-			"INSERT INTO workers (worker_id, name, summary, work_dir, note_path, builtin, created_at, updated_at) VALUES (?, ?, '', '', '', 1, ?, ?)",
+			"INSERT INTO workers (worker_id, name, summary, work_dir, note, note_ver, builtin, created_at, updated_at) VALUES (?, ?, '', '', '', 0, 1, ?, ?)",
 			WorkerArchivedID, WorkerArchivedName, now, now)
 	}
 	s.db.Execute("UPDATE sessions SET worker_id = ? WHERE "+where, WorkerArchivedID)
@@ -120,7 +170,7 @@ func (s *SessionStore) ensureArchivedBucket() error {
 	}
 	now := time.Now().Format(time.RFC3339)
 	_, err := s.db.Execute(
-		"INSERT INTO workers (worker_id, name, summary, work_dir, note_path, builtin, created_at, updated_at) VALUES (?, ?, '', '', '', 1, ?, ?)",
+		"INSERT INTO workers (worker_id, name, summary, work_dir, note, note_ver, builtin, created_at, updated_at) VALUES (?, ?, '', '', '', 0, 1, ?, ?)",
 		WorkerArchivedID, WorkerArchivedName, now, now)
 	return err
 }
@@ -134,16 +184,14 @@ func (s *SessionStore) CreateWorker(rec *WorkerRecord) error {
 	now := time.Now().Format(time.RFC3339)
 	rec.CreatedAt, rec.UpdatedAt = now, now
 	_, err := s.db.Execute(
-		`INSERT INTO workers (worker_id, name, summary, work_dir, note_path, builtin, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		rec.WorkerID, rec.Name, rec.Summary, rec.WorkDir, rec.NotePath, boolInt(rec.Builtin), rec.CreatedAt, rec.UpdatedAt)
+		`INSERT INTO workers (worker_id, name, summary, work_dir, note, note_ver, builtin, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.WorkerID, rec.Name, rec.Summary, rec.WorkDir, rec.Note, rec.NoteVer, boolInt(rec.Builtin), rec.CreatedAt, rec.UpdatedAt)
 	return err
 }
 
 func (s *SessionStore) GetWorker(workerID string) (*WorkerRecord, error) {
-	row, err := s.db.FetchOne(
-		"SELECT worker_id, name, summary, work_dir, note_path, builtin, created_at, updated_at FROM workers WHERE worker_id = ?",
-		workerID)
+	row, err := s.db.FetchOne("SELECT "+workerCols+" FROM workers WHERE worker_id = ?", workerID)
 	if err != nil || row == nil {
 		return nil, err
 	}
@@ -171,8 +219,7 @@ func (s *SessionStore) workerSessionCounts() map[string]int {
 // ListWorkers returns every worker (built-in buckets included) with its session
 // count, most recently updated first.
 func (s *SessionStore) ListWorkers() ([]WorkerRecord, error) {
-	rows, err := s.db.FetchAll(
-		"SELECT worker_id, name, summary, work_dir, note_path, builtin, created_at, updated_at FROM workers ORDER BY updated_at DESC")
+	rows, err := s.db.FetchAll("SELECT " + workerCols + " FROM workers ORDER BY updated_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -188,23 +235,32 @@ func (s *SessionStore) ListWorkers() ([]WorkerRecord, error) {
 
 // GetWorkerByName looks a worker up by its (unique-by-convention) name.
 func (s *SessionStore) GetWorkerByName(name string) (*WorkerRecord, error) {
-	row, err := s.db.FetchOne(
-		"SELECT worker_id, name, summary, work_dir, note_path, builtin, created_at, updated_at FROM workers WHERE name = ?",
-		name)
+	row, err := s.db.FetchOne("SELECT " + workerCols + " FROM workers WHERE name = ?", name)
 	if err != nil || row == nil {
 		return nil, err
 	}
 	return workerFromRow(row), nil
 }
 
-// UpdateWorker persists name/summary (and optionally the directory/convention
-// path) of an existing worker.
+// UpdateWorker persists name/summary/work_dir of an existing worker. The
+// convention is not part of it: it has its own statement (UpdateWorkerNote) so
+// a note write can never race a rename into a half-written row.
 func (s *SessionStore) UpdateWorker(rec *WorkerRecord) error {
 	now := time.Now().Format(time.RFC3339)
 	rec.UpdatedAt = now
 	_, err := s.db.Execute(
-		"UPDATE workers SET name = ?, summary = ?, work_dir = ?, note_path = ?, updated_at = ? WHERE worker_id = ?",
-		rec.Name, rec.Summary, rec.WorkDir, rec.NotePath, now, rec.WorkerID)
+		"UPDATE workers SET name = ?, summary = ?, work_dir = ?, updated_at = ? WHERE worker_id = ?",
+		rec.Name, rec.Summary, rec.WorkDir, now, rec.WorkerID)
+	return err
+}
+
+// UpdateWorkerNote stores a new convention text and its version. Bumping
+// note_ver is what tells every session of this worker that it owes them an
+// update message (see Session.WorkerNotice).
+func (s *SessionStore) UpdateWorkerNote(workerID, note string, ver int) error {
+	now := time.Now().Format(time.RFC3339)
+	_, err := s.db.Execute("UPDATE workers SET note = ?, note_ver = ?, updated_at = ? WHERE worker_id = ?",
+		note, ver, now, workerID)
 	return err
 }
 
@@ -252,7 +308,8 @@ func workerFromRow(row map[string]interface{}) *WorkerRecord {
 		Name:      asString(row["name"]),
 		Summary:   asString(row["summary"]),
 		WorkDir:   asString(row["work_dir"]),
-		NotePath:  asString(row["note_path"]),
+		Note:      asString(row["note"]),
+		NoteVer:   asInt(row["note_ver"]),
 		Builtin:   asInt(row["builtin"]) != 0,
 		CreatedAt: asString(row["created_at"]),
 		UpdatedAt: asString(row["updated_at"]),

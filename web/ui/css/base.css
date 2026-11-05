@@ -350,7 +350,7 @@ aside {
 .wk-menu-item.cur { background: var(--hover-2); }
 .wk-menu-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wk-menu-n { font-size: 11px; color: var(--text3); }
-/* 公约编辑器:浮层里改 worker.md(人改 = 授权;agent 改要走审批) */
+/* 公约编辑器:浮层里改公约(人改 = 授权;agent 改要走审批) */
 .wk-note {
   position: fixed; z-index: 90; left: 50%; top: 50%; transform: translate(-50%, -50%);
   width: min(680px, 92vw); display: flex; flex-direction: column;

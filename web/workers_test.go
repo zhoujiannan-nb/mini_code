@@ -52,6 +52,18 @@ func mustOK(t *testing.T, label string, code int, body string) {
 	}
 }
 
+// noteVer reads the version out of a note-write response.
+func noteVer(t *testing.T, body string) int {
+	t.Helper()
+	var v struct {
+		Ver int `json:"ver"`
+	}
+	if err := json.Unmarshal([]byte(body), &v); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	return v.Ver
+}
+
 func TestWorkersAPIEndToEnd(t *testing.T) {
 	be, srv := newTestWorkerBackend(t)
 	base := t.TempDir()
@@ -60,7 +72,7 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 		WorkerID string `json:"worker_id"`
 		Name     string `json:"name"`
 		WorkDir  string `json:"work_dir"`
-		NotePath string `json:"note_path"`
+		NoteVer  int    `json:"note_ver"`
 	}
 	code, body := doJSON(t, "POST", srv.URL+"/api/workers", `{"name":"gpu-bench","summary":"显存与吞吐基准","base_dir":"`+jsonEscape(base)+`"}`)
 	mustOK(t, "POST /api/workers", code, body)
@@ -70,8 +82,8 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 	if created.WorkerID == "" || filepath.Dir(filepath.Clean(created.WorkDir)) != filepath.Clean(base) {
 		t.Fatalf("unexpected create result: %+v", created)
 	}
-	if b, err := os.ReadFile(created.NotePath); err != nil || !strings.Contains(string(b), "gpu-bench") {
-		t.Fatalf("convention file was not seeded: %q %v", string(b), err)
+	if created.NoteVer != 0 {
+		t.Fatalf("a new worker should start at 公约 v0, got %d", created.NoteVer)
 	}
 
 	sess, err := be.mgr.CreateSessionRecord("worker api", "build", t.TempDir(), nil)
@@ -115,33 +127,33 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 		t.Fatalf("worker list wrong: %+v", list)
 	}
 
-	// Convention file through the API (the human path: no approval involved).
+	// The 公约 through the API (the human path: no approval involved).
 	var note struct {
 		Content string `json:"content"`
-		Path    string `json:"path"`
+		Ver     int    `json:"ver"`
 	}
 	workerReq(t, "GET", srv.URL+"/api/workers/"+created.WorkerID+"/note", "", &note)
-	if filepath.Clean(note.Path) != filepath.Clean(created.NotePath) || !strings.Contains(note.Content, "公约") {
-		t.Fatalf("unexpected note payload: %+v", note)
+	if note.Ver != 0 || strings.TrimSpace(note.Content) != "" {
+		t.Fatalf("a fresh worker should have an empty v0 公约: %+v", note)
 	}
 	code, body = doJSON(t, "POST", srv.URL+"/api/workers/"+created.WorkerID+"/note", `{"content":"统一用 bench.py 跑,结果写 results/"}`)
 	mustOK(t, "POST note", code, body)
+	if v := noteVer(t, body); v != 1 {
+		t.Fatalf("the first UI write should produce v1, got %d (%s)", v, body)
+	}
 	workerReq(t, "GET", srv.URL+"/api/workers/"+created.WorkerID+"/note", "", &note)
-	if !strings.Contains(note.Content, "results/") {
-		t.Fatalf("note write did not persist: %q", note.Content)
+	if note.Ver != 1 || !strings.Contains(note.Content, "results/") {
+		t.Fatalf("note write did not persist: %+v", note)
 	}
 
-	// A live session only picks the new text up when it explicitly asks.
-	var refreshed struct {
-		Changed bool `json:"changed"`
+	// A session already in this worker is told the new text on its next task —
+	// no refresh call, no restart.
+	live, err := be.mgr.Get(id)
+	if err != nil || live == nil {
+		t.Fatalf("get session: %+v %v", live, err)
 	}
-	code, body = doJSON(t, "POST", srv.URL+"/api/sessions/"+id+"/worker/refresh", "")
-	mustOK(t, "POST worker/refresh", code, body)
-	if err := json.Unmarshal([]byte(body), &refreshed); err != nil {
-		t.Fatalf("decode refresh: %v (%s)", err, body)
-	}
-	if !refreshed.Changed {
-		t.Fatal("refresh reported no change after a note write")
+	if n := live.WorkerNotice(nil); !strings.Contains(n.GetText(), "results/") || !strings.Contains(n.GetText(), "v1") {
+		t.Fatalf("the session was not told about the edited 公约: %q", n.GetText())
 	}
 
 	// Summary edit (what other sessions read when they decide to join).
@@ -220,7 +232,7 @@ func TestWorkersAPIRejectsUnknownTargets(t *testing.T) {
 	}
 	// A session that no longer exists (deleted in another window) must answer 404
 	// on every membership route — it used to nil-deref and drop the connection.
-	for _, p := range []string{"/api/sessions/s-gone/worker", "/api/sessions/s-gone/worker/refresh", "/api/sessions/s-gone/archive"} {
+	for _, p := range []string{"/api/sessions/s-gone/worker", "/api/sessions/s-gone/archive"} {
 		body := `{"worker_id":"w-nope"}`
 		if p != "/api/sessions/s-gone/worker" {
 			body = ""
@@ -268,17 +280,19 @@ func TestNewSessionCarriesWorker(t *testing.T) {
 	}
 }
 
-// briefMarker mirrors session.workerBriefMarkerPrefix (unexported there). The
-// point of these assertions is that the marker reaches the *model*, not just the
-// session's own memory.
-const briefMarker = "__MC_WORKER_BRIEF__"
+// The two notice markers, mirrored here because they are unexported in the
+// session package. These assertions are about what reaches the *model*.
+const (
+	noticeJoinMarker = "__MC_WORKER_JOIN__"
+	noticeNoteMarker = "__MC_WORKER_NOTE__"
+)
 
-// TestWorkerBriefReachesModel is the end-to-end check of where the worker block
-// actually lands: as a refreshable user message at the tail of the conversation,
-// never as a system section. The system prompt is frozen for a session's whole
-// lifetime (AgentLoop.Run only prepends it when history has none), so a message
-// is the only place a mid-life join or a refreshed convention can reach the model.
-func TestWorkerBriefReachesModel(t *testing.T) {
+// TestWorkerNoticeReachesModel is the end-to-end check of where worker reminders
+// land: as one user message at the tail of a task's conversation, once per task,
+// never as a system section (the system prompt is frozen for a session's whole
+// lifetime, so a message is the only place a mid-life join or an edited 公约 can
+// reach the model) — and, unlike the old brief, visible in the UI transcript.
+func TestWorkerNoticeReachesModel(t *testing.T) {
 	var mu sync.Mutex
 	var bodies []string
 	modelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -335,10 +349,10 @@ func TestWorkerBriefReachesModel(t *testing.T) {
 		}
 	}
 
-	// 1) A session with no worker still gets the "pick or create one" brief.
+	// 1) A session with no worker is reminded to pick or create one.
 	code, body := doJSON(t, "POST", srv.URL+"/api/messages", `{"content":"随便问一句"}`)
 	mustOK(t, "POST /api/messages", code, body)
-	awaitBody("unassigned brief", briefMarker+"none:")
+	awaitBody("join reminder", noticeJoinMarker)
 
 	var list []SessionSummary
 	for i := 0; i < 200; i++ {
@@ -353,7 +367,8 @@ func TestWorkerBriefReachesModel(t *testing.T) {
 	}
 	id := list[0].SessionID
 
-	// 2) Joining mid-life: the very next request must carry that worker's brief.
+	// 2) Joining through the sidebar: attached, but the worker has no 公约 yet, so
+	// the next task says nothing new — and the reminder never comes back.
 	base := t.TempDir()
 	code, body = doJSON(t, "POST", srv.URL+"/api/workers", `{"name":"gpu","summary":"统一跑分脚本","base_dir":"`+jsonEscape(base)+`"}`)
 	mustOK(t, "POST /api/workers", code, body)
@@ -369,41 +384,35 @@ func TestWorkerBriefReachesModel(t *testing.T) {
 
 	code, body = doJSON(t, "POST", srv.URL+"/api/messages", `{"session_id":"`+id+`","content":"加入之后问一句"}`)
 	mustOK(t, "POST /api/messages after join", code, body)
-	req := awaitBody("joined brief", briefMarker+created.WorkerID+":")
-	// The workspace and the seeded convention have to come along with it, or the
-	// agent gets a label without the shared context that made the worker worth
-	// joining in the first place.
-	if want := jsonEscape(created.WorkDir); !strings.Contains(req, want) {
-		t.Errorf("brief did not name the shared workspace %q", want)
+	req := awaitBody("task after join", "加入之后问一句")
+	if n := strings.Count(req, noticeJoinMarker); n != 1 {
+		t.Errorf("the join reminder appeared %d times; an attached session should not be reminded again", n)
 	}
-	if !strings.Contains(req, "统一跑分脚本") {
-		t.Error("brief did not carry the convention file")
+	if strings.Contains(req, noticeNoteMarker) {
+		t.Error("a worker with an empty v0 公约 should not send a notice")
 	}
 
-	// 3) A refreshed convention appends a second brief; the first one stays. A
-	// rewritten history would be a cache miss (and a lie about what was said), so
-	// the only legal move is to append.
-	note, _ := json.Marshal(map[string]string{"content": "# gpu\n\n新约定:跑分统一用 bench.py"})
+	// 3) A human edits the 公约 in the sidebar. The next task is told the new text,
+	// appended after the user's own message; nothing already in the history moves.
+	note, _ := json.Marshal(map[string]string{"content": "新约定:跑分统一用 bench.py"})
 	code, body = doJSON(t, "POST", srv.URL+"/api/workers/"+created.WorkerID+"/note", string(note))
 	mustOK(t, "POST note", code, body)
-	code, body = doJSON(t, "POST", srv.URL+"/api/sessions/"+id+"/worker/refresh", "")
-	mustOK(t, "POST refresh", code, body)
-
 	code, body = doJSON(t, "POST", srv.URL+"/api/messages", `{"session_id":"`+id+`","content":"新约定生效了吗"}`)
-	mustOK(t, "POST /api/messages after refresh", code, body)
-	req = awaitBody("refreshed brief", "跑分统一用 bench.py")
-
-	if n := strings.Count(req, briefMarker); n < 3 {
-		t.Errorf("model request carries %d briefs, want the guidance + join + refresh ones", n)
+	mustOK(t, "POST /api/messages after the note edit", code, body)
+	req = awaitBody("公约 notice", "跑分统一用 bench.py")
+	if !strings.Contains(req, noticeNoteMarker+created.WorkerID+":1") {
+		t.Errorf("the notice does not mark the version it carries: %s", noticeNoteMarker+created.WorkerID+":1")
 	}
-	// And the newest brief sits after the user's own text: appended at the tail.
-	if strings.LastIndex(req, briefMarker) < strings.LastIndex(req, "新约定生效了吗") {
-		t.Error("the refreshed brief was not appended after the user message")
+	if n := strings.Count(req, noticeJoinMarker); n != 1 {
+		t.Errorf("join reminder count = %d, want the single historical one", n)
+	}
+	if strings.LastIndex(req, noticeNoteMarker) < strings.LastIndex(req, "新约定生效了吗") {
+		t.Error("the 公约 notice was not appended after the user message")
 	}
 
-	// The transcript the UI renders must not carry them: they are injected
-	// context, and a thousand-character "user" bubble per turn would bury the
-	// conversation the user actually had.
+	// 4) The UI transcript shows them — they are context the user is entitled to
+	// see — while the system prompt stays worker-free and byte-stable.
+	awaitNotices(t, mgr, id, 2)
 	var view struct {
 		Messages []struct {
 			Role    string `json:"role"`
@@ -412,24 +421,19 @@ func TestWorkerBriefReachesModel(t *testing.T) {
 		Tokens int `json:"tokens"`
 	}
 	workerReq(t, "GET", srv.URL+"/api/sessions/"+id, "", &view)
+	var inTranscript int
 	for _, m := range view.Messages {
-		if strings.Contains(m.Content, briefMarker) {
-			t.Fatal("the transcript handed a worker brief to the UI as a chat message")
+		if strings.Contains(m.Content, noticeJoinMarker) || strings.Contains(m.Content, noticeNoteMarker) {
+			inTranscript++
 		}
 	}
-	// The record keeps them: the model has to see them on every later turn.
-	rec, err := mgr.Get(id)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if n := countBriefs(rec.SnapshotMessages()); n < 3 {
-		t.Errorf("the record carries %d briefs, want the three that were injected", n)
+	if inTranscript != 2 {
+		t.Fatalf("the transcript shows %d notices, want the join reminder + the 公约 update", inTranscript)
 	}
 	if view.Tokens <= 0 {
-		t.Error("the token estimate went missing with the briefs")
+		t.Error("the token estimate went missing with the notices")
 	}
 
-	// The system prompt must stay worker-free: nothing in it may mention a worker.
 	var parsed struct {
 		Messages []struct {
 			Role    string `json:"role"`
@@ -442,15 +446,49 @@ func TestWorkerBriefReachesModel(t *testing.T) {
 	if len(parsed.Messages) == 0 || parsed.Messages[0].Role != "system" {
 		t.Fatalf("first message should be the system prompt, got %q", parsed.Messages[0].Role)
 	}
-	if strings.Contains(parsed.Messages[0].Content, briefMarker) || strings.Contains(parsed.Messages[0].Content, "工作公约") {
+	sys := parsed.Messages[0].Content
+	if strings.Contains(sys, noticeJoinMarker) || strings.Contains(sys, noticeNoteMarker) || strings.Contains(sys, "工作公约") {
 		t.Error("the system prompt still carries worker content; it must stay byte-stable")
 	}
+
+	// 5) A second edit is a second notice; editing nothing changes nothing.
+	note2, _ := json.Marshal(map[string]string{"content": "新约定二:结果写 results/"})
+	code, body = doJSON(t, "POST", srv.URL+"/api/workers/"+created.WorkerID+"/note", string(note2))
+	mustOK(t, "POST note 2", code, body)
+	if v := noteVer(t, body); v != 2 {
+		t.Fatalf("second edit produced v%d, want v2", v)
+	}
+	code, body = doJSON(t, "POST", srv.URL+"/api/messages", `{"session_id":"`+id+`","content":"第二条也生效了吗"}`)
+	mustOK(t, "POST /api/messages after the second edit", code, body)
+	req = awaitBody("v2 notice", "结果写 results/")
+	if !strings.Contains(req, noticeNoteMarker+created.WorkerID+":2") {
+		t.Error("the second notice does not carry v2")
+	}
+	// The record keeps notices: the model must see them on every later turn.
+	awaitNotices(t, mgr, id, 3)
 }
 
-func countBriefs(messages []provider.Message) int {
+// awaitNotices polls until the session's record carries want notices — one is
+// persisted only after its model request completes.
+func awaitNotices(t *testing.T, mgr *session.SessionManager, id string, want int) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		s, err := mgr.Get(id)
+		if err != nil || s == nil {
+			t.Fatalf("session %s: %+v %v", id, s, err)
+		}
+		if n := countNotices(s.SnapshotMessages()); n == want {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("session %s never carried exactly %d notices", id, want)
+}
+
+func countNotices(messages []provider.Message) int {
 	n := 0
 	for _, m := range messages {
-		if session.IsWorkerBrief(m) {
+		if session.IsWorkerNotice(m) {
 			n++
 		}
 	}

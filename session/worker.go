@@ -4,34 +4,32 @@ package session
 //
 // A worker is one line of work: a name, a short summary other sessions read
 // when they decide where they belong, one shared workspace directory and one
-// shared convention file (worker.md). Root sessions attach to at most one
-// worker; attaching moves the session into the shared directory and snapshots
-// the convention file into the session record.
+// shared convention (公约) stored in the worker row itself. Root sessions attach
+// to at most one worker; attaching moves the session into the shared directory.
 //
-// # Prefix-cache contract (read before changing anything here)
+// # How a session learns its worker's state (read before changing anything)
 //
-// Nothing worker-related goes into the system prompt. The system message is
-// rendered once and then frozen into the stored history (loop.Run only builds a
-// new one when the stored history has none), so dynamic content put there would
-// either never reach a live session or force a full prefix recompute.
+// Nothing worker-related goes into the system prompt: that message is rendered
+// once and frozen into the stored history, so dynamic content there would either
+// never reach a live session or force a full prefix recompute.
 //
-// Instead the worker's identity, shared workspace and convention text travel as
-// the **worker brief**: a plain user message with a stable marker, appended to
-// the tail of the conversation (see WorkerBrief / AgentLoop.applyWorkerBrief).
-// That shape is chosen for cache reasons:
+// Instead one plain user message — the **worker notice** — is appended to the
+// tail of the conversation, at most once per task (Session.WorkerNotice /
+// AgentLoop.applyWorkerNotice). Appending is an exact extension of the previous
+// request, so the provider's KV prefix cache keeps hitting. Two triggers:
 //
-//   - appending to the tail is an exact extension of the previous request, so
-//     the provider's KV prefix cache keeps hitting;
-//   - the brief is rendered ONLY from the snapshot stored in the session record
-//     — the live worker row and the convention file on disk are never read while
-//     building a prompt. Editing the file, renaming the worker or moving a
-//     sibling session therefore cannot disturb a running session;
-//   - a refresh (note_refresh / the sidebar button) does not rewrite anything: it
-//     appends a NEWER brief and the newest one wins. Nothing already cached is
-//     rewritten;
-//   - the built-in buckets carry no directory and no convention, and a session
-//     without a snapshot gets no brief at all, so the archived→worker migration in
-//     worker_store.go changes nothing the model sees.
+//   - the session belongs to no worker: remind it to join/create;
+//   - the worker's convention has a newer version than the one the conversation
+//     carries: deliver the new text and mark it with `__MC_WORKER_NOTE__<id>:<ver>`.
+//
+// The version the session "holds" is read back out of its own conversation, so
+// there is no separate state to keep in sync: the message counts as consumed
+// only once it is persisted, which happens after the request went out. A failed
+// task therefore retries the notice on its next task. Compaction drops notices as
+// derived data, and the following task re-delivers the current one.
+//
+// The built-in buckets (未分配 / 已归档) carry no directory and no convention, so
+// sessions in them get no notice at all, and sub-agents never get one either.
 
 import (
 	"fmt"
@@ -47,13 +45,8 @@ import (
 )
 
 const (
-	// WorkerNoteFileName is the shared convention file inside a worker's
-	// directory. ASCII on purpose: agents reach for it through cmd.exe too,
-	// where a CJK filename comes out garbled.
-	WorkerNoteFileName = "worker.md"
-
-	// MaxNoteChars caps the convention file. It is injected into every task of
-	// every session of that worker, so a long file is paid for over and over.
+	// MaxNoteChars caps the convention text. It is delivered to every session of
+	// that worker, so a long note is paid for over and over.
 	MaxNoteChars = 6000
 	// MaxWorkerNameRunes caps the worker name (it also names the directory).
 	MaxWorkerNameRunes = 40
@@ -102,8 +95,9 @@ func (w *WorkerService) Joinable() ([]WorkerRecord, error) {
 // --- create / update / delete ---
 
 // Create builds a new worker: a shared directory under baseDir (the calling
-// session's own directory in the normal flow), a fresh convention file, and the
-// row. copyFrom optionally seeds the directory from an existing folder or file.
+// session's own directory in the normal flow) and the row. The convention starts
+// empty (version 0); copyFrom optionally seeds the directory from an existing
+// folder or file.
 func (w *WorkerService) Create(name, summary, baseDir, copyFrom string) (*WorkerRecord, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -145,15 +139,7 @@ func (w *WorkerService) Create(name, summary, baseDir, copyFrom string) (*Worker
 			slog.Info("worker workspace seeded", "dir", dir, "from", msg)
 		}
 	}
-	rec := &WorkerRecord{
-		Name:    name,
-		Summary: summary,
-		WorkDir: dir,
-	}
-	rec.NotePath = filepath.Join(dir, WorkerNoteFileName)
-	if err := writeNoteIfMissing(rec.NotePath, workerNoteTemplate(name, summary)); err != nil {
-		return nil, fmt.Errorf("创建公约文件失败: %w", err)
-	}
+	rec := &WorkerRecord{Name: name, Summary: summary, WorkDir: dir}
 	if err := w.store.CreateWorker(rec); err != nil {
 		return nil, err
 	}
@@ -247,8 +233,9 @@ func (w *WorkerService) sessionOf(sessionID string) (*Session, error) {
 	return sess, nil
 }
 
-// Join attaches a session to a worker: the session moves into the worker's
-// shared directory and gets a fresh convention snapshot. Returns the worker.
+// Join attaches a session to a worker: the session moves into the worker's shared
+// directory. Returns the worker row, whose note/version the tool result renders so
+// that joining also consumes the current convention version.
 func (w *WorkerService) Join(sessionID, workerID string) (*WorkerRecord, error) {
 	rec, err := w.store.GetWorker(workerID)
 	if err != nil {
@@ -271,12 +258,12 @@ func (w *WorkerService) Join(sessionID, workerID string) (*WorkerRecord, error) 
 	return rec, nil
 }
 
-// attach writes the membership + snapshot for one session and one worker row.
+// attach writes the membership for one session and one worker row.
 //
-// A built-in bucket (已归档) is deliberately attached with an EMPTY name,
-// directory and convention: it is a shelf, not a line of work, and keeping those
-// fields empty is what makes an archived session's system prompt identical to
-// what it was before the worker feature existed (see workerPromptSection).
+// A built-in bucket (已归档) is deliberately attached with an EMPTY name and
+// directory: it is a shelf, not a line of work, and keeping those fields empty is
+// what makes an archived session's prompt identical to what it was before the
+// worker feature existed.
 func (w *WorkerService) attach(sess *Session, rec *WorkerRecord) error {
 	if sess == nil {
 		return fmt.Errorf("会话不存在")
@@ -284,68 +271,25 @@ func (w *WorkerService) attach(sess *Session, rec *WorkerRecord) error {
 	if rec == nil {
 		return fmt.Errorf("worker 不存在")
 	}
-	name, dir, notePath, note := rec.Name, rec.WorkDir, rec.NotePath, ""
+	name, dir := rec.Name, rec.WorkDir
 	if rec.Builtin {
-		name, dir, notePath = "", "", ""
-	} else {
-		var err error
-		if note, err = readWorkerNote(rec.NotePath); err != nil {
-			// A missing/unreadable convention is not a reason to refuse the
-			// move: the block simply says it is empty.
-			note = ""
-		}
+		name, dir = "", ""
 	}
-	sess.SetWorkerMembership(rec.WorkerID, name, dir, notePath, note)
+	sess.SetWorkerMembership(rec.WorkerID, name, dir)
 	return nil
 }
 
 // Leave detaches a session. The working directory stays where it is (the files
 // the session wrote stay put; the next task simply stops carrying the worker
-// block).
+// block and starts reminding about the missing worker again).
 func (w *WorkerService) Leave(sessionID string) error {
 	sess, err := w.sessionOf(sessionID)
 	if err != nil {
 		return err
 	}
-	sess.SetWorkerMembership(WorkerUnassignedID, "", "", "", "")
+	sess.SetWorkerMembership(WorkerUnassignedID, "", "")
 	slog.Info("session left worker", "session", sessionID)
 	return nil
-}
-
-// ensureNoteSnapshot gives a session that has a worker but no snapshot yet its
-// first one, and only once. It exists for rows that predate a snapshot (a
-// session created before the worker existed, a hand-edited database): without
-// it the first task would render the block from live data and the second one
-// from a snapshot, i.e. two different prefixes for one session.
-//
-// Built-in buckets (已归档) are skipped on purpose: they carry no directory and
-// no convention, so those sessions keep the exact prompt they had before the
-// worker feature existed.
-func (s *Session) ensureNoteSnapshot() {
-	s.mu.Lock()
-	id := s.record.WorkerID
-	_, ok := s.record.Metadata[workerNoteMetaKey]
-	mgr := s.manager
-	s.mu.Unlock()
-	if id == "" || ok || mgr == nil {
-		return
-	}
-	w := mgr.Workers()
-	if w == nil {
-		return
-	}
-	w.snapshotInto(id, s)
-}
-
-// snapshotInto reads the worker row and its convention file once and writes the
-// result into the session record. Everything after this point reads the record.
-func (w *WorkerService) snapshotInto(workerID string, sess *Session) {
-	rec, err := w.store.GetWorker(workerID)
-	if err != nil || rec == nil || rec.Builtin {
-		return
-	}
-	note, _ := readWorkerNote(rec.NotePath)
-	sess.SetWorkerMembership(rec.WorkerID, rec.Name, rec.WorkDir, rec.NotePath, note)
 }
 
 // Move is the session-centric entry point the UI uses ("移动到 Worker").
@@ -391,210 +335,152 @@ func (m *SessionManager) MoveToWorker(sessionID, bucket string) error {
 	return w.Move(sessionID, bucket)
 }
 
-// RefreshNoteSnapshot reloads one session's convention snapshot from disk.
-// This is the ONLY way a live session's prompt picks up an edited convention
-// file, so it is always an explicit user action — and it does mean the next
-// request of that session recomputes its prefix (the whole point).
-func (w *WorkerService) RefreshNoteSnapshot(sessionID string) (changed bool, err error) {
-	sess, err := w.sessionOf(sessionID)
-	if err != nil {
-		return false, err
-	}
-	sess.mu.Lock()
-	workerID := sess.record.WorkerID
-	prev := metadataString(sess.record, workerNoteMetaKey)
-	sess.mu.Unlock()
-	if workerID == "" {
-		return false, fmt.Errorf("该会话还没有归属 worker")
-	}
+// --- convention (公约): stored in the worker row, versioned ---
+
+// ReadNote returns a worker's convention text and its version ("" and 0 when it
+// has never been written).
+func (w *WorkerService) ReadNote(workerID string) (string, int, error) {
 	rec, err := w.store.GetWorker(workerID)
 	if err != nil {
-		return false, err
+		return "", 0, err
 	}
 	if rec == nil {
-		return false, fmt.Errorf("worker 不存在: %s", workerID)
+		return "", 0, fmt.Errorf("worker 不存在: %s", workerID)
 	}
-	note, err := readWorkerNote(rec.NotePath)
-	if err != nil {
-		return false, err
-	}
-	sess.SetWorkerMembership(rec.WorkerID, rec.Name, rec.WorkDir, rec.NotePath, note)
-	return prev != note, nil
+	return rec.Note, rec.NoteVer, nil
 }
 
-// --- convention file (公约) ---
-
-// ReadNote returns the convention file of a worker as it is on disk.
-func (w *WorkerService) ReadNote(workerID string) (string, error) {
-	rec, err := w.store.GetWorker(workerID)
-	if err != nil || rec == nil {
-		return "", fmt.Errorf("worker 不存在: %s", workerID)
-	}
-	return readWorkerNote(rec.NotePath)
-}
-
-// WriteNote rewrites the convention file. The runtime gate makes an agent write
-// need an explicit UI approval in every permission mode (session/gate.go); a
-// human editing through the sidebar is already the authorization, so this
-// method itself does not ask. Existing sessions keep their snapshots — call
-// RefreshNoteSnapshot for the sessions that should see it now.
-func (w *WorkerService) WriteNote(workerID, content string) error {
+// WriteNote stores a new convention text and bumps its version. That version is
+// the whole delivery mechanism: every session of this worker carrying an older
+// one gets one update message on its next task (see Session.WorkerNotice). A
+// human edit through the UI is already the authorization; an agent write goes
+// through the approval gate (see gate.go).
+func (w *WorkerService) WriteNote(workerID, content string) (int, error) {
 	rec, err := w.store.GetWorker(workerID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if rec == nil {
-		return fmt.Errorf("worker 不存在: %s", workerID)
-	}
-	if rec.NotePath == "" {
-		return fmt.Errorf("%s 没有公约文件(它没有工作目录)", rec.Name)
+		return 0, fmt.Errorf("worker 不存在: %s", workerID)
 	}
 	content = strings.TrimSpace(content)
 	if len([]rune(content)) > MaxNoteChars {
-		return fmt.Errorf("公约太长(当前 %d 字,最多 %d 字):它每个任务都会注入一次,请只留结论和约定", len([]rune(content)), MaxNoteChars)
+		return 0, fmt.Errorf("公约太长(当前 %d 字,最多 %d 字):它会发给这个 worker 的每个会话,只留结论和约定",
+			len([]rune(content)), MaxNoteChars)
 	}
-	if err := os.MkdirAll(filepath.Dir(rec.NotePath), 0755); err != nil {
-		return err
+	ver := rec.NoteVer + 1
+	if err := w.store.UpdateWorkerNote(workerID, content, ver); err != nil {
+		return 0, err
 	}
-	return os.WriteFile(rec.NotePath, []byte(content+"\n"), 0644)
+	slog.Info("worker convention updated", "worker", workerID, "ver", ver, "chars", len([]rune(content)))
+	return ver, nil
 }
 
-// --- worker brief (a special user message, never the system prompt) ---
+// --- worker notice (one plain user message, at most once per task) ---
 
 const (
-	// workerBriefMarkerPrefix marks a brief so later turns (and compaction) can
-	// find it by scanning the conversation. Same trick as the usage notices.
-	workerBriefMarkerPrefix = "__MC_WORKER_BRIEF__"
-	// workerBriefRole is deliberately "user": it is the role the app may add to a
-	// conversation; "system" would be a second system message.
-	workerBriefRole = "user"
+	// workerNoticeJoin marks the "join a worker" reminder. It is deliberately
+	// versionless: it repeats on the next task if the session still has not
+	// decided, so nothing about it may be deduplicated across tasks.
+	workerNoticeJoin = "__MC_WORKER_JOIN__"
+	// workerNoticeNote marks a convention delivery and carries
+	// "<worker id>:<version>" — which is how the version a session holds is read
+	// back out of its own conversation instead of living in a second place.
+	workerNoticeNote = "__MC_WORKER_NOTE__"
+	// workerNoticeRole is "user": the role the app may add to a conversation.
+	workerNoticeRole = "user"
 )
 
-// workerBriefSignature identifies one brief: the worker id plus a hash of its
-// body. Two briefs with the same signature carry the same text, which is how the
-// loop decides to append nothing at all (zero new bytes) when nothing changed.
-func workerBriefSignature(workerID, body string) string {
-	var h uint32 = 2166136261 // FNV-1a over a few KB of text: fingerprint, not crypto
-	for _, r := range body {
-		h ^= uint32(r)
-		h *= 16777619
-	}
-	return fmt.Sprintf("%s%s:%08x", workerBriefMarkerPrefix, workerID, h)
+// noteMarker records "this conversation holds convention version v".
+func noteMarker(workerID string, ver int) string {
+	return fmt.Sprintf("%s%s:%d", workerNoticeNote, workerID, ver)
 }
 
-// BuildWorkerBrief wraps a rendered body into the message that joins the
+// BuildWorkerNotice wraps notice text into the message that joins the
 // conversation. Exported for tests.
-func BuildWorkerBrief(workerID, body string) provider.Message {
-	return provider.Message{Role: workerBriefRole, Content: body + "\n\n" + workerBriefSignature(workerID, body)}
+func BuildWorkerNotice(text, marker string) provider.Message {
+	return provider.Message{Role: workerNoticeRole, Content: text + "\n\n" + marker}
 }
 
-// IsWorkerBrief reports whether m is a worker brief of any worker, any version.
-func IsWorkerBrief(m provider.Message) bool {
-	return m.Role == workerBriefRole && strings.Contains(m.GetText(), workerBriefMarkerPrefix)
-}
-
-// workerBriefSignatureOf pulls the marker out of a brief ("" when m is not one).
-func workerBriefSignatureOf(m provider.Message) string {
+// IsWorkerNotice reports whether m is a worker notice of either kind. Compaction
+// drops them: they are derived data, and the next task re-delivers whatever still
+// applies (a dropped note notice simply resets the held version to 0).
+func IsWorkerNotice(m provider.Message) bool {
+	if m.Role != workerNoticeRole {
+		return false
+	}
 	t := m.GetText()
-	i := strings.Index(t, workerBriefMarkerPrefix)
-	if i < 0 {
-		return ""
-	}
-	t = t[i:]
-	if j := strings.IndexAny(t, " \n\r\t"); j >= 0 {
-		return t[:j]
-	}
-	return t
+	return strings.Contains(t, workerNoticeJoin) || strings.Contains(t, workerNoticeNote)
 }
 
-// lastWorkerBrief returns the newest brief in a context (and its signature).
-// The newest one is the current state; older briefs are simply history.
-func lastWorkerBrief(messages []provider.Message) (provider.Message, string) {
-	var last provider.Message
-	sig := ""
+// heldNoteVersion is the newest convention version this conversation carries for
+// workerID (0 = never received one). Tool results count too: the join/create
+// result ends with the same marker, so joining consumes the current version
+// instead of being told again one turn later.
+func heldNoteVersion(messages []provider.Message, workerID string) int {
+	want := workerNoticeNote + workerID + ":"
+	best := 0
 	for _, m := range messages {
-		if IsWorkerBrief(m) {
-			last, sig = m, workerBriefSignatureOf(m)
+		t := m.GetText()
+		i := strings.Index(t, want)
+		if i < 0 {
+			continue
+		}
+		n := 0
+		for _, r := range t[i+len(want):] {
+			if r < '0' || r > '9' {
+				break
+			}
+			n = n*10 + int(r-'0')
+		}
+		if n > best {
+			best = n
 		}
 	}
-	return last, sig
+	return best
 }
 
-// WorkerBrief renders the brief this session should carry right now — from its own
-// snapshot only, never from the worker row or the 公约 file on disk. The zero
-// message means "nothing to say": the sub-agent of an unattached session, or a
-// session in a built-in bucket, which stays exactly as plain as it was.
-func (s *Session) WorkerBrief() provider.Message {
+// workerJoinReminder is the notice an unattached root session gets, once per
+// task. It repeats until the session resolves it, so it stays a few lines.
+const workerJoinReminder = `<worker_notice>本会话还没有归属 worker。先用 workers 工具处理:join 已有 worker,或 create 新建;确属一次性问题可以不处理。本轮先做这个决定。</worker_notice>`
+
+// WorkerNotice renders what this session must be told right now, once per task:
+// the join reminder when it has no worker, or the latest 公约 when the version its
+// own conversation carries is behind. The zero message means "nothing to say".
+// Sub-agents and the built-in buckets never get one.
+func (s *Session) WorkerNotice(messages []provider.Message) provider.Message {
 	s.mu.Lock()
 	id := s.record.WorkerID
 	name := metadataString(s.record, workerNameMetaKey)
-	dir := metadataString(s.record, workerDirMetaKey)
-	note := metadataString(s.record, workerNoteMetaKey)
 	isRoot := s.record.ParentID == ""
 	s.mu.Unlock()
 
-	if id == "" {
-		if !isRoot {
-			return provider.Message{}
-		}
-		// The guidance tells the model to use the workers tool, so it must not be
-		// injected when that tool is not exposed (a tool-ablation run does exactly
-		// that; production never disables it).
+	if !isRoot || s.manager == nil {
+		return provider.Message{}
+	}
+	w := s.manager.Workers()
+	if w == nil {
+		return provider.Message{}
+	}
+	if id == WorkerUnassignedID {
+		// The reminder tells the model to use the workers tool, so it stays quiet
+		// when that tool is not exposed (a tool-ablation run; production never does).
 		if disabledTools()["workers"] {
 			return provider.Message{}
 		}
-		return BuildWorkerBrief("none", workerAssignmentGuidance)
+		return BuildWorkerNotice(workerJoinReminder, workerNoticeJoin)
 	}
-	if name == "" {
-		// Migrated/archived bucket, or a row without a snapshot: say nothing.
+	rec, err := w.store.GetWorker(id)
+	if err != nil || rec == nil || rec.NoteVer < 1 || strings.TrimSpace(rec.Note) == "" {
 		return provider.Message{}
 	}
-
-	var b strings.Builder
-	b.WriteString("<worker-brief>\n")
-	b.WriteString("This session runs under the worker \"")
-	b.WriteString(name)
-	b.WriteString("\" (")
-	b.WriteString(id)
-	b.WriteString(") — one line of work whose sessions share a workspace and one convention file.\n\n")
-	if dir != "" {
-		b.WriteString("Shared workspace: ")
-		b.WriteString(dir)
-		b.WriteString("\nThat is this session's working directory: put the deliverables of this line of work there, and look there first for what earlier sessions of this worker produced.\n\n")
+	if heldNoteVersion(messages, id) >= rec.NoteVer {
+		return provider.Message{}
 	}
-	b.WriteString("公约 — the convention every session of this worker must follow:\n")
-	b.WriteString("<convention>\n")
-	if strings.TrimSpace(note) == "" {
-		b.WriteString("(空的:还没有人写下规矩。做完整件事后,用 workers(action=note_write) 把值得留给同事的约定补进去——这一步需要用户批准。)\n")
-	} else {
-		b.WriteString(strings.TrimRight(note, "\n"))
-		b.WriteString("\n")
-	}
-	b.WriteString("</convention>\n\n")
-	b.WriteString("This note is background the app puts in, not a request from the user — do not answer it. ")
-	b.WriteString("If a newer worker brief shows up further down this conversation, the newest one is the current state. ")
-	b.WriteString("To pull an edited 公约 into this session use workers(action=note_refresh) or the sidebar's ↻: that appends a newer brief and changes nothing already in the conversation.")
-	b.WriteString("\n</worker-brief>")
-	return BuildWorkerBrief(id, b.String())
+	text := fmt.Sprintf("<worker_notice>worker「%s」的公约已更新到 v%d,最新全文如下,按它执行:\n<convention>\n%s\n</convention>\n这条消息是应用注入的背景,不是用户的请求,不要回答它。</worker_notice>",
+		firstNonEmpty(name, rec.Name), rec.NoteVer, strings.TrimRight(rec.Note, "\n"))
+	return BuildWorkerNotice(text, noteMarker(id, rec.NoteVer))
 }
-
-// workerAssignmentGuidance is the brief an unattached root session carries until it
-// decides. It stays a few lines and is a constant, so it is appended exactly once
-// per session and afterwards sits in the cached history for free. The full how-to
-// lives in the workers tool description.
-const workerAssignmentGuidance = `<worker-brief>
-This session belongs to no worker (工作大类) yet. A worker is one line of work: a
-shared workspace plus a shared convention file every session of it must follow.
-
-On your first turn, call workers(action="list") and decide:
-- join an existing worker (action="join") if this continues that line of work;
-- create one (action="create", auto-joins) if this is a new line of work;
-- stay unattached for a one-off question that needs no workspace.
-Joining switches this session's working directory to the worker's workspace, so
-decide early — ideally now.
-
-This note is background the app puts in, not a request from the user — do not answer it.
-</worker-brief>`
 
 // --- tool backend (bound to one session, see tools.WorkerDispatcher) ---
 
@@ -646,7 +532,6 @@ func (a *WorkerToolAPI) WorkerInfo() string {
 	sess.mu.Lock()
 	id, dir := sess.record.WorkerID, sess.record.WorkDir
 	name := metadataString(sess.record, workerNameMetaKey)
-	notePath := metadataString(sess.record, workerNotePathMetaKey)
 	sess.mu.Unlock()
 	if id == "" {
 		return "本会话尚未归属任何 worker。用 action=list 看看已有的 worker,或 action=create 新建一个,或保持现状(一次性小问题不需要 worker)。"
@@ -655,13 +540,11 @@ func (a *WorkerToolAPI) WorkerInfo() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "本会话属于 worker「%s」(id %s)。\n", firstNonEmpty(name, rec2Name(rec)), id)
 	fmt.Fprintf(&b, "共享工作目录:%s\n", dir)
-	if notePath != "" {
-		fmt.Fprintf(&b, "公约文件:%s(本会话看到的是加入时的快照,用 note_read 看磁盘最新版)\n", notePath)
-	}
-	if rec != nil && rec.Summary != "" {
-		fmt.Fprintf(&b, "摘要:%s\n", rec.Summary)
-	}
 	if rec != nil {
+		fmt.Fprintf(&b, "公约版本:v%d\n", rec.NoteVer)
+		if rec.Summary != "" {
+			fmt.Fprintf(&b, "摘要:%s\n", rec.Summary)
+		}
 		fmt.Fprintf(&b, "同 worker 会话数:%d(用 history 看它们在做什么)\n", rec.Sessions)
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -711,10 +594,10 @@ func (a *WorkerToolAPI) Create(name, summary, copyFrom string) string {
 		return fmt.Sprintf("worker「%s」已建好(id %s,目录 %s),但本会话加入失败:%s", rec.Name, rec.WorkerID, rec.WorkDir, err)
 	}
 	return fmt.Sprintf(
-		"已创建并加入 worker「%s」(id %s)。\n共享工作目录:%s\n公约文件:%s\n"+
-			"注意:本回合已创建的工具仍指向旧工作目录,接下来的文件操作请继续使用绝对路径;从下一个任务开始,工作目录自动变为上面的共享目录。\n"+
-			"建议:用 note_write 把这次工作的目标和约定写进公约(会弹用户确认)。",
-		rec.Name, rec.WorkerID, rec.WorkDir, rec.NotePath)
+		"已创建并加入 worker「%s」(id %s)。\n共享工作目录:%s\n"+
+			"本回合已建的工具仍指向旧目录,后续文件操作请用绝对路径;下一个任务起工作目录自动切到上面这个。\n"+
+			"%s",
+		rec.Name, rec.WorkerID, rec.WorkDir, conventionBlock(rec))
 }
 
 func (a *WorkerToolAPI) Join(workerID string) string {
@@ -722,16 +605,25 @@ func (a *WorkerToolAPI) Join(workerID string) string {
 	if err != nil {
 		return "加入 worker 失败: " + err.Error()
 	}
-	note, _ := readWorkerNote(rec.NotePath)
-	tail := ""
-	if strings.TrimSpace(note) == "" {
-		tail = "\n该 worker 的公约还是空的,建议用 note_write 写几条简短约定(会弹用户确认)。"
-	}
 	return fmt.Sprintf(
-		"已加入 worker「%s」(id %s)。\n共享工作目录:%s\n公约文件:%s\n"+
-			"注意:本回合已创建的工具仍指向旧工作目录,接下来的文件操作请继续使用绝对路径;从下一个任务开始,工作目录自动变为上面的共享目录。"+
-			"用 history 可以看同 worker 的其他会话在做什么。"+tail,
-		rec.Name, rec.WorkerID, rec.WorkDir, rec.NotePath)
+		"已加入 worker「%s」(id %s)。\n共享工作目录:%s\n"+
+			"本回合已建的工具仍指向旧目录,后续文件操作请用绝对路径;下一个任务起工作目录自动切到上面这个。\n"+
+			"用 history 看同 worker 的其他会话在做什么。\n%s",
+		rec.Name, rec.WorkerID, rec.WorkDir, conventionBlock(rec))
+}
+
+// conventionBlock renders a worker's current 公约 for a tool result. The version
+// marker at the end is what marks the convention as consumed (see heldNoteVersion),
+// so joining a worker never gets told about the same version again.
+func conventionBlock(rec *WorkerRecord) string {
+	if rec == nil {
+		return ""
+	}
+	if rec.NoteVer < 1 || strings.TrimSpace(rec.Note) == "" {
+		return "公约:还没有。做完这活可以用 note_write 补几条简短约定(需用户确认)。"
+	}
+	return fmt.Sprintf("公约 v%d,按它执行:\n<convention>\n%s\n</convention>\n%s",
+		rec.NoteVer, strings.TrimRight(rec.Note, "\n"), noteMarker(rec.WorkerID, rec.NoteVer))
 }
 
 func (a *WorkerToolAPI) Leave() string {
@@ -811,11 +703,7 @@ func (a *WorkerToolAPI) NoteRead() string {
 	if rec == nil {
 		return "本会话还没有归属 worker,没有公约可读。"
 	}
-	note, err := readWorkerNote(rec.NotePath)
-	if err != nil {
-		return "读取公约失败: " + err.Error()
-	}
-	return fmt.Sprintf("公约(%s)\n%s", rec.NotePath, firstNonEmpty(strings.TrimSpace(note), "(空的)"))
+	return fmt.Sprintf("公约 v%d\n%s", rec.NoteVer, firstNonEmpty(strings.TrimSpace(rec.Note), "(空的)"))
 }
 
 func (a *WorkerToolAPI) NoteWrite(content string) string {
@@ -823,21 +711,12 @@ func (a *WorkerToolAPI) NoteWrite(content string) string {
 	if rec == nil {
 		return "本会话还没有归属 worker,写不了公约(先 join 或 create)。"
 	}
-	if err := a.svc.WriteNote(rec.WorkerID, content); err != nil {
+	ver, err := a.svc.WriteNote(rec.WorkerID, content)
+	if err != nil {
 		return "写公约失败: " + err.Error()
 	}
-	return fmt.Sprintf("已写入公约:%s\n本会话仍使用加入时的快照;要让本会话立即改用新版,再调 action=note_refresh(它会给本会话追加一条最新简报)。同 worker 的其他会话在下次刷新或新建会话时才会看到新版。", rec.NotePath)
-}
-
-func (a *WorkerToolAPI) NoteRefresh() string {
-	changed, err := a.svc.RefreshNoteSnapshot(a.sessionID)
-	if err != nil {
-		return "刷新公约快照失败: " + err.Error()
-	}
-	if !changed {
-		return "本会话的公约快照已经是磁盘上的最新版,没有变化。"
-	}
-	return "已把最新公约加载进本会话(下一轮起带上一条新简报,已有的对话内容不变)。"
+	return fmt.Sprintf("已写入公约 v%d,同 worker 的其他会话下一轮自动收到更新。\n%s",
+		ver, noteMarker(rec.WorkerID, ver))
 }
 
 func (a *WorkerToolAPI) workDirOf() string {
@@ -957,37 +836,7 @@ func seedFrom(dir, copyFrom string) (string, error) {
 	return src, tools.CopyTree(src, filepath.Join(dir, filepath.Base(src)))
 }
 
-func workerNoteTemplate(name, summary string) string {
-	var b strings.Builder
-	b.WriteString("# ")
-	b.WriteString(name)
-	b.WriteString(" · 工作公约\n\n")
-	b.WriteString("> 本文件是这个 worker 下所有会话共享的公约:每个会话提问时都会以一条独立的背景消息看到它。\n")
-	b.WriteString("> 请只写结论与约定,越短越好(上限 6000 字)。改动会影响这里的全部会话。\n\n")
-	b.WriteString("## 目标\n")
-	if summary != "" {
-		b.WriteString(summary)
-		b.WriteString("\n")
-	} else {
-		b.WriteString("(这个 worker 在做什么,一句话说清)\n")
-	}
-	b.WriteString("\n## 约定\n")
-	b.WriteString("- (目录/命名/交付物/验收标准)\n")
-	b.WriteString("\n## 现状\n")
-	b.WriteString("- (最近进展、下一步、已知坑)\n")
-	return b.String()
-}
-
-func writeNoteIfMissing(path, content string) error {
-	if pathExists(path) {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(content), 0644)
-}
-
+// readWorkerNote reads a legacy on-disk 公约; only migrateWorkerNote uses it now.
 func readWorkerNote(path string) (string, error) {
 	if path == "" {
 		return "", nil

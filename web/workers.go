@@ -11,10 +11,10 @@ import (
 // --- workers (工作大类) ---
 //
 // A worker is one line of work: a shared workspace directory plus a shared
-// convention file (worker.md) that every session of the worker is told to
-// follow. These handlers back the sidebar's worker switcher, the "移动到 Worker"
-// action, and the convention editor. See session.WorkerService for the rules
-// (in particular why a session only ever reads its own convention snapshot).
+// convention (公约) stored in the worker row with a version. These handlers back
+// the sidebar's worker switcher, the "移动到 Worker" action, and the convention
+// editor. See session.WorkerService for the rules (a version bump is what tells
+// every session of the worker on its next task).
 
 // workerService returns the wired worker service (nil = not wired).
 func (s *server) workerService() *session.WorkerService {
@@ -25,13 +25,14 @@ func (s *server) workerService() *session.WorkerService {
 	return m.Workers()
 }
 
-// workerView is one worker bucket as the sidebar needs it.
+// workerView is one worker bucket as the sidebar needs it. The 公约 body itself is
+// left out (it can be 6000 chars); the editor fetches it per worker.
 type workerView struct {
 	WorkerID  string `json:"worker_id"`
 	Name      string `json:"name"`
 	Summary   string `json:"summary"`
 	WorkDir   string `json:"work_dir"`
-	NotePath  string `json:"note_path"`
+	NoteVer   int    `json:"note_ver"`
 	Builtin   bool   `json:"builtin"`
 	Sessions  int    `json:"sessions"`
 	CreatedAt string `json:"created_at"`
@@ -59,7 +60,7 @@ func (s *server) handleWorkersList(w http.ResponseWriter, r *http.Request) {
 			Name:      rec.Name,
 			Summary:   rec.Summary,
 			WorkDir:   rec.WorkDir,
-			NotePath:  rec.NotePath,
+			NoteVer:   rec.NoteVer,
 			Builtin:   rec.Builtin,
 			Sessions:  rec.Sessions,
 			CreatedAt: rec.CreatedAt,
@@ -115,7 +116,6 @@ func (s *server) handleWorkersCreate(w http.ResponseWriter, r *http.Request) {
 				"worker_id": rec.WorkerID,
 				"name":      rec.Name,
 				"work_dir":  rec.WorkDir,
-				"note_path": rec.NotePath,
 				"warning":   "worker 已创建,但会话加入失败: " + err.Error(),
 			})
 			return
@@ -126,7 +126,7 @@ func (s *server) handleWorkersCreate(w http.ResponseWriter, r *http.Request) {
 		"name":      rec.Name,
 		"summary":   rec.Summary,
 		"work_dir":  rec.WorkDir,
-		"note_path": rec.NotePath,
+		"note_ver":  rec.NoteVer,
 	})
 }
 
@@ -176,9 +176,7 @@ func (s *server) handleWorkersDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"worker_id": id, "deleted_sessions": n})
 }
 
-// handleWorkersNoteGet returns the convention file (公约) as it is on disk —
-// which is deliberately NOT what a running session sees (those carry a
-// snapshot; see session.WorkerService.RefreshNoteSnapshot).
+// handleWorkersNoteGet returns the worker's current 公约 and its version.
 func (s *server) handleWorkersNoteGet(w http.ResponseWriter, r *http.Request) {
 	wsvc := s.workerService()
 	if wsvc == nil {
@@ -191,22 +189,22 @@ func (s *server) handleWorkersNoteGet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "worker not found: "+id)
 		return
 	}
-	content, err := wsvc.ReadNote(id)
+	content, ver, err := wsvc.ReadNote(id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"worker_id": id,
-		"path":      rec.NotePath,
+		"worker_id": rec.WorkerID,
+		"ver":       ver,
 		"content":   content,
 	})
 }
 
-// handleWorkersNoteWrite saves the convention file. A human editing it through
-// the sidebar IS the authorization (unlike an agent's write, which the runtime
-// gate always confirms). Sessions keep their snapshots; refresh_one / refresh
-// below are what makes a session pick the new text up.
+// handleWorkersNoteWrite saves a new 公约 and bumps its version. A human editing
+// it through the sidebar IS the authorization (unlike an agent's write, which the
+// runtime gate always confirms). Every session of this worker picks the new text
+// up on its next task, as an appended message.
 func (s *server) handleWorkersNoteWrite(w http.ResponseWriter, r *http.Request) {
 	wsvc := s.workerService()
 	if wsvc == nil {
@@ -221,11 +219,12 @@ func (s *server) handleWorkersNoteWrite(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := wsvc.WriteNote(id, req.Content); err != nil {
+	ver, err := wsvc.WriteNote(id, req.Content)
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"worker_id": id, "status": "saved"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"worker_id": id, "ver": ver, "status": "saved"})
 }
 
 // handleSessionsMoveWorker is the "移动到 Worker: xx" action: worker_id "" (or
@@ -262,27 +261,4 @@ func (s *server) handleSessionsMoveWorker(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"session_id": id, "worker_id": req.WorkerID})
-}
-
-// handleSessionsWorkerRefresh reloads one session's convention snapshot from
-// disk (the sidebar's "刷新公约" button). Explicit by design: it is the only way
-// a live session picks up an edited 公约, and it costs that session one prefix
-// recompute.
-func (s *server) handleSessionsWorkerRefresh(w http.ResponseWriter, r *http.Request) {
-	wsvc := s.workerService()
-	if wsvc == nil {
-		writeErr(w, http.StatusServiceUnavailable, "worker 功能未启用")
-		return
-	}
-	id := r.PathValue("id")
-	if sess, err := s.be.Mgr().Get(id); err != nil || sess == nil {
-		writeErr(w, http.StatusNotFound, "session not found: "+id)
-		return
-	}
-	changed, err := wsvc.RefreshNoteSnapshot(id)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"session_id": id, "changed": changed})
 }
