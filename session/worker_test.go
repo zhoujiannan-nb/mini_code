@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -207,12 +208,13 @@ func TestWorkerNoteVersionNotice(t *testing.T) {
 	if n := s.WorkerNotice(append(append([]provider.Message(nil), msgs...), joined)); n.GetText() != "" {
 		t.Fatalf("joining should have consumed v2: %q", n.GetText())
 	}
-	// note_read / note_write go through the row and report versions.
+	// note_read reports the current version. Writing is not offered to the model
+	// at all: svc.WriteNote is the human path (the sidebar), which still bumps.
 	if got := api.NoteRead(); !strings.Contains(got, "v2") || !strings.Contains(got, "go test") {
 		t.Fatalf("note_read: %q", got)
 	}
-	if got := api.NoteWrite("第三条:产物放 dist/"); !strings.Contains(got, "v3") || !strings.Contains(got, noteMarker(w.WorkerID, 3)) {
-		t.Fatalf("note_write: %q", got)
+	if ver, err := svc.WriteNote(w.WorkerID, "第三条:产物放 dist/"); err != nil || ver != 3 {
+		t.Fatalf("WriteNote v3 = %d (%v)", ver, err)
 	}
 	if n := s.WorkerNotice(held); !strings.Contains(n.GetText(), "dist/") {
 		t.Fatalf("the writer's own v3 should still reach the sessions holding v1: %q", n.GetText())
@@ -377,10 +379,11 @@ func TestWorkersToolRegisteredForEveryRootSession(t *testing.T) {
 	}
 }
 
-// TestWorkerNoteWriteAlwaysAsks pins the one always-confirmed agent action: the
-// convention file is a contract with every other session of the worker, so even
-// full mode (no confirmation for anything else) has to ask.
-func TestWorkerNoteWriteAlwaysAsks(t *testing.T) {
+// TestWorkerConventionReadOnlyForModel pins the removal: a session may read its
+// worker's 公约 but has no way to write one — no NoteWrite on the dispatcher, no
+// note_write in any tool schema, and no leftover approval prompt. The single
+// write path is a human editing it in the sidebar (handleWorkersNoteWrite).
+func TestWorkerConventionReadOnlyForModel(t *testing.T) {
 	mgr, svc := newTestWorkerEnv(t)
 	s := mustSession(t, mgr, "gate")
 	w, err := svc.Create("api", "后端接口", s.WorkDir(), "")
@@ -390,39 +393,39 @@ func TestWorkerNoteWriteAlwaysAsks(t *testing.T) {
 	if _, err := svc.Join(s.ID(), w.WorkerID); err != nil {
 		t.Fatalf("Join: %v", err)
 	}
+	if _, ok := reflect.TypeOf(svc.ToolAPIFor(s.ID())).MethodByName("NoteWrite"); ok {
+		t.Fatal("WorkerToolAPI still exposes a NoteWrite method")
+	}
+	if defs := toolJSON(t, s); strings.Contains(defs, "note_write") {
+		t.Fatalf("a tool schema still advertises note_write:\n%s", defs)
+	}
+	if p := buildPrompt(t, s); strings.Contains(p, "note_write") {
+		t.Fatalf("the system prompt still suggests note_write:\n%s", p)
+	}
+	// Nothing about the workers tool asks the user anything any more (mode is the
+	// default full; the old always-confirm hook is gone with the write path).
 	cfg, _, _, _, err := s.preparePromptTools()
 	if err != nil {
 		t.Fatalf("preparePromptTools: %v", err)
 	}
-	// Mode stays the default (full): every other tool call runs unchecked.
-	if mgr.ModeOf(s.ID()) == ModeCautious {
-		t.Fatal("this test must run in full mode")
-	}
 	ap := &recordingApprover{reason: "user denied"}
 	mgr.SetApprover(ap)
 	gate := s.gateFor(cfg)
-
-	allow, msg := gate(context.Background(), "workers", map[string]interface{}{"action": "note_write", "content": "新约定"})
-	if allow {
-		t.Fatal("a convention write ran without confirmation")
+	for _, action := range []string{"list", "note_read", "note_write"} {
+		if allow, msg := gate(context.Background(), "workers", map[string]interface{}{"action": action}); !allow {
+			t.Fatalf("workers(%s) was denied: %q", action, msg)
+		}
 	}
-	if !strings.Contains(msg, "公约") {
-		t.Fatalf("deny message should name the convention file: %q", msg)
+	if ap.called != 0 {
+		t.Fatalf("workers tool triggered %d approvals, want 0", ap.called)
 	}
-	if ap.called != 1 {
-		t.Fatalf("approver called %d times, want 1", ap.called)
+	// Even if a model asks for the old action, the row is untouched.
+	tools := svc.ToolAPIFor(s.ID())
+	if !strings.Contains(tools.List(), w.WorkerID) {
+		t.Fatalf("list should include the worker: %q", tools.List())
 	}
-	// Everything else about workers is read/low-risk: no prompt for the user.
-	if allow, msg := gate(context.Background(), "workers", map[string]interface{}{"action": "list"}); !allow {
-		t.Fatalf("workers(list) was denied: %q", msg)
-	}
-	if ap.called != 1 {
-		t.Fatalf("workers(list) triggered an approval (%d calls)", ap.called)
-	}
-	// Approved → it runs.
-	ap.approved = true
-	if allow, msg := gate(context.Background(), "workers", map[string]interface{}{"action": "note_write", "content": "新约定"}); !allow {
-		t.Fatalf("approved write was denied: %q", msg)
+	if rec, _ := svc.Get(w.WorkerID); rec == nil || rec.NoteVer != 0 {
+		t.Fatalf("the 公约 version should stay untouched: %+v", rec)
 	}
 }
 
@@ -713,5 +716,60 @@ func TestWorkerNoticeOncePerRun(t *testing.T) {
 	}
 	if at < 1 || res.Messages[at-1].Role != "user" {
 		t.Fatalf("the notice is not the message right after the user turn: %+v", res.Messages)
+	}
+}
+
+// TestWorkerOtherIsFixed pins the floor and the ceiling of the worker list: a
+// fresh install already carries the fixed 其他 worker (so there is always some-
+// where to put a stray session), a session can land there WITHOUT giving up its
+// own directory, it cannot be deleted, and it holds one of the MaxWorkers slots.
+func TestWorkerOtherIsFixed(t *testing.T) {
+	mgr, svc := newTestWorkerEnv(t)
+	rec, err := svc.Get(WorkerOtherID)
+	if err != nil || rec == nil {
+		t.Fatalf("the 其他 worker is missing: %+v (%v)", rec, err)
+	}
+	// A real, joinable worker row — not a built-in bucket like 已归档 — and with
+	// no shared directory of its own.
+	if rec.Name != WorkerOtherName || rec.Builtin || rec.WorkDir != "" {
+		t.Fatalf("the 其他 row is wrong: %+v", rec)
+	}
+	if !IsReservedWorker(WorkerOtherID) {
+		t.Fatal("IsReservedWorker should recognise 其他")
+	}
+	s := mustSession(t, mgr, "流浪会话")
+	own := s.WorkDir()
+	joined, err := svc.Join(s.ID(), WorkerOtherID)
+	if err != nil {
+		t.Fatalf("joining 其他: %v", err)
+	}
+	if joined.WorkDir != "" {
+		t.Fatalf("其他 must not carry a shared dir: %+v", joined)
+	}
+	if s.WorkDir() != own {
+		t.Fatalf("a session in 其他 keeps its own dir, got %q want %q", s.WorkDir(), own)
+	}
+	// The tool text says what an empty directory means instead of printing "".
+	if out := svc.ToolAPIFor(s.ID()).Join(WorkerOtherID); !strings.Contains(out, "不设共享目录") {
+		t.Fatalf("join(其他) result: %q", out)
+	}
+	if out := svc.ToolAPIFor(s.ID()).WorkerInfo(); !strings.Contains(out, own) || strings.Contains(out, "工作目录:\n") {
+		t.Fatalf("info(其他) result: %q", out)
+	}
+	if _, err := svc.Delete(WorkerOtherID); err == nil {
+		t.Fatal("the fixed 其他 worker was deletable")
+	}
+	if _, err := svc.Create(WorkerOtherName, "再来一个", own, ""); err == nil {
+		t.Fatal("a second worker named 其他 was created")
+	}
+	// The cap: 其他 plus MaxWorkers-1 created ones fills the list.
+	base := mustSession(t, mgr, "base")
+	for i := 1; i < MaxWorkers; i++ {
+		if _, err := svc.Create(fmt.Sprintf("line-%d", i), "", base.WorkDir(), ""); err != nil {
+			t.Fatalf("create #%d: %v", i, err)
+		}
+	}
+	if _, err := svc.Create("one-too-many", "", base.WorkDir(), ""); err == nil {
+		t.Fatalf("worker #%d should have been refused", MaxWorkers+1)
 	}
 }

@@ -73,19 +73,10 @@ func (s *Session) gateFor(cfg *agent.AgentConfig) ToolGate {
 				return false, fmt.Sprintf("Error: tool %q is not permitted for agent role %q. Use only the tools available to you.", toolName, s.record.AgentRole)
 			}
 		}
-		// A worker's convention file (公约) is a contract with every other
-		// session of that worker: rewriting it changes what they will all be
-		// told to follow. That earns an explicit confirmation in EVERY
-		// permission mode, so it is checked above the "full mode runs
-		// everything" return below. (A human editing it through the sidebar is
-		// already the authorization — see session.WorkerService.WriteNote.)
-		if workerNoteWriteRequested(toolName, params) {
-			decision := s.requestApproval(ctx, toolName, params)
-			if !decision.Approved {
-				return false, fmt.Sprintf("Error: 用户没有确认这次公约修改(%s)。不要重试;想改公约,先把准备写入的内容发给用户过目。", decision.Reason)
-			}
-			return true, ""
-		}
+		// The worker 公约 is a contract with every other session of that worker,
+		// so the model cannot write it at all: the workers tool only offers
+		// note_read, and the sole write path is a human editing it in the
+		// sidebar (see web handleWorkersNoteWrite).
 		if s.manager == nil || s.manager.ModeOf(s.ID()) != ModeCautious {
 			return true, ""
 		}
@@ -112,17 +103,6 @@ func (s *Session) gateFor(cfg *agent.AgentConfig) ToolGate {
 		}
 		return true, ""
 	}
-}
-
-// workerNoteWriteRequested reports whether this tool call rewrites a worker's
-// convention file. It is the one agent action that changes what OTHER sessions
-// are told to obey, which is why the gate always asks (any permission mode).
-func workerNoteWriteRequested(toolName string, params map[string]interface{}) bool {
-	if toolName != "workers" {
-		return false
-	}
-	action, _ := params["action"].(string)
-	return action == "note_write"
 }
 
 // isPluginTool reports whether name belongs to an installed, enabled plugin.

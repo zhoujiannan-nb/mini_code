@@ -28,11 +28,10 @@ type WorkerDispatcher interface {
 	History(limit int) string
 	// Messages dumps one sibling session's conversation (truncated).
 	Messages(sessionID string, chars int) string
-	// NoteRead returns the worker's current convention (with its version).
+	// NoteRead returns the worker's current convention (with its version). The
+	// 公约 is read-only for the model: only a human writes it, through the
+	// sidebar (POST /api/workers/{id}/note).
 	NoteRead() string
-	// NoteWrite rewrites the convention and bumps its version (runtime-gated:
-	// always needs an explicit user approval, see session/gate.go).
-	NoteWrite(content string) string
 }
 
 // WorkersTool lets a session discover, create and join workers (工作大类), and
@@ -45,7 +44,7 @@ type WorkersTool struct {
 }
 
 func NewWorkersTool(api WorkerDispatcher) *WorkersTool { return &WorkersTool{api: api} }
-func (t *WorkersTool) SetContext(api WorkerDispatcher)  { t.api = api }
+func (t *WorkersTool) SetContext(api WorkerDispatcher) { t.api = api }
 
 func (t *WorkersTool) Name() string { return "workers" }
 
@@ -61,7 +60,7 @@ func (t *WorkersTool) Description() string {
 		"info=看本会话当前所属 worker 与其工作目录;\n" +
 		"update=改写本 worker 的摘要(summary),摘要会影响别的会话怎么选 worker;\n" +
 		"history=列出同 worker 的兄弟会话(可跨会话了解进度);messages=读取某个兄弟会话的历史(跨会话取上下文);\n" +
-		"note_read=读本 worker 的最新公约;note_write=改写公约并升版本,同 worker 的其他会话下一轮自动收到更新——不得擅自写入,必须先得到用户明确同意。\n" +
+		"note_read=读本 worker 的最新公约;公约只能由用户在界面里改写,你不能写。\n" +
 		"新会话若尚未归属任何 worker:先 list 再决定 join / create / 不加入(一次性小问题不必建 worker)。"
 }
 
@@ -71,9 +70,9 @@ func (t *WorkersTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"action": map[string]interface{}{
 				"type": "string",
-				"enum": []string{"list", "create", "join", "leave", "info", "update", "history", "messages", "note_read", "note_write"},
+				"enum": []string{"list", "create", "join", "leave", "info", "update", "history", "messages", "note_read"},
 				"description": "list=列出 worker;create=新建并加入;join=加入;leave=退出;info=本会话所属 worker;" +
-					"update=改写摘要;history=兄弟会话列表;messages=读兄弟会话历史;note_read=读公约;note_write=改写公约(需用户同意)",
+					"update=改写摘要;history=兄弟会话列表;messages=读兄弟会话历史;note_read=读公约(公约只能人工改写)",
 			},
 			"name": map[string]interface{}{
 				"type":        "string",
@@ -102,10 +101,6 @@ func (t *WorkersTool) Parameters() map[string]interface{} {
 			"chars": map[string]interface{}{
 				"type":        "integer",
 				"description": "messages 用:最多返回多少字符,默认 6000,最多 24000",
-			},
-			"content": map[string]interface{}{
-				"type":        "string",
-				"description": "仅 note_write:公约的新全文(整篇覆盖,保持简短,最多 6000 字)",
 			},
 		},
 		"required": []string{"action"},
@@ -162,14 +157,8 @@ func (t *WorkersTool) Execute(ctx context.Context, params map[string]interface{}
 		return NewTextResult(t.api.Messages(sid, chars)), nil
 	case "note_read":
 		return NewTextResult(t.api.NoteRead()), nil
-	case "note_write":
-		content, _ := params["content"].(string)
-		if content == "" {
-			return NewTextResult("note_write 需要 content:公约的新全文(整篇覆盖)。想只读一遍,用 note_read。"), nil
-		}
-		return NewTextResult(t.api.NoteWrite(content)), nil
 	default:
-		return NewTextResult("未知 action " + fmt.Sprint(action) + "，请用 list / create / join / leave / info / update / history / messages / note_read / note_write。"), nil
+		return NewTextResult("未知 action " + fmt.Sprint(action) + "，请用 list / create / join / leave / info / update / history / messages / note_read。"), nil
 	}
 }
 

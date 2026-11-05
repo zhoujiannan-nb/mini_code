@@ -52,6 +52,13 @@ const (
 	MaxWorkerNameRunes = 40
 	// MaxWorkerSummaryRunes caps the summary other sessions read.
 	MaxWorkerSummaryRunes = 400
+	// MaxWorkers caps how many lines of work one install may run. It is a hard
+	// ceiling on purpose: the sidebar, the join reminder and the model-facing
+	// listing all stay readable only while the list is short. The fixed 其他
+	// worker counts toward it, so the last slot is always free for "somewhere
+	// to put this". Built-in buckets (已归档) are a shelf, not a line of work,
+	// and never count.
+	MaxWorkers = 5
 )
 
 // WorkerService owns the worker rows, their directories and the membership of
@@ -73,7 +80,9 @@ func NewWorkerService(store *SessionStore, mgr *SessionManager) *WorkerService {
 func (w *WorkerService) List() ([]WorkerRecord, error) { return w.store.ListWorkers() }
 
 // Get returns one worker (nil, nil when it does not exist).
-func (w *WorkerService) Get(workerID string) (*WorkerRecord, error) { return w.store.GetWorker(workerID) }
+func (w *WorkerService) Get(workerID string) (*WorkerRecord, error) {
+	return w.store.GetWorker(workerID)
+}
 
 // Joinable returns the workers a session may join: everything except the
 // built-in buckets (已归档 is a shelf, not a line of work).
@@ -118,6 +127,13 @@ func (w *WorkerService) Create(name, summary, baseDir, copyFrom string) (*Worker
 	}
 	if existing, err := w.store.GetWorkerByName(name); err == nil && existing != nil {
 		return nil, fmt.Errorf("已经有一个同名 worker:%s(id %s)。要加入它请用 join;要换个名字再来。", name, existing.WorkerID)
+	}
+	// One hard ceiling keeps the list short enough to stay readable in the
+	// sidebar, in the join reminder and in the model-facing listing.
+	if n, err := w.store.countWorkers(); err != nil {
+		return nil, err
+	} else if n >= MaxWorkers {
+		return nil, fmt.Errorf("worker 最多 %d 个(固定的「%s」也占一格),先删一个再建", MaxWorkers, WorkerOtherName)
 	}
 	baseDir = strings.TrimSpace(baseDir)
 	if baseDir == "" {
@@ -199,6 +215,9 @@ func (w *WorkerService) Delete(workerID string) (int, error) {
 	}
 	if rec == nil {
 		return 0, fmt.Errorf("worker 不存在: %s", workerID)
+	}
+	if IsReservedWorker(workerID) {
+		return 0, fmt.Errorf("「%s」是固定的兜底 worker,不能删除", rec.Name)
 	}
 	ids, err := w.store.ListWorkerSessions(workerID)
 	if err != nil {
@@ -539,7 +558,11 @@ func (a *WorkerToolAPI) WorkerInfo() string {
 	rec, _ := a.svc.store.GetWorker(id)
 	var b strings.Builder
 	fmt.Fprintf(&b, "本会话属于 worker「%s」(id %s)。\n", firstNonEmpty(name, rec2Name(rec)), id)
-	fmt.Fprintf(&b, "共享工作目录:%s\n", dir)
+	workerDir := dir
+	if rec != nil {
+		workerDir = rec.WorkDir
+	}
+	fmt.Fprintf(&b, "工作目录:%s\n", dirLabel(workerDir, dir))
 	if rec != nil {
 		fmt.Fprintf(&b, "公约版本:v%d\n", rec.NoteVer)
 		if rec.Summary != "" {
@@ -573,7 +596,7 @@ func (a *WorkerToolAPI) List() string {
 		if rec.Summary != "" {
 			fmt.Fprintf(&b, "    摘要:%s\n", rec.Summary)
 		}
-		fmt.Fprintf(&b, "    工作目录:%s\n", rec.WorkDir)
+		fmt.Fprintf(&b, "    工作目录:%s\n", dirLabel(rec.WorkDir, ""))
 	}
 	b.WriteString("join 用 worker_id;新建用 create。")
 	return b.String()
@@ -605,11 +628,31 @@ func (a *WorkerToolAPI) Join(workerID string) string {
 	if err != nil {
 		return "加入 worker 失败: " + err.Error()
 	}
+	hint := "用 history 看同 worker 的其他会话在做什么。\n" + conventionBlock(rec)
+	if strings.TrimSpace(rec.WorkDir) == "" {
+		// The fixed 其他 worker has no shared directory by design.
+		return fmt.Sprintf(
+			"已加入 worker「%s」(id %s)。这个 worker 不设共享目录,本会话继续用自己的目录:%s\n%s",
+			rec.Name, rec.WorkerID, a.workDirOf(), hint)
+	}
 	return fmt.Sprintf(
 		"已加入 worker「%s」(id %s)。\n共享工作目录:%s\n"+
 			"本回合已建的工具仍指向旧目录,后续文件操作请用绝对路径;下一个任务起工作目录自动切到上面这个。\n"+
-			"用 history 看同 worker 的其他会话在做什么。\n%s",
-		rec.Name, rec.WorkerID, rec.WorkDir, conventionBlock(rec))
+			"%s",
+		rec.Name, rec.WorkerID, rec.WorkDir, hint)
+}
+
+// dirLabel renders a worker's directory for a model-facing result. A worker with
+// no shared directory (the fixed 其他) would otherwise print an empty path, which
+// reads like a bug — so say what it means instead.
+func dirLabel(workerDir, ownDir string) string {
+	if strings.TrimSpace(workerDir) != "" {
+		return workerDir
+	}
+	if ownDir != "" {
+		return ownDir + "(该 worker 不设共享目录,上面是本会话自己的目录)"
+	}
+	return "(不设共享目录,会话保持自己的目录)"
 }
 
 // conventionBlock renders a worker's current 公约 for a tool result. The version
@@ -620,7 +663,7 @@ func conventionBlock(rec *WorkerRecord) string {
 		return ""
 	}
 	if rec.NoteVer < 1 || strings.TrimSpace(rec.Note) == "" {
-		return "公约:还没有。做完这活可以用 note_write 补几条简短约定(需用户确认)。"
+		return "公约:还没有(公约只能由用户在界面里写,你只能 note_read)。"
 	}
 	return fmt.Sprintf("公约 v%d,按它执行:\n<convention>\n%s\n</convention>\n%s",
 		rec.NoteVer, strings.TrimRight(rec.Note, "\n"), noteMarker(rec.WorkerID, rec.NoteVer))
@@ -704,19 +747,6 @@ func (a *WorkerToolAPI) NoteRead() string {
 		return "本会话还没有归属 worker,没有公约可读。"
 	}
 	return fmt.Sprintf("公约 v%d\n%s", rec.NoteVer, firstNonEmpty(strings.TrimSpace(rec.Note), "(空的)"))
-}
-
-func (a *WorkerToolAPI) NoteWrite(content string) string {
-	rec := a.ownWorker()
-	if rec == nil {
-		return "本会话还没有归属 worker,写不了公约(先 join 或 create)。"
-	}
-	ver, err := a.svc.WriteNote(rec.WorkerID, content)
-	if err != nil {
-		return "写公约失败: " + err.Error()
-	}
-	return fmt.Sprintf("已写入公约 v%d,同 worker 的其他会话下一轮自动收到更新。\n%s",
-		ver, noteMarker(rec.WorkerID, ver))
 }
 
 func (a *WorkerToolAPI) workDirOf() string {

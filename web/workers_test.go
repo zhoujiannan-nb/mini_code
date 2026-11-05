@@ -119,11 +119,28 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 			WorkerID string `json:"worker_id"`
 			Sessions int    `json:"sessions"`
 			Builtin  bool   `json:"builtin"`
+			Reserved bool   `json:"reserved"`
 		} `json:"workers"`
 		Unassigned int `json:"unassigned"`
 	}
 	workerReq(t, "GET", srv.URL+"/api/workers", "", &list)
-	if len(list.Workers) != 1 || list.Workers[0].Sessions != 1 || list.Unassigned != 0 {
+	// The list always carries the fixed 其他 bucket plus the one created here.
+	var mine, other int
+	for _, wk := range list.Workers {
+		switch {
+		case wk.WorkerID == created.WorkerID:
+			mine++
+			if wk.Sessions != 1 || wk.Builtin || wk.Reserved {
+				t.Fatalf("the created worker is reported wrong: %+v", wk)
+			}
+		case wk.WorkerID == "w-other":
+			other++
+			if wk.Sessions != 0 || wk.Builtin || !wk.Reserved {
+				t.Fatalf("the fixed 其他 bucket is reported wrong: %+v", wk)
+			}
+		}
+	}
+	if mine != 1 || other != 1 || len(list.Workers) != 2 || list.Unassigned != 0 {
 		t.Fatalf("worker list wrong: %+v", list)
 	}
 

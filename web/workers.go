@@ -28,12 +28,15 @@ func (s *server) workerService() *session.WorkerService {
 // workerView is one worker bucket as the sidebar needs it. The 公约 body itself is
 // left out (it can be 6000 chars); the editor fetches it per worker.
 type workerView struct {
-	WorkerID  string `json:"worker_id"`
-	Name      string `json:"name"`
-	Summary   string `json:"summary"`
-	WorkDir   string `json:"work_dir"`
-	NoteVer   int    `json:"note_ver"`
-	Builtin   bool   `json:"builtin"`
+	WorkerID string `json:"worker_id"`
+	Name     string `json:"name"`
+	Summary  string `json:"summary"`
+	WorkDir  string `json:"work_dir"`
+	NoteVer  int    `json:"note_ver"`
+	Builtin  bool   `json:"builtin"`
+	// Reserved marks the fixed 其他 worker: joinable and always present, so the
+	// sidebar must not offer to delete it.
+	Reserved  bool   `json:"reserved"`
 	Sessions  int    `json:"sessions"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
@@ -62,6 +65,7 @@ func (s *server) handleWorkersList(w http.ResponseWriter, r *http.Request) {
 			WorkDir:   rec.WorkDir,
 			NoteVer:   rec.NoteVer,
 			Builtin:   rec.Builtin,
+			Reserved:  session.IsReservedWorker(rec.WorkerID),
 			Sessions:  rec.Sessions,
 			CreatedAt: rec.CreatedAt,
 			UpdatedAt: rec.UpdatedAt,

@@ -14,6 +14,7 @@ package session
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -38,6 +39,20 @@ const WorkerArchivedID = "w-archived"
 
 // WorkerArchivedName is the display name of the built-in archived bucket.
 const WorkerArchivedName = "已归档"
+
+// WorkerOtherID / WorkerOtherName are the fixed catch-all worker. Unlike the
+// built-in buckets above it is a normal, joinable worker (sessions land there
+// when they belong to no line of work in particular) — it just cannot be
+// deleted or renamed, so "there is always somewhere to put this" holds even
+// when the worker cap is reached. Its id is a constant, so migrations and the
+// UI can point at it without a lookup.
+const (
+	WorkerOtherID   = "w-other"
+	WorkerOtherName = "其他"
+)
+
+// IsReservedWorker reports the worker no delete may remove.
+func IsReservedWorker(workerID string) bool { return workerID == WorkerOtherID }
 
 // WorkerRecord is one worker: what it is about, where its shared workspace
 // lives, and its convention text (stored in this row, versioned).
@@ -83,7 +98,38 @@ func (s *SessionStore) initWorkers() {
 	s.migrateWorkerID()
 	s.migrateWorkerNote()
 	s.migrateArchivedToWorker()
+	s.ensureOtherWorker()
 	s.db.InitIndex(`CREATE INDEX IF NOT EXISTS idx_sessions_worker ON sessions(worker_id)`)
+}
+
+// ensureOtherWorker creates the fixed 其他 worker. It is seeded on every start
+// (id is a constant, so the check is one row) because it is what makes the
+// worker cap survivable: with at most MaxWorkers lines of work there always has
+// to be one bucket you cannot run out of. It carries no directory on purpose —
+// a session filed under 其他 keeps its own working folder.
+func (s *SessionStore) ensureOtherWorker() {
+	if existing, _ := s.db.FetchOne("SELECT worker_id FROM workers WHERE worker_id = ?", WorkerOtherID); existing != nil {
+		return
+	}
+	now := time.Now().Format(time.RFC3339)
+	if _, err := s.db.Execute(
+		"INSERT INTO workers (worker_id, name, summary, work_dir, note, note_ver, builtin, created_at, updated_at) VALUES (?, ?, '', '', '', 0, 0, ?, ?)",
+		WorkerOtherID, WorkerOtherName, now, now); err == nil {
+		slog.Info("seeded the fixed 其他 worker", "worker", WorkerOtherID)
+	}
+}
+
+// countWorkers counts the real lines of work (built-in buckets like 已归档 are
+// not lines of work and never count). WorkerService.Create uses it for the cap.
+func (s *SessionStore) countWorkers() (int, error) {
+	row, err := s.db.FetchOne("SELECT COUNT(*) AS n FROM workers WHERE COALESCE(builtin, 0) = 0")
+	if err != nil {
+		return 0, err
+	}
+	if row == nil {
+		return 0, nil
+	}
+	return asInt(row["n"]), nil
 }
 
 // workerCols is the column list every worker SELECT shares. note_path stays in
@@ -235,7 +281,7 @@ func (s *SessionStore) ListWorkers() ([]WorkerRecord, error) {
 
 // GetWorkerByName looks a worker up by its (unique-by-convention) name.
 func (s *SessionStore) GetWorkerByName(name string) (*WorkerRecord, error) {
-	row, err := s.db.FetchOne("SELECT " + workerCols + " FROM workers WHERE name = ?", name)
+	row, err := s.db.FetchOne("SELECT "+workerCols+" FROM workers WHERE name = ?", name)
 	if err != nil || row == nil {
 		return nil, err
 	}

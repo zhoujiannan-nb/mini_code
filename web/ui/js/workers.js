@@ -77,15 +77,17 @@ function paintWorkerBar() {
 
   const sub = $("#worker-sub");
   if (!sub) return;
-  if (!w || !w.work_dir) {
-    // "未分配"没有共享目录,原来那行解释性小字("未分配:新会话会自己判断…")是纯
+  if (!w || (!w.work_dir && !w.reserved)) {
+    // "未分配"/"已归档"没有共享目录,原来那行解释性小字("未分配:新会话会自己判断…")是纯
     // 噪音,还老跟下拉菜单打架 —— 删了。空的 .worker-sub 由 CSS 的 :empty 折叠,不留空隙。
     sub.innerHTML = "";
   } else {
+    // 固定的「其他」能写公约、能改摘要,但删不掉 —— 不渲染 🗑。
     sub.innerHTML =
       '<button class="wk-sub-btn" id="wk-note-btn" title="查看/编辑公约(共享给这个 worker 的全部会话)">📄 公约</button>' +
       '<button class="wk-sub-btn" id="wk-summary-btn" title="改写摘要(新会话靠它决定加入哪个 worker)">✎ 摘要</button>' +
-      '<button class="wk-sub-btn wk-sub-danger" id="wk-del-btn" title="删除 worker 及其全部会话(目录保留)">🗑</button>';
+      (w.reserved ? "" :
+        '<button class="wk-sub-btn wk-sub-danger" id="wk-del-btn" title="删除 worker 及其全部会话(目录保留)">🗑</button>');
     const bind = (sel, fn) => { const el = $(sel); if (el) el.addEventListener("click", fn); };
     bind("#wk-note-btn", () => openNoteEditor(w.worker_id));
     bind("#wk-summary-btn", () => editSummary(w.worker_id));
