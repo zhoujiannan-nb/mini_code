@@ -36,24 +36,30 @@ function userAvatarBox(cls) {
     'style="background:' + USER_FALLBACK_BG + ';color:#fff">你</div>';
 }
 // agent 头像块:统一默认头像(墨色 + "M"),不再从会话派生(标题首字 + id 哈希色)。
-// state.agentAvatar 非空(以后设置里上传)→ 渲染图片;data-aav 记录基础类名,
-// 换头像后 paintAgentAvatarDom() 原地重绘。照 userAvatarBox 那套结构写的。
+// state.agentAvatar 非空(设置里上传)→ 渲染图片。data-aav 记下 "类名|标签",
+// 换头像后 paintAgentAvatarDom() 按它原地重绘。
+// tag 传 "span"(侧栏条目那种)时不追加 -fallback:那一档只有一套盒子,底色靠
+// .agent-ava 覆盖;消息行才有 c-avatar(图) / c-avatar-fallback(字)两版。
 const AGENT_DEFAULT_LETTER = "M";
-function agentAvatarBox(cls) {
+function agentAvatarBox(cls, tag) {
+  const t = tag || "div";
   const s = state.sessions.find(x => x.session_id === state.current);
   const name = (s && s.title) || "Mini Code";
+  const mark = cls + "|" + t;
   if (state.agentAvatar) {
-    return '<div class="' + cls + '" data-aav="' + cls + '" title="' + esc(name) + '">' +
-      '<img src="' + state.agentAvatar + '" alt="agent 头像"></div>';
+    return "<" + t + ' class="' + cls + '" data-aav="' + mark + '" title="' + esc(name) + '">' +
+      '<img src="' + state.agentAvatar + '" alt="agent 头像"></' + t + ">";
   }
-  return '<div class="' + cls + '-fallback agent-ava" data-aav="' + cls + '" title="' + esc(name) + '">' +
-    AGENT_DEFAULT_LETTER + "</div>";
+  const solid = tag ? cls : cls + "-fallback";
+  return "<" + t + ' class="' + solid + ' agent-ava" data-aav="' + mark + '" title="' + esc(name) + '">' +
+    AGENT_DEFAULT_LETTER + "</" + t + ">";
 }
-// agent 头像变更后:页面里所有 agent 头像原地重绘(TODO 设置页加上传入口后接这里)
+// agent 头像变更后(设置里换图 / 恢复默认):页面里所有 agent 头像原地重绘
 function paintAgentAvatarDom() {
   document.querySelectorAll("[data-aav]").forEach(el => {
+    const parts = (el.dataset.aav || "").split("|");
     const tmp = document.createElement("div");
-    tmp.innerHTML = agentAvatarBox(el.dataset.aav);
+    tmp.innerHTML = agentAvatarBox(parts[0], parts[1] || "div");
     el.replaceWith(tmp.firstElementChild);
   });
 }
@@ -570,3 +576,53 @@ async function groupSend() {
   }
 }
 
+/* ---------------- agent 头像(全局就一张脸,设置里可换)---------------- */
+// 与用户头像两套独立存储:agent 这张存 config.agent_avatar,走 /api/agent-avatar。
+// 没设置就是内置默认那颗(墨色 + "M"),设置里换了立刻原地重绘,不用刷新。
+function paintSettingsAgentAvatar() {
+  const el = $("#c-agent-ava");
+  if (el) el.innerHTML = agentAvatarBox("c-avatar");
+}
+async function saveAgentAvatar(dataURL) {
+  await api("/api/agent-avatar", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ avatar: dataURL }),
+  });
+  state.agentAvatar = dataURL;
+  paintAgentAvatarDom();
+  paintSettingsAgentAvatar();
+  paintChatAva("");
+}
+// 启动时拉取(刷新/多开保持同步);拉不到就用默认头像,不阻塞界面
+async function loadAgentAvatar() {
+  try {
+    const r = await api("/api/agent-avatar");
+    state.agentAvatar = r.avatar || "";
+  } catch (e) { /* 用默认 */ }
+  // 会话列表比这一步先渲染,已经画好的侧栏头像在这里补一次
+  paintAgentAvatarDom();
+  paintSettingsAgentAvatar();
+}
+const _agentAvaBtn = $("#btn-agent-ava");
+if (_agentAvaBtn) _agentAvaBtn.addEventListener("click", () => $("#agent-ava-file").click());
+const _agentAvaClear = $("#btn-agent-ava-clear");
+if (_agentAvaClear) _agentAvaClear.addEventListener("click", async () => {
+  if (!state.agentAvatar) { toast("当前已经是默认头像", ""); return; }
+  try {
+    await saveAgentAvatar("");
+    toast("已恢复默认头像", "ok");
+  } catch (e) { toast("恢复失败:" + e.message, "err"); }
+});
+const _agentAvaFile = $("#agent-ava-file");
+if (_agentAvaFile) _agentAvaFile.addEventListener("change", async (e) => {
+  const f = (e.target.files || [])[0];
+  e.target.value = "";
+  if (!f) return;
+  if (!/image\/(jpeg|png|webp)/.test(f.type)) { toast("仅支持 jpg / png / webp", "err"); return; }
+  if (f.size > 4 * 1024 * 1024) { toast("图片超过 4MB", "err"); return; }
+  try {
+    const dataURL = await fileToAvatarDataURL(f); // 复用用户头像那套:居中裁 256×256
+    await saveAgentAvatar(dataURL);
+    toast("agent 头像已更新", "ok");
+  } catch (err) { toast("保存失败:" + err.message, "err"); }
+});

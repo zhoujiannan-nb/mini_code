@@ -30,6 +30,12 @@ type AppConfig struct {
 	// Empty = the UI renders the first-character + hash-color fallback.
 	UserAvatar string `json:"user_avatar,omitempty"`
 
+	// AgentAvatar is the assistant's avatar, same data-URL format, uploaded from
+	// the settings dialog. The agent has one face for every session (a plain
+	// ink tile with "M"), so this is a global override, not per-session state.
+	// Empty = that built-in default tile.
+	AgentAvatar string `json:"agent_avatar,omitempty"`
+
 	// BootAnim configures the startup animation overlay (see bootanim.go).
 	// An all-zero value from an older config file is filled with defaults
 	// (applyBootAnimDefaults), which is also where the fields get normalized.

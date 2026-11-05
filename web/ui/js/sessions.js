@@ -66,7 +66,7 @@ function renderSessions() {
     const statusText = s.active ? "执行中" : { completed: "已完成", failed: "失败", interrupted: "已中断" }[s.status] || "";
     el.innerHTML =
       '<div class="sess-title-row">' +
-      '<span class="sess-ava" style="background:' + hashColor(s.session_id) + '">' + esc(firstChar(s.title)) + '</span>' +
+      agentAvatarBox("sess-ava", "span") +
       '<div class="sess-title">' + esc(s.title || "未命名会话") + '</div></div>' +
       '<div class="sess-meta"><span class="s ' + dotClass + '"></span>' +
       (s.mode === "cautious" ? '<span title="谨慎模式">🛡</span>' : "") +

@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -125,6 +126,8 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /api/healthz", s.handleHealthz)
 	mux.HandleFunc("GET /api/avatar", s.handleUserAvatarGet)
 	mux.HandleFunc("POST /api/avatar", s.handleUserAvatarSet)
+	mux.HandleFunc("GET /api/agent-avatar", s.handleAgentAvatarGet)
+	mux.HandleFunc("POST /api/agent-avatar", s.handleAgentAvatarSet)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
@@ -261,50 +264,82 @@ var userAvatarPrefixes = []string{
 	"data:image/webp;base64,",
 }
 
+// decodeAvatarBody reads {"avatar": "<data URL>"} out of an avatar POST and
+// validates it. An empty avatar means "clear it back to the built-in default".
+// Shared by the user-avatar and the agent-avatar endpoints so both accept
+// exactly the same shapes and limits.
+func decodeAvatarBody(r *http.Request) (string, error) {
+	var req struct {
+		Avatar string `json:"avatar"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return "", errors.New("invalid request body")
+	}
+	avatar := strings.TrimSpace(req.Avatar)
+	if avatar == "" {
+		return "", nil
+	}
+	rest, ok := "", false
+	for _, p := range userAvatarPrefixes {
+		if strings.HasPrefix(avatar, p) {
+			rest, ok = avatar[len(p):], true
+			break
+		}
+	}
+	if !ok {
+		return "", errors.New("avatar must be a data URL (data:image/jpeg|png|webp;base64,...)")
+	}
+	raw, err := base64.StdEncoding.DecodeString(rest)
+	if err != nil {
+		return "", fmt.Errorf("avatar base64 is invalid: %v", err)
+	}
+	if len(raw) > 4*1024*1024 {
+		return "", errors.New("avatar too large (max 4MB after decode)")
+	}
+	return avatar, nil
+}
+
+// saveAvatarConfig writes an avatar into the live config. pick names which
+// field to set, so the two endpoints share the save/error/logging path.
+func (s *server) saveAvatarConfig(w http.ResponseWriter, avatar string, pick func(*config.AppConfig, string)) {
+	cfg := s.be.GetConfig()
+	pick(cfg, avatar)
+	if _, err := s.be.SaveConfig(cfg); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	slog.Info("avatar updated", "bytes", len(avatar))
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "avatar": avatar})
+}
+
 func (s *server) handleUserAvatarGet(w http.ResponseWriter, r *http.Request) {
 	cfg := s.be.GetConfig()
 	writeJSON(w, http.StatusOK, map[string]string{"avatar": cfg.UserAvatar})
 }
 
 func (s *server) handleUserAvatarSet(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Avatar string `json:"avatar"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid request body")
+	avatar, err := decodeAvatarBody(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.Avatar = strings.TrimSpace(req.Avatar)
-	if req.Avatar != "" {
-		rest, ok := "", false
-		for _, p := range userAvatarPrefixes {
-			if strings.HasPrefix(req.Avatar, p) {
-				rest, ok = req.Avatar[len(p):], true
-				break
-			}
-		}
-		if !ok {
-			writeErr(w, http.StatusBadRequest, "avatar must be a data URL (data:image/jpeg|png|webp;base64,...)")
-			return
-		}
-		raw, err := base64.StdEncoding.DecodeString(rest)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "avatar base64 is invalid: "+err.Error())
-			return
-		}
-		if len(raw) > 4*1024*1024 {
-			writeErr(w, http.StatusBadRequest, "avatar too large (max 4MB after decode)")
-			return
-		}
-	}
+	s.saveAvatarConfig(w, avatar, func(c *config.AppConfig, v string) { c.UserAvatar = v })
+}
+
+// The agent has a single avatar for all sessions (see ui/js/groups.js:
+// agentAvatarBox): empty config value = the built-in ink tile with "M".
+func (s *server) handleAgentAvatarGet(w http.ResponseWriter, r *http.Request) {
 	cfg := s.be.GetConfig()
-	cfg.UserAvatar = req.Avatar
-	if _, err := s.be.SaveConfig(cfg); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	writeJSON(w, http.StatusOK, map[string]string{"avatar": cfg.AgentAvatar})
+}
+
+func (s *server) handleAgentAvatarSet(w http.ResponseWriter, r *http.Request) {
+	avatar, err := decodeAvatarBody(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	slog.Info("user avatar updated", "bytes", len(req.Avatar))
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "avatar": req.Avatar})
+	s.saveAvatarConfig(w, avatar, func(c *config.AppConfig, v string) { c.AgentAvatar = v })
 }
 
 // --- health & status ---

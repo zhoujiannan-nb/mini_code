@@ -300,7 +300,8 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 	modelsChanged := string(oldModelsJSON) != string(newModelsJSON)
 
 	if !modelsChanged && old.WebPort == cfg.WebPort && old.Compaction() == cfg.Compaction() &&
-		old.UserAvatar == cfg.UserAvatar && config.SameBootAnim(old.BootAnim, cfg.BootAnim) {
+		old.UserAvatar == cfg.UserAvatar && old.AgentAvatar == cfg.AgentAvatar &&
+		config.SameBootAnim(old.BootAnim, cfg.BootAnim) {
 		return &web.SaveResult{Message: "配置没有变化"}, nil
 	}
 

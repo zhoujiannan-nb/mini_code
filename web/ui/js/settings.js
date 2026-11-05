@@ -350,6 +350,9 @@ async function openSettings() {
   // 用户头像以服务端配置为准(个人信息区同步显示)
   state.userAvatar = cfg.user_avatar || "";
   paintSettingsUserAvatar();
+  // agent 头像同理:全局一张脸,设置里可换/可恢复默认
+  state.agentAvatar = cfg.agent_avatar || "";
+  paintSettingsAgentAvatar();
   // 模型列表草稿(服务端加载时已保证 models 非空)
   modelDraft = (cfg.models && cfg.models.length ? cfg.models : [cfg.model || {}]).map(m =>
     Object.assign(modelTemplate(), m));
@@ -436,6 +439,7 @@ async function saveSettings() {
     models,
     default_model: defModel,
     user_avatar: state.userAvatar, // 透传用户头像,避免整份配置保存时丢失
+    agent_avatar: state.agentAvatar, // 同理透传 agent 头像
   };
   try {
     const r = await api("/api/config", {

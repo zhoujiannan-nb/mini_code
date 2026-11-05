@@ -25,8 +25,11 @@ function stepsStrip() {            // 懒创建折叠条(一张独立卡,逐步�
    const div = addCard("steps",
      '<div class="m-card"><details class="m-steps"><summary></summary>' +
      '<div class="m-steps-wrap"><div class="m-steps-body"></div></div></details></div>');
-   STEPS.card = div;
-   STEPS.det = div.querySelector("details");
+    STEPS.card = div;
+    // 折叠条也带上 agent 头像:进行中那段时间左边不是一片空白,和下面的回答卡左对齐
+    // (.msg.steps 在 layers.css v8 里已改成 flex 行 + 去掉原来的左缩进)
+    div.insertAdjacentHTML("afterbegin", agentAvatarBox("c-avatar"));
+    STEPS.det = div.querySelector("details");
    STEPS.body = div.querySelector(".m-steps-body");
    // <details> 被浏览器原生开合时不会走我们的重绘,这里挂个 toggle 只改右侧提示字
    STEPS.det.addEventListener("toggle", function () {
@@ -177,6 +180,7 @@ function stepsLiveStrip() {
     '<div class="m-card ms-live"><div class="ms-live-hd"><span class="pulse gray"></span>正在执行</div>' +
     '<div class="ms-live-body"></div></div>');
   LIVE.body = LIVE.card.querySelector(".ms-live-body");
+  LIVE.card.insertAdjacentHTML("afterbegin", agentAvatarBox("c-avatar")); // 同「执行过程」条:带 agent 头像
   return LIVE.body;
 }
 function stepsLivePush(html) {

@@ -198,7 +198,8 @@
   paintMode();
   paintContextReminders();
   syncApprovals(); // 页面刷新后同步未决审批
-  await loadUserAvatar(); // 用户头像:先于会话恢复,历史消息直接带头像渲染
+  await loadUserAvatar();  // 用户头像:先于会话恢复,历史消息直接带头像渲染
+  await loadAgentAvatar(); // agent 头像同理(没设置就是默认那颗墨色 M)
   // 刷新页面后恢复之前打开的会话(含其执行状态);会话已删除则丢弃记录
   const saved = readSavedSession();
   if (saved) {

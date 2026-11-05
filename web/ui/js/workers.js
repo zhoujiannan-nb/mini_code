@@ -122,6 +122,20 @@ async function switchWorker(id) {
 }
 
 /* ---------------- worker 菜单(切换 / 新建)---------------- */
+// 菜单图标:内置分桶各有一张固定的脸(照下拉设计稿),真 worker 一律文件夹。
+// 用内联 SVG 不用 emoji —— emoji 在不同字体下大小/基线全飘,颜色也没法跟主题走。
+const WK_ICONS = {
+  "*": '<path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3.5 12.6 12 17.3l8.5-4.7"/>',
+  "": '<rect x="4.2" y="4.2" width="15.6" height="15.6" rx="3.2" stroke-dasharray="3.6 3"/>',
+  "w-archived": '<path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1Z"/>',
+};
+const WK_ICON_FOLDER = '<path d="M4 7.2A2.2 2.2 0 0 1 6.2 5h3.4l1.8 2.2H17.8A2.2 2.2 0 0 1 20 9.4v7.4A2.2 2.2 0 0 1 17.8 19H6.2A2.2 2.2 0 0 1 4 16.8V7.2Z"/>';
+function wkIcon(id) {
+  const d = Object.prototype.hasOwnProperty.call(WK_ICONS, id) ? WK_ICONS[id] : WK_ICON_FOLDER;
+  return '<svg class="wk-menu-ico" viewBox="0 0 24 24" width="16" height="16" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    d + "</svg>";
+}
 function closeWorkerMenu() {
   const m = $("#worker-menu");
   if (m) { m.classList.remove("open"); m.innerHTML = ""; }
@@ -134,11 +148,15 @@ function openWorkerMenu(anchor) {
   if (!menu) return;
   if (menu.classList.contains("open")) { closeWorkerMenu(); return; }
   const id = workerBucketId();
-  let html = '<div class="wk-menu-head">切换 Worker</div>';
+  // 设计稿里没有"切换 Worker"这行小标题:条上已经写着 worker | 全部 · 3,不再重复一遍
+  let html = "";
   for (const w of workerBuckets()) {
-    html += '<div class="wk-menu-item' + (w.worker_id === id ? " cur" : "") + '" data-id="' + esc(w.worker_id) + '">' +
+    const cur = w.worker_id === id;
+    html += '<div class="wk-menu-item' + (cur ? " cur" : "") + '" data-id="' + esc(w.worker_id) + '">' +
+      wkIcon(w.worker_id) +
       '<span class="wk-menu-name">' + esc(w.name) + '</span>' +
-      '<span class="wk-menu-n">' + (w.sessions || 0) + '</span></div>';
+      '<span class="wk-menu-n">' + (w.sessions || 0) + '</span>' +
+      (cur ? '<span class="wk-menu-tick">✓</span>' : "") + "</div>";
   }
   menu.innerHTML = html;
   menu.classList.add("open");
@@ -161,6 +179,7 @@ function openWorkerMoveMenu(sess, anchor) {
   for (const w of workerBuckets()) {
     if (w.builtin && w.worker_id !== cur) continue; // 内置分桶只给已经在里面的会话看到
     html += '<div class="wk-menu-item' + (w.worker_id === cur ? " cur" : "") + '" data-id="' + esc(w.worker_id) + '">' +
+      wkIcon(w.worker_id) +
       '<span class="wk-menu-name">' + esc(w.name) + '</span>' +
       '<span class="wk-menu-n">' + (w.worker_id === cur ? "当前" : "") + '</span></div>';
   }

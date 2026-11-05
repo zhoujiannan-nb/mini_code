@@ -114,3 +114,47 @@ func TestUserAvatarSetGet(t *testing.T) {
 		t.Fatalf("clear: cfg.UserAvatar = %q, want empty", be.cfg.UserAvatar)
 	}
 }
+
+// TestAgentAvatarSetGet covers the agent-side twin of the avatar API: setting
+// the agent avatar must not touch the user avatar (the two share one config
+// struct and one validation path), and clearing it falls back to the built-in
+// default tile the UI renders.
+func TestAgentAvatarSetGet(t *testing.T) {
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte{0x89, 'P', 'N', 'G'})
+	be := &avatarFakeBE{cfg: &config.AppConfig{UserAvatar: "data:image/png;base64,dXNlcg=="}}
+	s := &server{be: be}
+
+	req := httptest.NewRequest("POST", "/api/agent-avatar", strings.NewReader(`{"avatar":"`+dataURL+`"}`))
+	rec := httptest.NewRecorder()
+	s.handleAgentAvatarSet(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set: status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if be.cfg.AgentAvatar != dataURL {
+		t.Fatalf("set: cfg.AgentAvatar = %q, want the stored data URL", be.cfg.AgentAvatar)
+	}
+	if be.cfg.UserAvatar == dataURL || be.cfg.UserAvatar == "" {
+		t.Fatalf("set: user avatar was clobbered: %q", be.cfg.UserAvatar)
+	}
+
+	req = httptest.NewRequest("GET", "/api/agent-avatar", nil)
+	rec = httptest.NewRecorder()
+	s.handleAgentAvatarGet(rec, req)
+	if body, _ := io.ReadAll(rec.Body); !strings.Contains(string(body), dataURL) {
+		t.Fatalf("get: body does not contain the avatar: %.200q", body)
+	}
+
+	req = httptest.NewRequest("POST", "/api/agent-avatar", strings.NewReader(`{"avatar":"data:image/gif;base64,AAAA"}`))
+	rec = httptest.NewRecorder()
+	s.handleAgentAvatarSet(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad prefix: status = %d, want 400", rec.Code)
+	}
+
+	req = httptest.NewRequest("POST", "/api/agent-avatar", strings.NewReader(`{"avatar":""}`))
+	rec = httptest.NewRecorder()
+	s.handleAgentAvatarSet(rec, req)
+	if rec.Code != http.StatusOK || be.cfg.AgentAvatar != "" {
+		t.Fatalf("clear: status = %d cfg.AgentAvatar = %q, want 200 and empty", rec.Code, be.cfg.AgentAvatar)
+	}
+}

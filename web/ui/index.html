@@ -423,6 +423,17 @@ window.__mcBoot = __mcBoot;
                 </div>
                 <span class="hint">jpg / png / webp,≤4MB,裁成方形</span>
               </div>
+              <!-- agent 头像:全局就一张脸(所有会话、消息区、侧栏、聊天头共用),
+                   不设置就是内置那颗墨色 M。上传立刻生效(原地重绘),不用保存。 -->
+              <div class="frow hinted"><label>agent 头像</label>
+                <div class="u-flex u-gap10">
+                  <span id="c-agent-ava"></span>
+                  <button class="mode-btn" id="btn-agent-ava">上传 / 更换头像</button>
+                  <button class="mode-btn" id="btn-agent-ava-clear">恢复默认</button>
+                </div>
+                <span class="hint">jpg / png / webp,≤4MB,裁成方形;默认 = 墨色 + M</span>
+                <input type="file" id="agent-ava-file" accept="image/jpeg,image/png,image/webp" hidden>
+              </div>
             </div>
 
             <div class="pl-sec">
