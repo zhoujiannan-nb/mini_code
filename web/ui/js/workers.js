@@ -146,6 +146,39 @@ async function switchWorker(id) {
   else resetToNew();
 }
 
+/* ---------------- 侧栏跟着会话走 ---------------- */
+// followSessionWorker:会话归属哪个 worker,切换条就切到哪个区。
+// 和 switchWorker 的区别是它**不**去挑「新区的第一条会话」——要看的还是这一条,
+// 谁调用谁负责 selectSession。返回是否真的换了区。
+async function followSessionWorker(workerID) {
+  const id = workerID || "";
+  // 已经在这个区就别折腾了:打开会话是高频动作,不该为它多打一次 /api/workers。
+  if (id === workerBucketId() && (id === "" || (state.workers || []).some(w => w.worker_id === id))) return false;
+  // 先拉一次 worker 列表:agent 可能在会话里刚 create 出一条新线,列表里没有它,
+  // 直接切过去只会是个空区。
+  await loadWorkers();
+  if (id !== "" && !(state.workers || []).some(w => w.worker_id === id)) return false; // 已被删掉:别切
+  if (id === workerBucketId()) return false;
+  state.worker = id;
+  rememberWorker(id);
+  closeWorkerMenu();
+  await loadSessions(null, true);
+  return true;
+}
+
+// resyncSessionWorker:agent 在会话里自己改了归属(workers 工具的 join/create/leave)。
+// 服务端不为这个单独推事件,所以只能在工具跑完后把这条会话重新读一遍对齐 ——
+// 否则「新建会话 → agent 帮你 join 了 worker」之后侧栏还停在「未分配」,看着像没生效。
+async function resyncSessionWorker(sid) {
+  if (!sid) return;
+  try {
+    const data = await api("/api/sessions/" + sid);
+    // 读回来的这段时间用户可能已经切走了:别拿旧会话的归属去改现在的侧栏。
+    if (state.current !== sid) return;
+    await followSessionWorker((data && data.session && data.session.worker_id) || "");
+  } catch (e) { /* 对齐失败就算了:下一次列表轮询照常收敛 */ }
+}
+
 /* ---------------- worker 菜单(切换 / 新建)---------------- */
 // 菜单图标:未分配是一格虚线框,真 worker 一律文件夹。
 // 用内联 SVG 不用 emoji —— emoji 在不同字体下大小/基线全飘,颜色也没法跟主题走。

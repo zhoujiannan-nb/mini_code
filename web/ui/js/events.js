@@ -82,6 +82,9 @@
       break;
     case "tool_end":
       markToolPendingDone(m.tool_result, m.tool_name);
+      // workers 工具会改这条会话自己的归属(join/create/leave):跑完立刻把侧栏
+      // 对齐到新的 worker,不然新会话加入了 worker 还停在「未分配」。
+      if (m.tool_name === "workers" && typeof resyncSessionWorker === "function") resyncSessionWorker(state.current);
       break;
     case "context_usage":
       // 每轮 loop 开头(压缩检查后)后端推送的上下文 token 数,直接画,不走 HTTP

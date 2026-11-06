@@ -191,6 +191,10 @@ async function selectSession(id) {
     // 工作目录:聊天里的相对路径要按它解析(不是服务进程的 cwd)
     state.workDir = s.work_dir || "";
     setChatTitle(s.title || "会话 " + id.slice(0, 8), (s.work_dir || "").slice(0, 60));
+    // 侧栏跟着会话走:从 mc-session 芯片跳进来的会话可能属于另一个 worker,
+    // 不切过去就像跳错了地方——左侧列表里连它自己都找不到。不 await:侧栏慢半拍
+    // 不该拖住聊天区的重绘。
+    if (typeof followSessionWorker === "function") followSessionWorker(s.worker_id || "");
     // await 期间该会话若在运行,delta 可能已建好流式块/转圈——renderHistory
     // 会清空整个容器使引用悬空,重绘前再清一次(流式是累积下发,下个 delta 自动补齐)
     liveRemove();
