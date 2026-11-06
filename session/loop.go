@@ -671,9 +671,9 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			// compaction (see lastCompactionTokens).
 			if !need && l.compactionOn {
 				maxInput := l.client.GetMaxInput()
-				// 90% of the context window (clamped to the input budget), not a
-				// fraction of it: how much output was reserved must not move the
-				// point where the session compacts.
+				// 95% of the usable input budget (autoCompactLimit), not a fraction of
+				// the raw context window: how much output was reserved must not move
+				// the point where the session compacts.
 				if l.compactor.ShouldCompactCount(tokens, l.autoCompactLimit()) &&
 					tokens >= l.lastCompactionTokens+recompactGrowTokens(maxInput) {
 					need = true
