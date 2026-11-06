@@ -35,6 +35,14 @@ type titleProbe struct {
 	mu     sync.Mutex
 	calls  []capturedCall
 	notice string // reply for the title request
+	// finish is the finish_reason of the title reply ("" = "stop"). A naming reply
+	// cut off by the budget must still be used, which is what that knob proves.
+	finish string
+	// holdTask, when non-nil, makes an ordinary (task) reply wait until the naming
+	// call has reached the server. A design that titled only after the task
+	// finished would stall here and never produce a title.
+	holdTask chan bool
+	held     sync.Once
 }
 
 func (p *titleProbe) handle(rw http.ResponseWriter, r *http.Request) {
@@ -58,15 +66,27 @@ func (p *titleProbe) handle(rw http.ResponseWriter, r *http.Request) {
 
 	reply := "好的"
 	if isTitle {
+		if p.holdTask != nil {
+			p.held.Do(func() { close(p.holdTask) })
+		}
 		reply = p.notice
 		if reply == "" {
 			reply = "Title: **配置 nginx 的 gzip**\n后面这一行会被丢掉"
 		}
+	} else if p.holdTask != nil {
+		select {
+		case <-p.holdTask:
+		case <-time.After(5 * time.Second):
+		}
+	}
+	finish := "stop"
+	if isTitle && p.finish != "" {
+		finish = p.finish
 	}
 	rw.Header().Set("Content-Type", "text/event-stream")
 	payload, _ := json.Marshal(map[string]interface{}{
 		"choices": []map[string]interface{}{
-			{"delta": map[string]string{"content": reply}, "finish_reason": "stop"},
+			{"delta": map[string]string{"content": reply}, "finish_reason": finish},
 		},
 	})
 	fmt.Fprintf(rw, "data: %s\n\n", payload)
@@ -529,5 +549,56 @@ func TestTitleRequestTurnsThinkingOffOnVLLM(t *testing.T) {
 	}
 	if taskCall.kwargs != "null" {
 		t.Errorf("the task request should carry no chat_template_kwargs, got %s", taskCall.kwargs)
+	}
+}
+
+// TestTitleSurvivesATruncatedReply: the naming call asks for thinking off, but a
+// model that thinks anyway can name the session and then ramble past the output
+// budget. The title arrived before the cut, so it must be kept — this is exactly
+// what the old finish=length guard threw away, and it is why not one session ever
+// got a generated title while a thinking model was wired up.
+func TestTitleSurvivesATruncatedReply(t *testing.T) {
+	probe := &titleProbe{finish: "length"}
+	mgr := newTitleEnv(t, probe)
+	mgr.SetTitlePolicy(true, "")
+	goal := "帮我把 nginx 的 gzip 打开"
+	s := mustSession(t, mgr, goal)
+	titlePrompt(t, s, goal)
+	if got := awaitTitle(t, mgr, s.ID(), "配置 nginx 的 gzip", 5*time.Second); got != "配置 nginx 的 gzip" {
+		t.Fatalf("the title in a truncated reply was thrown away: %q", got)
+	}
+}
+
+// TestTitleDoesNotWaitForTheTask: the naming request goes out with the first
+// message, not when the task finishes. The probe holds the task's answer until it
+// sees the naming call, so a design that waited for the task would run out of here
+// without a title. In the field this is the difference between a sidebar that names
+// a session in a couple of seconds and one that shows "帮我看看这个报错…" for the
+// hour its first task takes.
+func TestTitleDoesNotWaitForTheTask(t *testing.T) {
+	release := make(chan bool)
+	probe := &titleProbe{holdTask: release}
+	mgr := newTitleEnv(t, probe)
+	mgr.SetTitlePolicy(true, "")
+	goal := "先看看这个报错再决定怎么改"
+	s := mustSession(t, mgr, goal)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, _, err := s.Prompt(context.Background(), goal, nil, 1); err != nil {
+			t.Errorf("Prompt(%q): %v", goal, err)
+		}
+	}()
+
+	if got := awaitTitle(t, mgr, s.ID(), "配置 nginx 的 gzip", 5*time.Second); got != "配置 nginx 的 gzip" {
+		t.Fatalf("no title while the task was still unanswered: %q", got)
+	}
+	// The naming call reached the server (that is what released the task reply).
+	// Let the task finish so the session can be closed cleanly.
+	select {
+	case <-done:
+	case <-time.After(6 * time.Second):
+		t.Fatal("the task never finished after the naming call")
 	}
 }

@@ -13,8 +13,10 @@ import (
 //
 // A session is named the moment it is created — the first message, truncated — so
 // the sidebar is never blank. That truncation is a placeholder, and it stays the
-// title unless ONE auxiliary request does better: after its first finished task
-// the session asks a model to name it.
+// title unless ONE auxiliary request does better: as soon as the first message
+// arrives, the session asks a model to name it. Before the task runs, not after —
+// a first task can take an hour or fail outright, and "named later" is how every
+// long-running session kept "帮我看看这个报错…" as its title for the whole day.
 //
 // The request is deliberately small and INDEPENDENT: one user message quoting the
 // first thing the user asked, no assistant turns, no tool list. It does not replay
@@ -72,11 +74,13 @@ const (
 	// titleInputRunes caps how much of the first message the title request quotes:
 	// enough to name a "here is a stack trace" request, cheap enough to be noise.
 	titleInputRunes = 800
-	// titleOutputTokens is the whole output budget of a title request. Thinking is
-	// switched off, so a title costs a dozen tokens; the headroom is for providers
-	// with no thinking switch, where a reasoning model can still think (and gets
-	// cut off, which the caller detects and ignores rather than storing a stub).
-	titleOutputTokens = 256
+	// titleOutputTokens is the whole output budget of a title request. The naming
+	// call asks for thinking off, so a title normally costs a dozen tokens; this
+	// headroom is for what happens when the ask does not land — a provider without
+	// a switch, or a template that ignores enable_thinking — where the model thinks
+	// anyway and the title must still fit behind the drafts. Once per session, so
+	// the worst case is a few hundred reasoning tokens.
+	titleOutputTokens = 1024
 	// titleTimeout bounds the auxiliary request. It runs in the background, so it
 	// is generous — a reasoning model can take a while to produce 8 words.
 	titleTimeout = 60 * time.Second
@@ -213,14 +217,16 @@ func (m *SessionManager) titleClient(s *Session) *provider.ModelClient {
 
 // --- the one request per session ---
 
-// maybeGenerateTitle is the fire-and-forget entry point, called when a task
-// finishes. Only a root session whose title is still the untouched truncation
-// qualifies, and only ever once: the attempt is marked before the request leaves,
-// so a failing title request stays failed instead of being re-tried every task.
+// maybeGenerateTitle is the fire-and-forget entry point, called as the task's first
+// message arrives (before the loop runs, so a long or failing first task cannot
+// keep the placeholder title hostage). Only a root session whose title is still the
+// untouched truncation qualifies, and only ever once: the attempt is marked before
+// the request leaves, so a failing title request stays failed instead of being
+// re-tried every task.
 //
-// messages is the conversation of that finished task (result.Messages). Only the
-// first message the human typed is taken from it — the rest of the conversation is
-// the task's own business (see the file header for why it is not replayed).
+// messages is what the loop was given — from the single first message up to a whole
+// history. Only the first message a human typed is taken from it; the rest is the
+// task's own business (see the file header for why it is not replayed).
 func (s *Session) maybeGenerateTitle(messages []provider.Message) {
 	if s.manager == nil || len(messages) == 0 {
 		return
@@ -335,11 +341,15 @@ func (m *SessionManager) generateTitle(sessionID string, client *provider.ModelC
 		slog.Info("title request refused by the model", "session", sessionID, "err", resp.Error)
 		return
 	}
-	if len(resp.ToolCalls) > 0 || resp.FinishReason == "length" {
-		slog.Info("title request did not answer with a title", "session", sessionID,
-			"tool_calls", len(resp.ToolCalls), "finish", resp.FinishReason)
+	if len(resp.ToolCalls) > 0 {
+		slog.Info("title request answered with a tool call instead of a title", "session", sessionID,
+			"tool_calls", len(resp.ToolCalls))
 		return
 	}
+	// No bail on finish=length, deliberately. A model that thinks while naming can
+	// write the title and then keep talking past the budget; that title is
+	// truncated at worst, and a truncated title still beats the first sentence of
+	// the user's message, which is every alternative here.
 	title := sanitizeTitle(resp.Content)
 	if title == "" || title == fallback {
 		return

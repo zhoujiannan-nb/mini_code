@@ -454,6 +454,11 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	}
 
 	slog.Info("session prompt", "id", s.ID(), "goal", goal[:min(80, len(goal))])
+	// Name the session from this message right now, not after the task. A first task
+	// can run for an hour — or fail — and the sidebar should not sit on
+	// "现在有一个活, 就是 C:\Users…" the whole time. Fire-and-forget, once per
+	// session, and only when the title is still the untouched truncation (title.go).
+	s.maybeGenerateTitle([]provider.Message{{Role: "user", Content: goal}})
 	s.mu.Lock()
 	history := s.record.Messages
 	s.mu.Unlock()
@@ -497,9 +502,6 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 				}
 			}
 		}
-		// Give the session a real title, named from the first thing the human
-		// asked (fire-and-forget, its own small request — see title.go).
-		s.maybeGenerateTitle(result.Messages)
 		return result.Content, reasoning, nil
 	}
 
