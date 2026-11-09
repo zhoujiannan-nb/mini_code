@@ -115,6 +115,20 @@ type AgentLoop struct {
 	// instead of burning the turn budget.
 	emptyRetries int
 
+	// Continue guard (loop_continue.go): a narration-only stop — the model
+	// promises the next action in text and stops WITHOUT a tool call —
+	// must not close the task as completed. A text-only stop in a task
+	// that used tools gets one judge call; "unfinished" steers the loop
+	// another step. toolCallsSeen counts tool calls executed this task
+	// (the deterministic gate), continueSteers counts steers spent, and
+	// toolsSeenAtSteer anchors the stall check (a steer that produced no
+	// new tool call is not retried).
+	continueGuardOn  bool
+	judgeClient      *provider.ModelClient
+	toolCallsSeen    int
+	continueSteers   int
+	toolsSeenAtSteer int
+
 	// userImages carries image data URLs (data:image/...;base64,...) that
 	// are attached to the initial user message as multimodal content parts,
 	// so the model sees them on the very first turn. Set via SetUserImages
@@ -376,6 +390,7 @@ func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tool
 		toolDefinitions:  defs,
 		compactor:        NewContextCompactor(client),
 		compactionOn:     true, // default keeps legacy behavior; callers may opt out
+		continueGuardOn:  true, // narration-only stops get judged before closing (loop_continue.go)
 		onToolCallStart:  onToolCallStart,
 		onToolCallEnd:    onToolCallEnd,
 		onAssistantReply: onAssistantReply,
@@ -886,6 +901,9 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 
 		if len(parsed.toolCalls) > 0 {
 			l.resetTruncation()
+			// Feed the continue-guard gate: this task now has real tool
+			// activity, so a later text-only stop is worth evaluating.
+			l.toolCallsSeen += len(parsed.toolCalls)
 			if ctx.Err() != nil {
 				slog.Info("agent loop interrupted before tool execution", "turn", turn)
 				return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
@@ -944,6 +962,16 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			continue
 		}
 
+		// Continue guard: a narration-only stop ("I'll do X now" with no
+		// tool call) in a task that used tools is judged before closing;
+		// an "unfinished" verdict steers the loop another step instead of
+		// marking the task completed (see loop_continue.go).
+		if steered, guarded := l.tryContinueGuard(ctx, messages, parsed.content, resp.ReasoningContent); guarded {
+			l.persistTurn(turn, steered)
+			messages = steered
+			continue
+		}
+
 		// pure text response -> done. Fold in the earlier truncated chunks
 		// of this same answer (if any) so the caller receives the complete
 		// text, not just the final tail.
@@ -961,7 +989,6 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 type parsedResponse struct {
 	content              string
 	toolCalls            []provider.ToolCall
-	shouldTerminate      bool
 	toolCallError        bool
 	toolCallErrorContent string
 }
@@ -1003,9 +1030,11 @@ func (l *AgentLoop) parseResponse(resp *provider.ChatResponse) parsedResponse {
 		}
 	}
 
-	if resp.FinishReason == "stop" && len(toolCalls) == 0 {
-		return parsedResponse{content: content, toolCalls: toolCalls, shouldTerminate: true}
-	}
+	// A text response with no tool calls ends the task (the pure-text
+	// path in Run). There used to be a shouldTerminate flag keyed on
+	// finish_reason=="stop" here; nothing ever read it, so it was dead
+	// weight: narration-only stops are now handled by the continue guard
+	// (loop_continue.go) right before the task closes.
 	return parsedResponse{content: content, toolCalls: toolCalls}
 }
 
