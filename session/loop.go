@@ -48,7 +48,7 @@ type AgentLoop struct {
 	// full re-prefill each time and never converges.
 	lastCompactionTokens int
 	ctxState             *tools.ContextState // shared context view for context tools (nil = disabled)
-	contextRemindersOn   bool                // inject 85%/90% usage notices (95% forces compaction) (nil ctxState-safe)
+	contextRemindersOn   bool                // inject 80%/85% usage notices (90% forces compaction) (nil ctxState-safe)
 	onToolCallStart      func(name string, params map[string]interface{})
 	onToolCallEnd        func(name string, params map[string]interface{}, result string)
 	// onToolOutput receives a streaming tool's output while it runs (UI feed
@@ -210,7 +210,7 @@ func (l *AgentLoop) SetOnToolArgs(fn func(name, argsSoFar string)) { l.onToolArg
 func (l *AgentLoop) SetContextState(state *tools.ContextState) { l.ctxState = state }
 
 // SetContextRemindersOn toggles the context-usage notices
-// (injected at 80% / 85% of the context window). Must be called before Run.
+// (injected at 80% / 85% of the usable input budget). Must be called before Run.
 func (l *AgentLoop) SetContextRemindersOn(on bool) { l.contextRemindersOn = on }
 
 // SetOnContextUsage installs the per-turn context-usage callback fired after
@@ -444,12 +444,12 @@ func (l *AgentLoop) persistTurn(turn int, messages []provider.Message) {
 
 // Context-usage notices: two stages, measured against the SAME reference as the
 // automatic compaction — the model's usable input budget (InputBudgetFraction).
-// 85% nudges, 90% says the loop will do it next turn if you do not.
+// 80% nudges, 85% says the loop will do it next turn if you do not.
 const (
 	usageNoticeStage1    = noticeInputFraction1 // fraction of the usable input budget
 	usageNoticeStage2    = noticeInputFraction2 // fraction of the usable input budget
-	usageNoticeStage1Pct = 85                   // marker / message label of stage 1
-	usageNoticeStage2Pct = 90                   // marker / message label of stage 2
+	usageNoticeStage1Pct = 80                   // marker / message label of stage 1
+	usageNoticeStage2Pct = 85                   // marker / message label of stage 2
 )
 
 // usageNoticeRole is the role of the injected notice. It is a "user" message so
@@ -481,7 +481,7 @@ func usageNotice(pct, tokens, ref, compactionAt int) provider.Message {
 	return provider.Message{Role: usageNoticeRole, Content: text + " " + usageNoticeMarker(pct)}
 }
 
-// scanUsageNoticeMarkers reports which usage notices (85/90%) have already been
+// scanUsageNoticeMarkers reports which usage notices (80/85%) have already been
 // announced in the context (by their markers).
 func scanUsageNoticeMarkers(messages []provider.Message) (hasStage1, hasStage2 bool) {
 	for _, m := range messages {
@@ -497,7 +497,7 @@ func scanUsageNoticeMarkers(messages []provider.Message) (hasStage1, hasStage2 b
 }
 
 // maybeInjectUsageReminder appends a context-usage notice when the context crosses
-// 85% or 90% of the model's usable input budget and that stage has not been
+// 80% or 85% of the model's usable input budget and that stage has not been
 // announced yet in the current context. Both the reminders and the automatic
 // compaction divide by the same budget, so the numbers the model is shown are the
 // ones the loop actually acts on. With an unknown window there is no budget to
@@ -542,7 +542,7 @@ func (l *AgentLoop) maybeInjectUsageReminder(messages []provider.Message, tokens
 	return append(messages, usageNotice(label, tokens, budget, compactionAt))
 }
 
-// autoCompactLimit is the token count at which the loop compacts on its own: 95% of
+// autoCompactLimit is the token count at which the loop compacts on its own: 90% of
 // the model's usable input budget, the same denominator the notices quote.
 func (l *AgentLoop) autoCompactLimit() int {
 	return InputBudgetFraction(l.client.GetMaxInput(), compactInputFraction)
@@ -671,7 +671,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			// compaction (see lastCompactionTokens).
 			if !need && l.compactionOn {
 				maxInput := l.client.GetMaxInput()
-				// 95% of the usable input budget (autoCompactLimit), not a fraction of
+				// 90% of the usable input budget (autoCompactLimit), not a fraction of
 				// the raw context window: how much output was reserved must not move
 				// the point where the session compacts.
 				if l.compactor.ShouldCompactCount(tokens, l.autoCompactLimit()) &&
@@ -707,8 +707,8 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				l.onContextUsage(tokens)
 			}
 		}
-		// Context usage notices: when the context crosses 85% / 90% of the model's
-		// usable input budget (compaction itself is forced at 95%), append a notice to
+		// Context usage notices: when the context crosses 80% / 85% of the model's
+		// usable input budget (compaction itself is forced at 90%), append a notice to
 		// the tail. Cache-friendly: it only extends the prefix, never edits the
 		// middle, so the KV prefix cache is preserved.
 		// Skipped on a compaction turn: telling the model to call

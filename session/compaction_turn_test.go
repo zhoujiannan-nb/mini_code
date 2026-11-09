@@ -250,7 +250,7 @@ func TestCompactKeepBudget(t *testing.T) {
 		t.Fatalf("starved window should still keep %d tokens, got %d", minKeepTokens, got)
 	}
 	// Whatever the window, the rebuild target stays well under the compaction
-	// point (95% of the input budget), so the turn right
+	// point (90% of the input budget), so the turn right
 	// after a compaction is a normal turn.
 	for _, mi := range []int{2048, 8928, 32_000, 200_000} {
 		if got := RebuildTargetTokens(mi); float64(got)/float64(mi) >= compactInputFraction {

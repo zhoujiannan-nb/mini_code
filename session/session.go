@@ -71,7 +71,7 @@ func (s *Session) ChannelKey() string     { return s.record.ChannelKey }
 func (s *Session) Record() *SessionRecord { return s.record }
 
 // ContextRemindersEnabled reports whether the context-usage notices
-// (85%/90% budget usage reminders) are on for this session. An absent
+// (80%/85% budget usage reminders) are on for this session. An absent
 // metadata key keeps the default: enabled.
 func (s *Session) ContextRemindersEnabled() bool {
 	s.mu.Lock()
