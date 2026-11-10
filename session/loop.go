@@ -63,7 +63,13 @@ type AgentLoop struct {
 	onTurn           func(turn int, messages []provider.Message)
 	onContextUsage   func(tokens int)
 	onUsage          func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64) // real per-call usage (cache-hit + output-speed visibility)
-	gate             ToolGate                                                                                  // runtime permission gate (nil = no gate)
+	// eventSink appends conversation facts to the session event ledger (see
+	// events.go). nil = no ledger (tests, or a loop built without a store).
+	eventSink func(typ string, turn int, payload map[string]any)
+	// curTurn tags events raised outside the turn-loop body (tool callbacks,
+	// the continue guard) with the turn they happened in.
+	curTurn int
+	gate             ToolGate // runtime permission gate (nil = no gate)
 
 	// Per-path locks serialize batched tool calls that touch the same file
 	// path, so one turn can never interleave two writes/edits of the same
@@ -242,6 +248,50 @@ func (l *AgentLoop) SetOnContextUsage(fn func(tokens int)) { l.onContextUsage = 
 // call's wall time; 0 when the provider reported no completion count).
 func (l *AgentLoop) SetOnUsage(fn func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64)) {
 	l.onUsage = fn
+}
+
+// SetEventSink installs the session event ledger sink. Every conversation
+// fact the loop produces (turns, messages, tool calls and results,
+// compactions, guard steers, the task outcome) is appended there; agent.log
+// keeps only process diagnostics. Must be called before Run.
+func (l *AgentLoop) SetEventSink(fn func(typ string, turn int, payload map[string]any)) {
+	l.eventSink = fn
+}
+
+// emitEvent raises one ledger event. Best-effort by contract: the sink
+// implementation owns its error handling; the loop never blocks on the ledger.
+func (l *AgentLoop) emitEvent(typ string, turn int, payload map[string]any) {
+	if l.eventSink != nil {
+		l.eventSink(typ, turn, payload)
+	}
+}
+
+// emitTaskEnd records the outcome of the whole task. Every Run return point
+// goes through here, so the ledger always says exactly how a run ended —
+// the live UI's resync depends on it.
+func (l *AgentLoop) emitTaskEnd(status string, turn int, errMsg string) {
+	p := map[string]any{"status": status, "turns": turn}
+	if errMsg != "" {
+		p["error"] = errMsg
+	}
+	l.emitEvent(EventTaskEnd, turn, p)
+}
+
+// emitAssistantMessage records a committed assistant message. Deltas are not
+// events; this is the one truth about what the model said.
+func (l *AgentLoop) emitAssistantMessage(turn int, content, reasoning string, toolCalls []provider.ToolCall, usage map[string]any) {
+	p := map[string]any{"content": content, "reasoning_chars": len(reasoning)}
+	if len(toolCalls) > 0 {
+		calls := make([]map[string]any, 0, len(toolCalls))
+		for _, tc := range toolCalls {
+			calls = append(calls, map[string]any{"id": tc.ID, "name": tc.Function.Name, "args": tc.Function.Arguments})
+		}
+		p["tool_calls"] = calls
+	}
+	if usage != nil {
+		p["usage"] = usage
+	}
+	l.emitEvent(EventAssistantMessage, turn, p)
 }
 
 // buildUserMessage builds the initial user message: plain text, or a
@@ -552,8 +602,10 @@ func (l *AgentLoop) maybeInjectUsageReminder(messages []provider.Message, tokens
 		return messages
 	}
 	compactionAt := l.autoCompactLimit()
-	slog.Info("injecting context usage notice", "stage", label, "tokens", tokens,
-		"input_budget", budget, "compaction_at", compactionAt)
+	l.emitEvent(EventUserMessage, l.curTurn, map[string]any{
+		"source": "context_usage", "stage": label, "tokens": tokens,
+		"input_budget": budget, "compaction_at": compactionAt,
+	})
 	return append(messages, usageNotice(label, tokens, budget, compactionAt))
 }
 
@@ -579,7 +631,7 @@ func (l *AgentLoop) applyWorkerNotice(messages []provider.Message) []provider.Me
 	if strings.TrimSpace(want.GetText()) == "" {
 		return messages // nothing to say (sub-agent, built-in bucket, already current)
 	}
-	slog.Info("appending worker notice", "chars", len(want.GetText()))
+	l.emitEvent(EventUserMessage, 0, map[string]any{"text": want.GetText(), "source": "worker_notice"})
 	return append(messages, want)
 }
 
@@ -616,8 +668,6 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 	// first request of this task (see repairOrphanToolCalls).
 	messages = repairOrphanToolCalls(messages)
 
-	slog.Info("AgentLoop started", "initial_tokens", util.CountMessagesTokens(messages), "max_input", l.client.GetMaxInput())
-
 	if resumeCompaction {
 		l.compactionTurn = true
 		slog.Info("resuming in-flight compaction turn", "messages", len(messages))
@@ -630,11 +680,12 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 	}
 
 	for turn := 1; turn <= l.maxTurns; turn++ {
-		slog.Info(fmt.Sprintf("=== Turn %d ===", turn))
+		l.curTurn = turn
+		l.emitEvent(EventTurnStart, turn, nil)
 
 		// Check for interrupt before each turn
 		if ctx.Err() != nil {
-			slog.Info("agent loop interrupted", "turn", turn, "collected_messages", len(messages))
+			l.emitTaskEnd("interrupted", turn-1, "cancelled before turn")
 			return &LoopResult{Interrupted: true, Messages: messages, Turns: turn - 1}, nil
 		}
 
@@ -648,7 +699,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 					continue
 				}
 				messages = append(messages, provider.Message{Role: "user", Content: t})
-				slog.Info("injected queued user message", "turn", turn, "chars", len(t))
+				l.emitEvent(EventUserMessage, turn, map[string]any{"text": t, "source": "queued"})
 			}
 		}
 
@@ -695,11 +746,10 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				}
 			}
 			if need {
-				slog.Info("starting compaction turn", "tokens", tokens,
-					"compaction_at", l.autoCompactLimit(),
-					"context_window", l.client.GetContextWindow(),
-					"max_input", l.client.GetMaxInput(),
-					"agent_instruction", instruction != "")
+				l.emitEvent(EventCompaction, turn, map[string]any{
+					"kind": "auto", "phase": "start", "tokens": tokens,
+					"agent_instruction": instruction != "",
+				})
 				messages = append(messages, BuildCompactRequest(instruction))
 				l.compactionTurn = true
 				// Persist before the call: a crash mid-turn leaves the
@@ -709,7 +759,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			}
 		}
 		if ctx.Err() != nil {
-			slog.Info("agent loop interrupted before compaction turn", "turn", turn)
+			l.emitTaskEnd("interrupted", turn, "cancelled before compaction turn")
 			return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
 		}
 		// Publish the current context usage (reflects the context about to be
@@ -771,12 +821,14 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		}
 		if err != nil {
 			if ctx.Err() != nil {
-				slog.Info("agent loop interrupted during LLM call", "turn", turn)
+				l.emitTaskEnd("interrupted", turn, "cancelled during LLM call")
 				return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
 			}
+			l.emitTaskEnd("failed", turn, err.Error())
 			return &LoopResult{Success: false, Messages: messages, Turns: turn, Error: err.Error()}, nil
 		}
 		if resp.Error != "" {
+			l.emitTaskEnd("failed", turn, resp.Error)
 			return &LoopResult{Success: false, Messages: messages, Turns: turn, Error: resp.Error}, nil
 		}
 
@@ -784,6 +836,10 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		// is the prompt tokens served from the KV prefix cache; 0 means the
 		// provider did not report cache hits (e.g. SGLang without
 		// --enable-cache-report), which we surface as "unknown", not a miss.
+		// usageEvent carries this call's provider-reported usage into the
+		// assistant/message ledger events below (nil when the provider
+		// reported nothing).
+		var usageEvent map[string]any
 		if u := resp.Usage; u != nil {
 			cached := u.CachedTokens()
 			reported := u.CacheReported()
@@ -803,7 +859,11 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 					speed = float64(u.CompletionTokens) / sec
 				}
 			}
-			slog.Info("llm usage", "turn", turn, "prompt_tokens", u.PromptTokens, "est_tokens", l.estBefore, "cached_tokens", cached, "cache_reported", reported, "completion_tokens", u.CompletionTokens, "reasoning_tokens", u.ReasoningTokens, "speed_tok_s", speed)
+			usageEvent = map[string]any{
+				"prompt_tokens": u.PromptTokens, "cached_tokens": cached,
+				"cache_reported": reported, "completion_tokens": u.CompletionTokens,
+				"reasoning_tokens": u.ReasoningTokens, "speed_tok_s": speed,
+			}
 			if l.onUsage != nil {
 				l.onUsage(u.PromptTokens, cached, u.CompletionTokens, reported, speed)
 			}
@@ -852,11 +912,12 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				l.compactionBlocked = true
 			}
 			l.lastCompactionTokens = after
-			slog.Info("compaction complete", "turn", turn, "before_tokens", tokens, "after_tokens", after,
-				"before_msgs", len(messages), "after_msgs", len(newMsgs), "summary_chars", len(summary),
-				"dropped_tool_calls", len(resp.ToolCalls),
-				"rebuild_target", RebuildTargetTokens(l.client.GetMaxInput()),
-				"fixed_overhead", overhead, "tail_budget", rebuildBudget)
+			l.emitEvent(EventCompaction, turn, map[string]any{
+				"kind": "auto", "phase": "done",
+				"before_tokens": tokens, "after_tokens": after,
+				"before_msgs": len(messages), "after_msgs": len(newMsgs),
+				"summary_chars": len(summary),
+			})
 			messages = newMsgs
 			if l.ctxState != nil {
 				l.ctxState.SetUsage(after, l.client.GetMaxInput(), l.autoCompactLimit())
@@ -870,11 +931,11 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 
 		// parse response
 		parsed := l.parseResponse(resp)
-		slog.Info("agent response", "content", parsed.content)
 
 		if parsed.toolCallError {
 			l.resetTruncation()
 			messages = append(messages, provider.Message{Role: "assistant", Content: parsed.toolCallErrorContent, ReasoningContent: resp.ReasoningContent})
+			l.emitAssistantMessage(turn, parsed.toolCallErrorContent, resp.ReasoningContent, nil, usageEvent)
 			messages = append(messages, provider.Message{Role: "user", Content: "The above tool call format is incorrect. Use structured tool_calls with valid JSON."})
 			l.persistTurn(turn, messages)
 			continue
@@ -888,9 +949,11 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		if resp.FinishReason == "length" && len(parsed.toolCalls) == 0 {
 			l.truncPrefix += parsed.content
 			messages = append(messages, provider.Message{Role: "assistant", Content: parsed.content, ReasoningContent: resp.ReasoningContent})
+			l.emitAssistantMessage(turn, parsed.content, resp.ReasoningContent, nil, usageEvent)
 			if l.truncContinues >= maxTruncContinues {
 				slog.Warn("truncated-response continuation limit reached, returning best-effort content", "turn", turn)
 				l.persistTurn(turn, messages)
+				l.emitTaskEnd("completed", turn, "truncated-response continuation limit")
 				return &LoopResult{Success: true, Content: l.truncPrefix, Messages: messages, Turns: turn}, nil
 			}
 			l.truncContinues++
@@ -905,7 +968,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			// activity, so a later text-only stop is worth evaluating.
 			l.toolCallsSeen += len(parsed.toolCalls)
 			if ctx.Err() != nil {
-				slog.Info("agent loop interrupted before tool execution", "turn", turn)
+				l.emitTaskEnd("interrupted", turn, "cancelled before tool execution")
 				return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
 			}
 			// Ensure every tool call has a unique ID for UI tracking
@@ -924,6 +987,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				ReasoningContent: resp.ReasoningContent,
 				ToolCalls:        parsed.toolCalls,
 			})
+			l.emitAssistantMessage(turn, parsed.content, resp.ReasoningContent, parsed.toolCalls, usageEvent)
 			// Persist the reply BEFORE tool execution: a long tool call used
 			// to leave this message unpersisted, so a web refresh mid-tool
 			// lost it from the view (history only re-renders the store).
@@ -934,7 +998,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			// instead of burning the turn budget on the same action.
 			messages = l.nudgeIfStuck(messages, parsed.toolCalls)
 			if ctx.Err() != nil {
-				slog.Info("agent loop interrupted during tool execution", "turn", turn)
+				l.emitTaskEnd("interrupted", turn, "cancelled during tool execution")
 				return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
 			}
 			// Turn complete: persist the conversation for interrupt recovery.
@@ -957,6 +1021,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			}
 			l.emptyRetries++
 			messages = append(messages, provider.Message{Role: "assistant", Content: parsed.content, ReasoningContent: resp.ReasoningContent})
+			l.emitAssistantMessage(turn, parsed.content, resp.ReasoningContent, nil, usageEvent)
 			messages = append(messages, provider.Message{Role: "user", Content: "Your previous response was empty. Continue the task: take the next concrete step (a tool call) or answer the user directly."})
 			l.persistTurn(turn, messages)
 			continue
@@ -978,11 +1043,14 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		finalContent := l.truncPrefix + parsed.content
 		l.resetTruncation()
 		messages = append(messages, provider.Message{Role: "assistant", Content: parsed.content, ReasoningContent: resp.ReasoningContent})
+		l.emitAssistantMessage(turn, parsed.content, resp.ReasoningContent, nil, usageEvent)
 		l.persistTurn(turn, messages)
+		l.emitTaskEnd("completed", turn, "")
 		return &LoopResult{Success: true, Content: finalContent, Messages: messages, Turns: turn}, nil
 	}
 
 	l.persistTurn(l.maxTurns, messages)
+	l.emitTaskEnd("failed", l.maxTurns, fmt.Sprintf("max turns reached (%d)", l.maxTurns))
 	return &LoopResult{Success: false, Messages: messages, Turns: l.maxTurns, Error: fmt.Sprintf("max turns reached (%d)", l.maxTurns)}, nil
 }
 
@@ -1115,15 +1183,19 @@ func (l *AgentLoop) parseToolCallJSON(content string) *provider.ToolCall {
 }
 
 func (l *AgentLoop) handleToolCalls(ctx context.Context, messages []provider.Message, toolCalls []provider.ToolCall) []provider.Message {
-	// Notify consumers that tool execution is starting
-	if l.onToolCallStart != nil {
-		for _, tc := range toolCalls {
-			var params map[string]interface{}
-			if tc.Function.Arguments != "" {
-				json.Unmarshal([]byte(tc.Function.Arguments), &params)
-			}
+	// Notify consumers that tool execution is starting, and record the call
+	// itself in the ledger (the result arrives later, keyed by call_id).
+	for _, tc := range toolCalls {
+		var params map[string]interface{}
+		if tc.Function.Arguments != "" {
+			json.Unmarshal([]byte(tc.Function.Arguments), &params)
+		}
+		if l.onToolCallStart != nil {
 			l.onToolCallStart(tc.Function.Name, params)
 		}
+		l.emitEvent(EventToolCall, l.curTurn, map[string]any{
+			"call_id": tc.ID, "name": tc.Function.Name, "args": tc.Function.Arguments,
+		})
 	}
 
 	results := l.executeToolsConcurrent(ctx, toolCalls)
@@ -1348,6 +1420,9 @@ func (l *AgentLoop) executeToolsConcurrent(ctx context.Context, toolCalls []prov
 					}
 					l.onToolCallEnd(tc.Function.Name, params, "Interrupted")
 				}
+				l.emitEvent(EventToolResult, l.curTurn, map[string]any{
+					"call_id": tc.ID, "name": tc.Function.Name, "ok": false, "error": "interrupted",
+				})
 				return
 			}
 			// Serialize calls that touch the same file path: a batched turn
@@ -1368,6 +1443,7 @@ func (l *AgentLoop) executeToolsConcurrent(ctx context.Context, toolCalls []prov
 					}
 				}()
 			}
+			toolStart := time.Now()
 			results[idx] = l.executeSingleTool(ctx, tc)
 			// Notify consumers that tool call ended
 			if l.onToolCallEnd != nil {
@@ -1377,6 +1453,13 @@ func (l *AgentLoop) executeToolsConcurrent(ctx context.Context, toolCalls []prov
 				}
 				l.onToolCallEnd(tc.Function.Name, params, results[idx].Text)
 			}
+			text := results[idx].Text
+			l.emitEvent(EventToolResult, l.curTurn, map[string]any{
+				"call_id": tc.ID, "name": tc.Function.Name,
+				"ok": !strings.HasPrefix(text, "Error:"),
+				"duration_ms": time.Since(toolStart).Milliseconds(),
+				"result": text,
+			})
 		}(i, tc)
 	}
 	wg.Wait()
@@ -1405,11 +1488,9 @@ func (l *AgentLoop) executeSingleTool(ctx context.Context, tc provider.ToolCall)
 	// as the tool result.
 	if l.gate != nil {
 		if allow, denyMsg := l.gate(ctx, tc.Function.Name, params); !allow {
-			slog.Info("tool call denied by gate", "name", tc.Function.Name)
 			return tools.NewTextResult(denyMsg)
 		}
 	}
-	slog.Info("executing tool", "name", tc.Function.Name, "params", tc.Function.Arguments)
 	// A tool that reports output while it runs gets a sink when someone is
 	// listening; everyone else goes through the registry unchanged. The result is
 	// the same either way, so the model's view never depends on the live feed.
@@ -1424,7 +1505,6 @@ func (l *AgentLoop) executeSingleTool(ctx context.Context, tc provider.ToolCall)
 	if err != nil {
 		return tools.NewTextResult(fmt.Sprintf("Error: %s", err))
 	}
-	slog.Info("tool completed", "name", tc.Function.Name, "result_len", len(result.Text))
 	return result
 }
 

@@ -11,9 +11,10 @@ import (
 // SSE stream drops mid-tool: the「正在执行」card kept ticking above every later
 // message while the DB already held the tool result — the view diverged from
 // the truth with no path back. The fix: every time the event stream (re)opens,
-// if the current session is marked running, re-fetch the persisted messages
-// and fill any soft step whose result did land; freeze the rest only when the
-// task itself is over.
+// if the current session is marked running, re-read the session event ledger
+// (GET /api/sessions/:id/events?tail_run=1 — exactly the current run's facts,
+// the window the gap could have hidden), fill any soft step whose tool/result
+// did land, and freeze the rest only when the task itself is over.
 func TestResyncOnSseReconnect(t *testing.T) {
 	js := jsModulesForTest(t)
 
@@ -22,21 +23,21 @@ func TestResyncOnSseReconnect(t *testing.T) {
 	if !strings.Contains(fn, "state.running") || !strings.Contains(fn, "state.current") {
 		t.Errorf("resyncRunning must no-op unless the current session is running:\n%s", fn)
 	}
-	// ...against the persisted truth (the same endpoint selectSession uses)...
-	if !strings.Contains(fn, `"/api/sessions/"`) {
-		t.Errorf("resyncRunning must re-fetch the session's persisted messages:\n%s", fn)
+	// ...against the event ledger, scoped to the current run (tail_run)...
+	if !strings.Contains(fn, `"/api/sessions/"`) || !strings.Contains(fn, "/events?tail_run=1") {
+		t.Errorf("resyncRunning must re-read the current run's event ledger:\n%s", fn)
 	}
-	// ...and it must repair steps from tool results matched by tool name,
+	// ...and it must repair steps from tool/result events matched by tool name,
 	// consuming each result once so parallel same-name calls do not share one.
-	if !strings.Contains(fn, `m.role !== "tool"`) || !strings.Contains(fn, "st.dataset.name") {
-		t.Errorf("resyncRunning must match soft steps to persisted tool results by name:\n%s", fn)
+	if !strings.Contains(fn, `ev.type !== "tool/result"`) || !strings.Contains(fn, "st.dataset.name") {
+		t.Errorf("resyncRunning must match soft steps to tool/result events by name:\n%s", fn)
 	}
 	if !strings.Contains(fn, "used[i]") || !strings.Contains(fn, "stepsFill(") {
 		t.Errorf("resyncRunning must consume each result once and fill the step:\n%s", fn)
 	}
-	// Steps with no persisted result stay untouched (they may truly run);
+	// Steps with no recorded result stay untouched (they may truly run);
 	// only a finished task (active=false) freezes whatever is left over.
-	if !strings.Contains(fn, "stepsRunFreeze()") || !strings.Contains(fn, "active") {
+	if !strings.Contains(fn, "stepsRunFreeze()") || !strings.Contains(fn, "data.active") {
 		t.Errorf("resyncRunning must freeze leftover steps only when the task is over:\n%s", fn)
 	}
 

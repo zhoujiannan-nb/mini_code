@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/user/mini_code/agent"
@@ -478,7 +477,6 @@ func (c *ContextCompactor) SummarizeAndRebuild(ctx context.Context, messages []p
 	// before it is byte-identical to the last normal request, so the provider
 	// serves it from the KV prefix cache.
 	req := append(append([]provider.Message(nil), messages...), BuildCompactRequest(instruction))
-	before := util.CountMessagesTokens(messages)
 	resp, err := c.client.ChatStream(ctx, req, tools, nil)
 	if err != nil {
 		return messages, fmt.Errorf("生成压缩摘要失败: %w", err)
@@ -498,7 +496,6 @@ func (c *ContextCompactor) SummarizeAndRebuild(ctx context.Context, messages []p
 	if !ok {
 		return messages, fmt.Errorf("没有可压缩的历史(内容太短或没有安全的切分点)")
 	}
-	slog.Info("manual compaction rebuilt context", "before_tokens", before, "after_tokens", util.CountMessagesTokens(out), "before_msgs", len(messages), "after_msgs", len(out))
 	return out, nil
 }
 

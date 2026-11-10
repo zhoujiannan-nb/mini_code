@@ -131,6 +131,7 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
+	mux.HandleFunc("GET /api/sessions/{id}/events", s.handleSessionEvents)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/compact", s.handleCompactSession)
 	mux.HandleFunc("POST /api/sessions/{id}/mode", s.handleSetMode)
@@ -521,6 +522,63 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		// from it on session open / page refresh. null when the session
 		// has no recorded LLM call yet.
 		"last_usage": sess.LastUsage(),
+	})
+}
+
+// handleSessionEvents serves the session event ledger (session_event):
+// append-only facts about every run — turns, messages, tool calls and
+// results, compactions, the task outcome. The messages column stays the
+// projection the model reads; this endpoint is the truth the live UI
+// reconciles against after an SSE gap.
+//
+//	GET /api/sessions/{id}/events            first 500 events
+//	GET /api/sessions/{id}/events?after=SEQ  page forward
+//	GET /api/sessions/{id}/events?limit=N    larger page (max 5000)
+//	GET /api/sessions/{id}/events?tail_run=1 only the current run: everything
+//	                                         after the last task/end
+func (s *server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	q := r.URL.Query()
+	after := int64(0)
+	if v := q.Get("after"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			writeErr(w, http.StatusBadRequest, "after 必须是非负整数")
+			return
+		}
+		after = n
+	}
+	limit := 0
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			writeErr(w, http.StatusBadRequest, "limit 必须是正整数")
+			return
+		}
+		limit = n
+	}
+	store := s.be.Mgr().GetStore()
+	var events []session.EventRecord
+	var err error
+	if q.Get("tail_run") == "1" {
+		events, err = store.TailRunEvents(id)
+	} else {
+		events, err = store.ListEvents(id, after, limit)
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	lastSeq := after
+	if len(events) > 0 {
+		lastSeq = events[len(events)-1].Seq
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"events":   events,
+		"last_seq": lastSeq,
+		// Whether a task loop is live in THIS process right now — the
+		// resync uses it to decide between "keep waiting" and "freeze".
+		"active": s.be.Mgr().TaskRunning(id),
 	})
 }
 

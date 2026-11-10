@@ -80,7 +80,8 @@ func (l *AgentLoop) tryContinueGuard(ctx context.Context, messages []provider.Me
 	}
 	l.continueSteers++
 	l.toolsSeenAtSteer = l.toolCallsSeen
-	slog.Info("continue guard: steering unfinished turn", "steer", l.continueSteers)
+	l.emitAssistantMessage(l.curTurn, content, reasoning, nil, nil)
+	l.emitEvent(EventGuardSteer, l.curTurn, map[string]any{"steer": l.continueSteers, "text": continueSteerText})
 	messages = append(messages,
 		provider.Message{Role: "assistant", Content: content, ReasoningContent: reasoning},
 		provider.Message{Role: "user", Content: continueSteerText},

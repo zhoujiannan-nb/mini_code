@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/user/mini_code/provider"
@@ -60,6 +61,9 @@ func NewSessionRecord(title, agentRole, workDir, parentID string) *SessionRecord
 
 type SessionStore struct {
 	db *util.Database
+	// evMu serializes ledger appends within this process so seq stays
+	// contiguous even when parallel tool goroutines emit events.
+	evMu sync.Mutex
 }
 
 func NewSessionStore(dbPath string) (*SessionStore, error) {
@@ -95,6 +99,7 @@ func (s *SessionStore) initDB() {
 	s.migrateChannelKey()
 	s.migrateMode()
 	s.migrateModelKey()
+	s.initEvents()
 	s.initWorkers()
 }
 

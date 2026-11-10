@@ -154,32 +154,39 @@ let sseWatchdog = null;
    SSE 是发后即忘:tool_end 这类一次性事件在断流窗口里丢了就永远不回,
    「正在执行」卡会挂在界面里继续计时,后续输出全排在它下面——而库里的
    真相早就带着结果了(实测:一条 sleep 540 的 exec 断流后卡永远"运行中")。
-   借 dsh 的不变量:持久消息才是真相,live 流只是加速。事件流每次接上时,
-   若本会话还标记着在跑,就重拉一次历史做对账:
-   - 「待返回/运行中」的步骤能在持久消息里找到同名 tool 结果 → 补上(顺带停表折叠);
-   - 找不到结果的步骤不动它——它可能真的还在跑,结果会随下一批事件回来;
-   - 任务其实已结束(终结事件也丢在同一段断流里)→ 剩余步骤停表收条。
+   对账读的是会话事件账本(session_event):append-only 的事实流水,
+   GET /api/sessions/:id/events?tail_run=1 直接给出「本轮任务」的全部事件
+   ——正是断流窗口可能藏掉的那一段:
+   - tool/result 事件按工具名配给「待返回/运行中」的步骤(每份结果只配一次);
+   - 配不上的不动它——它可能真的还在跑,结果会随下一批事件回来;
+   - 任务其实已结束(active=false)→ 剩余步骤停表收条。
    只填已发生的、不发明未发生的:对账本身幂等,多跑一次只是多一次 GET。 */
 async function resyncRunning() {
   if (!state.current || !state.running) return;
   const sid = state.current;
   let data;
-  try { data = await api("/api/sessions/" + sid); } catch (e) { return; }
+  try { data = await api("/api/sessions/" + sid + "/events?tail_run=1"); } catch (e) { return; }
   if (state.current !== sid) return; // 等待期间已切走
-  const msgs = data.messages || [];
-  const used = {}; // 已配掉的 tool 结果下标:同名并行调用各拿各的,不抢同一份
+  const evs = data.events || [];
+  const done = []; // 本轮已发生的 tool 结果:同名并行调用各拿各的,不抢同一份
+  for (const ev of evs) {
+    if (ev.type !== "tool/result" || !ev.payload) continue;
+    done.push({
+      name: String(ev.payload.name || "tool"),
+      text: String(ev.payload.result != null ? ev.payload.result : (ev.payload.error || "")),
+    });
+  }
+  const used = {};
   for (const st of [].slice.call(messagesEl().querySelectorAll('.ms-step[data-soft="1"]'))) {
     const name = st.dataset.name || "tool";
-    for (let i = 0; i < msgs.length; i++) {
-      if (used[i]) continue;
-      const m = msgs[i];
-      if (m.role !== "tool" || (m.name || "tool") !== name) continue;
+    for (let i = 0; i < done.length; i++) {
+      if (used[i] || done[i].name !== name) continue;
       used[i] = true;
-      stepsFill(st, contentText(m));
+      stepsFill(st, done[i].text);
       break;
     }
   }
-  if (data.session && !data.session.active) stepsRunFreeze();
+  if (!data.active) stepsRunFreeze();
 }
 
 function connectEvents() {

@@ -365,6 +365,7 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 			func() {
 				defer func() { recover() }() // never let the bookkeeping itself re-panic
 				s.updateStatus("failed")
+				s.store.AppendEvent(s.ID(), EventTaskEnd, 0, map[string]any{"status": "failed", "error": fmt.Sprintf("panic: %v", r)})
 			}()
 			content = ""
 			reasoning = ""
@@ -415,6 +416,15 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		client = client.WithReasoning(thinking, effort)
 	}
 	loop := NewAgentLoop(client, maxTurns, pb.Tools, defs, s.onToolCallStart, s.onToolCallEnd, s.onAssistantReply, turnHook)
+	// Session event ledger: every conversation fact the loop produces is
+	// appended to session_event (the messages column stays as the projection
+	// the model and history view read). Best-effort: a ledger failure logs
+	// and the task continues.
+	loop.SetEventSink(func(typ string, turn int, payload map[string]any) {
+		if _, err := s.store.AppendEvent(s.ID(), typ, turn, payload); err != nil {
+			slog.Error("session event append failed", "session", s.ID(), "type", typ, "err", err)
+		}
+	})
 	// Live tool output (UI only) rides the same callback set; tools that cannot
 	// stream simply never call it.
 	loop.SetOnToolOutput(s.onToolOutput)
@@ -453,7 +463,6 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		})
 	}
 
-	slog.Info("session prompt", "id", s.ID(), "goal", goal[:min(80, len(goal))])
 	// Name the session from this message right now, not after the task. A first task
 	// can run for an hour — or fail — and the sidebar should not sit on
 	// "现在有一个活, 就是 C:\Users…" the whole time. Fire-and-forget, once per
@@ -462,6 +471,17 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	s.mu.Lock()
 	history := s.record.Messages
 	s.mu.Unlock()
+	// The run begins: record the task (and the user message it answers) in
+	// the ledger. The loop records everything after this point; the matching
+	// task/end comes from the loop's return points (and from the panic
+	// guard above, should the task never return).
+	startPayload := map[string]any{"goal": goal, "images": len(images)}
+	if client != nil {
+		startPayload["model"] = client.ModelName()
+	}
+	if _, err := s.store.AppendEvent(s.ID(), EventTaskStart, 0, startPayload); err != nil {
+		slog.Error("session event append failed", "session", s.ID(), "type", EventTaskStart, "err", err)
+	}
 	result, err := loop.Run(ctx, systemPrompt, goal, history)
 	if err != nil {
 		s.updateStatus("failed")
@@ -484,13 +504,11 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		// Mark the session so a later run can resume from the persisted
 		// messages (interrupt recovery).
 		s.updateStatus("interrupted")
-		slog.Info("session interrupted", "id", s.ID(), "turns", result.Turns)
 		return result.Content, reasoning, nil
 	}
 
 	if result.Success {
 		s.updateStatus("completed")
-		slog.Info("session done", "id", s.ID(), "turns", result.Turns, "success", true)
 		// Messages queued between the final turn's drain and task completion
 		// would otherwise wait for the next manual task; dispatch them now as
 		// a fresh task. (Not done after an interrupt: the user may have
@@ -508,7 +526,6 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	// Propagate the failure reason to the caller so the channel can show it
 	// instead of silently stopping.
 	s.updateStatus("failed")
-	slog.Error("session failed", "id", s.ID(), "turns", result.Turns, "error", result.Error)
 	return result.Content, reasoning, fmt.Errorf("agent task failed after %d turns: %s", result.Turns, result.Error)
 }
 
@@ -579,7 +596,9 @@ func (m *SessionManager) CompactSession(ctx context.Context, sessionID string) (
 	s.Record().Messages = newMsgs
 	m.store.Update(s.Record())
 	s.mu.Unlock()
-	slog.Info("manual compaction applied", "session", sessionID, "before", before, "after", after)
+	m.store.AppendEvent(sessionID, EventCompaction, 0, map[string]any{
+		"kind": "manual", "phase": "done", "before_tokens": before, "after_tokens": after,
+	})
 	return before, after, nil
 }
 
