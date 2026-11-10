@@ -149,9 +149,45 @@
 let esRef = null;           // 当前 EventSource(看门狗重连时先关旧连接)
 let sseAliveAt = 0;         // 最近一次收到服务端数据/心跳的时间
 let sseWatchdog = null;
+
+/* ---------------- 断线对账(resync) ----------------
+   SSE 是发后即忘:tool_end 这类一次性事件在断流窗口里丢了就永远不回,
+   「正在执行」卡会挂在界面里继续计时,后续输出全排在它下面——而库里的
+   真相早就带着结果了(实测:一条 sleep 540 的 exec 断流后卡永远"运行中")。
+   借 dsh 的不变量:持久消息才是真相,live 流只是加速。事件流每次接上时,
+   若本会话还标记着在跑,就重拉一次历史做对账:
+   - 「待返回/运行中」的步骤能在持久消息里找到同名 tool 结果 → 补上(顺带停表折叠);
+   - 找不到结果的步骤不动它——它可能真的还在跑,结果会随下一批事件回来;
+   - 任务其实已结束(终结事件也丢在同一段断流里)→ 剩余步骤停表收条。
+   只填已发生的、不发明未发生的:对账本身幂等,多跑一次只是多一次 GET。 */
+async function resyncRunning() {
+  if (!state.current || !state.running) return;
+  const sid = state.current;
+  let data;
+  try { data = await api("/api/sessions/" + sid); } catch (e) { return; }
+  if (state.current !== sid) return; // 等待期间已切走
+  const msgs = data.messages || [];
+  const used = {}; // 已配掉的 tool 结果下标:同名并行调用各拿各的,不抢同一份
+  for (const st of [].slice.call(messagesEl().querySelectorAll('.ms-step[data-soft="1"]'))) {
+    const name = st.dataset.name || "tool";
+    for (let i = 0; i < msgs.length; i++) {
+      if (used[i]) continue;
+      const m = msgs[i];
+      if (m.role !== "tool" || (m.name || "tool") !== name) continue;
+      used[i] = true;
+      stepsFill(st, contentText(m));
+      break;
+    }
+  }
+  if (data.session && !data.session.active) stepsRunFreeze();
+}
+
 function connectEvents() {
   if (esRef) { try { esRef.close(); } catch (e) {} esRef = null; }
   const es = esRef = new EventSource("/api/events");
+  // 每次连接建立(首连/浏览器自动重连/看门狗重连)都对账一次。
+  // 首连时 state.running 还是 false,resyncRunning 自己会退场,不多打接口。
+  es.onopen = () => { resyncRunning(); };
   sseAliveAt = Date.now();
   es.onmessage = (e) => {
     sseAliveAt = Date.now();
