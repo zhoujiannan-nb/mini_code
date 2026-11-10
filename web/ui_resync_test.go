@@ -29,7 +29,7 @@ func TestResyncOnSseReconnect(t *testing.T) {
 	}
 	// ...and it must repair steps from tool/result events matched by tool name,
 	// consuming each result once so parallel same-name calls do not share one.
-	if !strings.Contains(fn, `ev.type !== "tool/result"`) || !strings.Contains(fn, "st.dataset.name") {
+	if !strings.Contains(fn, `ev.type === "tool/result"`) || !strings.Contains(fn, "st.dataset.name") {
 		t.Errorf("resyncRunning must match soft steps to tool/result events by name:\n%s", fn)
 	}
 	if !strings.Contains(fn, "used[i]") || !strings.Contains(fn, "stepsFill(") {
@@ -69,5 +69,53 @@ func TestLateToolEndFindsItsStep(t *testing.T) {
 	freeze := jsFunc(t, js, "stepsRunFreeze")
 	if !strings.Contains(freeze, "已执行·未收到回执") {
 		t.Errorf("stepsRunFreeze must relabel leftover soft steps as executed-without-result:\n%s", freeze)
+	}
+}
+
+// TestUserMessageClosesStrip pins the refresh layout bug: replaying history
+// into a running session merged every step — before AND after the user's
+// 「继续」— into one 执行过程 strip, so the user's own card landed BELOW the
+// whole strip (错位). A user message is a task boundary: appendHistoryMsg
+// must close the current strip in place before adding the user card, and the
+// next task's steps start a fresh strip below it.
+func TestUserMessageClosesStrip(t *testing.T) {
+	js := jsModulesForTest(t)
+
+	fn := jsFunc(t, js, "appendHistoryMsg")
+	closeAt := strings.Index(fn, "stepsClose()")
+	userAt := strings.Index(fn, "addUser(")
+	if closeAt < 0 || userAt < 0 || closeAt > userAt {
+		t.Errorf("appendHistoryMsg must close the strip before adding a user card:\n%s", fn)
+	}
+}
+
+// TestResyncRestoresRunClock pins the "刷新后工具执行 UI 消失" fix: after a
+// refresh the still-running call was a static「待返回」with no clock at all.
+// The ledger knows when the call started (tool/call.created_at), so the
+// resync restores the step as「执行中」with its real elapsed clock running —
+// a call that has been going 260s must not restart at 0s just because the
+// page was reloaded. Without a ledger event there is no honest start time,
+// so the fallback stays a spinner with no invented number.
+func TestResyncRestoresRunClock(t *testing.T) {
+	js := jsModulesForTest(t)
+
+	fn := jsFunc(t, js, "resyncRunning")
+	// Unanswered = the last tool/call of that name sits after the last
+	// tool/result of that name; its created_at becomes the clock start.
+	for _, want := range []string{"lastCall", "lastRes", "parseEvTime", "st.dataset.t0", `st.dataset.live = "1"`, "stepsRunStart()", `"run", "执行中"`} {
+		if !strings.Contains(fn, want) {
+			t.Errorf("resyncRunning must restore the running clock from the ledger (missing %q):\n%s", want, fn)
+		}
+	}
+	// No event, no honest start: spinner only, no invented timer.
+	if !strings.Contains(fn, `stepsTag(st, "soft", "待返回")`) {
+		t.Errorf("resyncRunning must fall back to the plain spinner without a clock:\n%s", fn)
+	}
+
+	// RFC3339 with nanoseconds: Date.parse chokes on more than 3 fractional
+	// digits, so parseEvTime truncates to milliseconds first.
+	pe := jsFunc(t, js, "parseEvTime")
+	if !strings.Contains(pe, `(\.\d{3})\d+`) || !strings.Contains(pe, "Date.parse") {
+		t.Errorf("parseEvTime must truncate nanoseconds before parsing:\n%s", pe)
 	}
 }

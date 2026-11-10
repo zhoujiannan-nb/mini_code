@@ -158,9 +158,18 @@ let sseWatchdog = null;
    GET /api/sessions/:id/events?tail_run=1 直接给出「本轮任务」的全部事件
    ——正是断流窗口可能藏掉的那一段:
    - tool/result 事件按工具名配给「待返回/运行中」的步骤(每份结果只配一次);
-   - 配不上的不动它——它可能真的还在跑,结果会随下一批事件回来;
+   - 没有回执的调用若任务还在跑:按 tool/call 的 created_at 恢复计时起点,
+     这一步重新变回「执行中 + 执行 xxs」——刷新不该把跑了 260s 的调用归零;
+   - 配不上也认不出时刻的不动它——它可能真的还在跑,结果会随下一批事件回来;
    - 任务其实已结束(active=false)→ 剩余步骤停表收条。
    只填已发生的、不发明未发生的:对账本身幂等,多跑一次只是多一次 GET。 */
+// parseEvTime:事件表里的 created_at 是 RFC3339 带纳秒的,Date.parse 对超过
+// 3 位小数的秒并不买账,先截到毫秒再解析。解析不了返回 0(当没有)。
+function parseEvTime(s) {
+  const t = Date.parse(String(s || "").replace(/(\.\d{3})\d+/, "$1"));
+  return isFinite(t) ? t : 0;
+}
+
 async function resyncRunning() {
   if (!state.current || !state.running) return;
   const sid = state.current;
@@ -169,13 +178,15 @@ async function resyncRunning() {
   if (state.current !== sid) return; // 等待期间已切走
   const evs = data.events || [];
   const done = []; // 本轮已发生的 tool 结果:同名并行调用各拿各的,不抢同一份
-  for (const ev of evs) {
-    if (ev.type !== "tool/result" || !ev.payload) continue;
-    done.push({
-      name: String(ev.payload.name || "tool"),
-      text: String(ev.payload.result != null ? ev.payload.result : (ev.payload.error || "")),
-    });
-  }
+  // 每个工具"最后一次调用/最后一次回执"的位置:调用排在所有回执之后,
+  // 说明它还没有回音——它的发生时刻(created_at)就是刷新后计时的起点。
+  const lastCall = {}, lastRes = {};
+  evs.forEach((ev, i) => {
+    const p = ev.payload || {};
+    const nm = String(p.name || "tool");
+    if (ev.type === "tool/result") { done.push({ name: nm, text: String(p.result != null ? p.result : (p.error || "")) }); lastRes[nm] = i; }
+    else if (ev.type === "tool/call") { lastCall[nm] = { i: i, t: parseEvTime(ev.created_at), args: p.args }; }
+  });
   const used = {};
   for (const st of [].slice.call(messagesEl().querySelectorAll('.ms-step[data-soft="1"]'))) {
     const name = st.dataset.name || "tool";
@@ -187,8 +198,22 @@ async function resyncRunning() {
       filled = true;
       break;
     }
-    // 结果还没回来、而任务确实还在跑:把静态的"待返回"升级成转圈等待。
-    if (!filled && data.active) stepsTag(st, "soft", "待返回");
+    if (filled || !data.active) continue;
+    // 结果还没回来、任务确实还在跑:把这一步恢复成"正在执行"的样子。
+    // 计时起点从事件账本的 tool/call 时刻来——刷新不该把已经跑了 260s
+    // 的调用重置成 0s,账本里那个 created_at 就是它真正的开始。
+    const c = lastCall[name];
+    const t0 = c && (lastRes[name] === undefined || c.i > lastRes[name]) ? c.t : 0;
+    if (t0) {
+      st.dataset.t0 = String(t0);
+      if (!st.dataset.tmo) { const lim = toolTimeoutSec(c.args); if (lim) st.dataset.tmo = String(lim); }
+      st.dataset.live = "1";
+      stepsTag(st, "run", "执行中");
+      stepsRunStart(); // 接着往上数,不是从头数
+    } else {
+      // 认不出开始时刻(老会话没有账本):只挂转圈,不编计时。
+      stepsTag(st, "soft", "待返回");
+    }
   }
   if (!data.active) stepsRunFreeze();
 }

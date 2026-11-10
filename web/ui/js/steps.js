@@ -816,6 +816,11 @@ function renderHistory(messages) {
 }
 function appendHistoryMsg(msg) {
   if (msg.role === "user") {
+    // 用户消息是执行过程的边界:上一条任务的过程条就地收尾(独立卡),
+    // 之后的步骤另起新条。不关条的话,刷新一个正在跑的会话会把"继续"
+    // 之前和之后的步骤并进同一条折叠条,而用户卡被追加到整条之下——
+    // 实测就是"我发的消息错位到了执行过程下面"。
+    stepsClose();
     // 多模态用户消息:文字取 text part(不再显示"📷 [图片]"占位),图片单独渲染
     const imgs = contentImages(msg);
     const txt = Array.isArray(msg.content)
