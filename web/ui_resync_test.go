@@ -48,3 +48,25 @@ func TestResyncOnSseReconnect(t *testing.T) {
 		t.Errorf("connectEvents must resync whenever the event stream (re)opens:\n%s", ce)
 	}
 }
+
+// TestLateToolEndFindsItsStep pins the refresh path of the same bug class:
+// refreshing mid-tool re-renders the running call as a soft「待返回」step
+// inside a closed strip, so the live pools (LIVE/STEPS refs are dropped by
+// stepsClose) can no longer see it — the arriving tool_end was dropped on the
+// floor and the step stayed「待返回」forever. stepsSoft must fall back to a
+// name-matched whole-document search, and when the task is over, stepsRunFreeze
+// must relabel whatever is still soft as「已执行·未收到回执」: a dispatched
+// tool call has run, and the UI must say so instead of waiting forever.
+func TestLateToolEndFindsItsStep(t *testing.T) {
+	js := jsModulesForTest(t)
+
+	soft := jsFunc(t, js, "stepsSoft")
+	if !strings.Contains(soft, "messagesEl()") || !strings.Contains(soft, `data-soft="1"`) {
+		t.Errorf("stepsSoft must fall back to a whole-document search for the named soft step:\n%s", soft)
+	}
+
+	freeze := jsFunc(t, js, "stepsRunFreeze")
+	if !strings.Contains(freeze, "已执行·未收到回执") {
+		t.Errorf("stepsRunFreeze must relabel leftover soft steps as executed-without-result:\n%s", freeze)
+	}
+}

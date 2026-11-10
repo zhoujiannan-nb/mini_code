@@ -660,6 +660,12 @@ function stepsRunFreeze() {
   stepsRunStop();
   // 任务已经没了,还挂在外面的步骤一并收进折叠条,不留空转的"正在执行"卡
   stepsLiveFlush();
+  // 还标着"待返回"的步骤不会再有结果回来了:如实改成"已执行·未收到回执"。
+  // 工具调用只要发出去过就是执行过——挂一个假的"待返回"永远等,不如把
+  // "跑了、但结果没回到界面"这个真相写在脸上(库里的真相也正是如此)。
+  for (const st of [].slice.call(messagesEl().querySelectorAll('.ms-step[data-soft="1"]'))) {
+    stepsTag(st, "dim", "已执行·未收到回执");
+  }
 }
 
 function stepsFill(st, result) {   // 真结果写进步骤内部(折起时看不到,点开才展开)
@@ -698,6 +704,14 @@ function stepsSoft(name) {
   for (const p of pools) {
     const s = p.querySelector('.ms-step[data-soft="1"]');
     if (s) return s;
+  }
+  // 全文档兜底:刷新后 renderHistory+stepsClose 把折叠条引用丢了,还在跑的
+  // 工具那一步「待返回」正躺在某张旧卡里。不在这里扫全屏,刷新之后到达的
+  // tool_end 就无处可去——库里结果都写好了,界面上那步却永远"待返回"。
+  if (name) {
+    const hit = [].slice.call(messagesEl().querySelectorAll('.ms-step[data-soft="1"]'))
+      .filter(s => s.dataset.name === name);
+    if (hit.length) return hit[0];
   }
   return null;
 }
