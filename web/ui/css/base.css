@@ -571,6 +571,15 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .pulse { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 .pulse.gray { background: var(--border2); }
 @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+/* 小号转圈:挂在状态徽标里的"还在干活"信号(工具执行中/待返回/生成参数中)。
+   呼吸圆点看不出"活着",缺一个口的圆环转起来一眼就是"正在等它"。
+   颜色跟着徽标文字(currentColor),复用等待首 token 那套 spin 关键帧。 */
+.spin {
+  display: inline-block; width: 9px; height: 9px; flex: 0 0 9px;
+  border: 1.5px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; opacity: .8;
+  animation: spin .8s linear infinite;
+}
 
 /* 等待模型首 token(大上下文冷启动)的转圈提示 */
 .msg.pending .m-card {

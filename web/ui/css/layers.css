@@ -753,7 +753,7 @@ details.ms-step[open] > summary { color: var(--text); margin-bottom: 3px; }
 }
 .ms-tag.ok { color: var(--accent-t); background: var(--accent-l); }
 .ms-tag.run { color: var(--text2); }
-/* 运行中计时徽标:"已运行 12s / 最长 300s"。工具在跑的时候读者要能分清
+/* 运行中计时徽标:"执行 12s / 最长 300s"。工具在跑的时候读者要能分清
    慢慢在跑和已经卡死,超过上限还没回来就转琥珀色醒目提示。 */
 .ms-run {
   flex: 0 0 auto; display: inline-block;

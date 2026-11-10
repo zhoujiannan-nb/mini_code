@@ -179,12 +179,16 @@ async function resyncRunning() {
   const used = {};
   for (const st of [].slice.call(messagesEl().querySelectorAll('.ms-step[data-soft="1"]'))) {
     const name = st.dataset.name || "tool";
+    let filled = false;
     for (let i = 0; i < done.length; i++) {
       if (used[i] || done[i].name !== name) continue;
       used[i] = true;
       stepsFill(st, done[i].text);
+      filled = true;
       break;
     }
+    // 结果还没回来、而任务确实还在跑:把静态的"待返回"升级成转圈等待。
+    if (!filled && data.active) stepsTag(st, "soft", "待返回");
   }
   if (!data.active) stepsRunFreeze();
 }

@@ -177,7 +177,7 @@ function stepsLiveStrip() {
   LIVE.card = null;
   // 借用 steps 那一档的缩进,和「执行过程」卡左对齐成一组
   LIVE.card = addCard("steps",
-    '<div class="m-card ms-live"><div class="ms-live-hd"><span class="pulse gray"></span>正在执行</div>' +
+    '<div class="m-card ms-live"><div class="ms-live-hd"><span class="spin"></span>正在执行</div>' +
     '<div class="ms-live-body"></div></div>');
   LIVE.body = LIVE.card.querySelector(".ms-live-body");
   LIVE.card.insertAdjacentHTML("afterbegin", agentAvatarBox("c-avatar")); // 同「执行过程」条:带 agent 头像
@@ -463,7 +463,7 @@ function stepsAdoptPrep(st, name, args) {
     st._args = a;                    // 折叠条里要看到参数全文
     stepsLivePreview(st, name, a);   // 参数齐了,按完整值重显示一次
   }
-  stepsTag(st, "run", "运行中");
+  stepsTag(st, "run", "执行中");
   st.dataset.soft = "1";
   st.dataset.live = "1";
   st.dataset.t0 = String(Date.now());   // 计时从真正发起执行算起,不含模型生成参数的时间
@@ -537,10 +537,15 @@ function stepsAddTool(name, args, result, prep) {
     st.dataset.prep = "1";
     st.dataset.soft = "1";
     st.open = true;
-    stepsTag(st, "dim", "生成参数中");
+    stepsTag(st, "prep", "生成参数中");
     return st;
   }
-  stepsTag(st, result == null ? "run" : "dim", result == null ? "运行中" : "待返回");
+  // 执行中 = 此刻在跑(转圈 + 计时);"(历史)"占位 = 刷新出来的"待返回":
+  // 只有会话还标记着在跑才转圈,任务早结束了就别空转(静态灰标如实)。
+  if (result == null) stepsTag(st, "run", "执行中");
+  else if (String(result) === "(历史)") {
+    stepsTag(st, (typeof state !== "undefined" && state.running) ? "soft" : "dim", "待返回");
+  } else stepsTag(st, "dim", "待返回");
   if (live) {
     // 参数全文留给搬进折叠条时补上:存在 JS 属性上,不写进 DOM 属性
     st._args = a;
@@ -571,7 +576,11 @@ function stepsTag(st, kind, text) {
   const t = st.querySelector(".ms-tag");
   if (!t) return;
   t.className = "ms-tag " + kind;
-  t.innerHTML = kind === "run" ? '<span class="pulse gray"></span>运行中' : esc(text);
+  // "还在干活"的三种状态(执行中/待返回/生成参数中)都挂转圈:旋转 = 活着。
+  // ok/dim 是终态,保持静止 —— 转圈只属于真的在等的时刻。
+  const spin = (kind === "run" || kind === "soft" || kind === "prep")
+    ? '<span class="spin"></span>' : "";
+  t.innerHTML = spin + esc(text);
 }
 
 /* ---- 运行中计时 ----
@@ -627,7 +636,7 @@ function stepsRunTick() {
   if (!live.length) { stepsRunStop(); return; }
   // 并行调用时头部报个数,一眼知道同时在跑几个
   const hd = LIVE.card && LIVE.card.querySelector(".ms-live-hd");
-  if (hd) hd.innerHTML = '<span class="pulse gray"></span>正在执行' +
+  if (hd) hd.innerHTML = '<span class="spin"></span>正在执行' +
     (live.length > 1 ? '<span class="ms-live-n">' + live.length + ' 个并行</span>' : "");
   const now = Date.now();
   for (const st of live) {
@@ -635,7 +644,7 @@ function stepsRunTick() {
     if (!el) continue;
     const sec = Math.max(0, Math.round((now - Number(st.dataset.t0 || now)) / 1000));
     const lim = Number(st.dataset.tmo || 0);
-    el.textContent = "已运行 " + fmtRun(sec) + (lim ? " / 最长 " + fmtRun(lim) : "");
+    el.textContent = "执行 " + fmtRun(sec) + (lim ? " / 最长 " + fmtRun(lim) : "");
     el.classList.toggle("late", lim > 0 && sec >= lim);
     el.title = lim
       ? "本次调用最长 " + lim + " 秒,已经等了 " + sec + " 秒" + (sec >= lim ? " —— 超过上限还没返回,可能卡住了" : "")
@@ -683,7 +692,8 @@ function stepsFill(st, result) {   // 真结果写进步骤内部(折起时看�
   const slot = st.querySelector(".ms-res-slot");
   const html = '<div class="t-res">✓ ' + esc(shown) + cut + "</div>";
   if (slot) slot.innerHTML = html; else st.insertAdjacentHTML("beforeend", html);
-  stepsTag(st, "ok", "✓ " + (dur >= 2 ? fmtRun(dur) + " · " : "") + s.length + " 字");
+  // 回执到了:转圈停,报"总共 xxs"——这一步从头到尾跑了多久。
+  stepsTag(st, "ok", "✓ " + (dur >= 2 ? "总共 " + fmtRun(dur) + " · " : "") + s.length + " 字");
   st.dataset.soft = "0";
   stepsPaint(); // "最近一步"的摘要跟着回执一起更新
   // 跑完了才折叠进去:这一步从「正在执行」卡回到「执行过程」列表
