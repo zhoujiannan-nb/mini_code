@@ -70,6 +70,11 @@ func TestLateToolEndFindsItsStep(t *testing.T) {
 	if !strings.Contains(freeze, "已执行·未收到回执") {
 		t.Errorf("stepsRunFreeze must relabel leftover soft steps as executed-without-result:\n%s", freeze)
 	}
+	// A prep step whose args never finished generating never dispatched the
+	// tool at all — it must be marked 未执行, not "executed without receipt".
+	if !strings.Contains(freeze, `"1"`) || !strings.Contains(freeze, "未执行") {
+		t.Errorf("stepsRunFreeze must mark never-dispatched prep steps 未执行:\n%s", freeze)
+	}
 }
 
 // TestUserMessageClosesStrip pins the refresh layout bug: replaying history

@@ -109,6 +109,37 @@ func TestTailRunEvents(t *testing.T) {
 	}
 }
 
+// TestDeleteSessionRemovesLedger: deleting a session must take its ledger
+// with it (children too) — append-only rows for a conversation that no
+// longer exists are unreachable garbage.
+func TestDeleteSessionRemovesLedger(t *testing.T) {
+	store := newEventTestStore(t)
+
+	parent := NewSessionRecord("p", "build", "", "")
+	child := NewSessionRecord("c", "work", "", parent.SessionID)
+	for _, r := range []*SessionRecord{parent, child} {
+		if err := store.Create(r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if _, err := store.AppendEvent(r.SessionID, EventTaskStart, 0, nil); err != nil {
+			t.Fatalf("AppendEvent: %v", err)
+		}
+	}
+
+	if err := store.Delete(parent.SessionID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	for _, id := range []string{parent.SessionID, child.SessionID} {
+		evs, err := store.ListEvents(id, 0, 0)
+		if err != nil {
+			t.Fatalf("ListEvents(%s): %v", id, err)
+		}
+		if len(evs) != 0 {
+			t.Fatalf("ledger of deleted session %s survives: %+v", id, evs)
+		}
+	}
+}
+
 // TestEventConcurrentAppend mirrors the real writer pattern: parallel tool
 // goroutines of one session appending results at the same time. Seqs must
 // stay unique and contiguous.

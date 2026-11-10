@@ -672,7 +672,9 @@ function stepsRunFreeze() {
   // 还标着"待返回"的步骤不会再有结果回来了:如实改成"已执行·未收到回执"。
   // 工具调用只要发出去过就是执行过——挂一个假的"待返回"永远等,不如把
   // "跑了、但结果没回到界面"这个真相写在脸上(库里的真相也正是如此)。
+  // 唯一的例外:参数还在生成、工具压根没发起的"预备步骤"——它没执行过。
   for (const st of [].slice.call(messagesEl().querySelectorAll('.ms-step[data-soft="1"]'))) {
+    if (st.dataset.prep === "1") { stepsTag(st, "dim", "未执行"); continue; }
     stepsTag(st, "dim", "已执行·未收到回执");
   }
 }
@@ -777,19 +779,9 @@ function addToolLine(name, args, result) {
   stepsAddTool(name, args, result);
 }
 function markToolPendingDone(result, name) {
-  if (stepsResult(result, name)) {
-    if (!histRendering && nearBottom()) scrollBottom(false, true);
-    return;
-  }
-  // 兜底:折叠条不在(旧数据/异常路径)时,退回"最后一张工具卡"的老逻辑
-  const cards = messagesEl().querySelectorAll(".msg.tool .m-card");
-  if (cards.length === 0) return;
-  const last = cards[cards.length - 1];
-  const stick = nearBottom();
-  const ind = last.querySelector(".live-ind");
-  if (ind) ind.remove();
-  last.insertAdjacentHTML("beforeend", '<div class="t-res">✓ ' + esc(String(result).slice(0, 420)) + "</div>");
-  scrollBottom(false, stick);
+  // stepsSoft 的全文档兜底已经把旧路径全包了:工具步骤现在一律住在折叠条里,
+  // 旧版"最后一张 .msg.tool 卡"的兜底找的对象压根不存在,是死代码。
+  if (stepsResult(result, name) && !histRendering && nearBottom()) scrollBottom(false, true);
 }
 
 function renderHistory(messages) {

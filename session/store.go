@@ -416,8 +416,15 @@ func (s *SessionStore) SetModelKey(sessionID, key string) error {
 }
 
 func (s *SessionStore) Delete(sessionID string) error {
+	// 连带删掉被删会话的事件账本:append-only 的流水留着只会是永远查不到的
+	// 垃圾行(会话都删了,没人再按 id 去查它)。子会话整排删,账本也整排删。
+	kids, _ := s.db.FetchAll("SELECT session_id FROM sessions WHERE parent_id = ?", sessionID)
 	s.db.Execute("DELETE FROM sessions WHERE parent_id = ?", sessionID)
 	_, err := s.db.Execute("DELETE FROM sessions WHERE session_id = ?", sessionID)
+	s.db.Execute("DELETE FROM session_event WHERE session_id = ?", sessionID)
+	for _, k := range kids {
+		s.db.Execute("DELETE FROM session_event WHERE session_id = ?", fmt.Sprint(k["session_id"]))
+	}
 	return err
 }
 
