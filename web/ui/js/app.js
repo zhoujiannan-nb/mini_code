@@ -185,6 +185,10 @@
     if (e.target.id === "approval-mask") hideApproval(); // 只是收起视图,请求仍待审批
   });
 
+  // worker(工作大类)切换条要在拉列表之前恢复:loadSessions 按 state.worker 分桶,
+  // 先跑的话刷新后拉到的永远是"未分配"桶——侧栏显示上次的 worker、列表却是
+  // 另一个桶的空态,当前会话也不在列表里(实测:刷新后当前会话整个没了)。
+  initWorkerBar();
   await loadSessions();
   if (GROUP_CHAT_ENABLED) {
     loadGroups();
@@ -193,8 +197,6 @@
     const gsec = $("#group-sec");
     if (gsec) gsec.style.display = "none";
   }
-  // worker(工作大类)切换条:恢复上次选中的分桶、绑定 ‹ › /菜单/新建
-  initWorkerBar();
   loadStatus();
   connectEvents();
   paintMode();
@@ -202,11 +204,17 @@
   syncApprovals(); // 页面刷新后同步未决审批
   await loadUserAvatar();  // 用户头像:先于会话恢复,历史消息直接带头像渲染
   await loadAgentAvatar(); // agent 头像同理(没设置就是默认那颗墨色 M)
-  // 刷新页面后恢复之前打开的会话(含其执行状态);会话已删除则丢弃记录
+  // 刷新页面后恢复之前打开的会话(含其执行状态)。
+  // 不在"当前桶的列表"里找它:会话所属 worker 和恢复出来的分桶未必一致,
+  // 旧检查把"列表里没有"当成"已删除",记录直接被扔掉——刷新后当前会话没了。
+  // 直接按 id 打开:selectSession 自会按 id 拉取,followSessionWorker 把侧栏
+  // 切到它所属的分桶;真拉不到(已删除)才丢弃记录。
   const saved = readSavedSession();
   if (saved) {
-    if (state.sessions.some(s => s.session_id === saved)) selectSession(saved);
-    else saveSession(null);
+    try {
+      await api("/api/sessions/" + saved);
+      selectSession(saved);
+    } catch (e) { saveSession(null); }
   }
   setInterval(loadStatus, 30000);
   // 定期轮询:校准会话列表,并把当前会话的执行状态同步回服务端

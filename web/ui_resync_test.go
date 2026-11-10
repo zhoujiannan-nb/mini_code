@@ -119,3 +119,33 @@ func TestResyncRestoresRunClock(t *testing.T) {
 		t.Errorf("parseEvTime must truncate nanoseconds before parsing:\n%s", pe)
 	}
 }
+
+// TestBootRestoresCurrentSession pins the refresh restore: the worker bucket
+// must be restored BEFORE the session list is fetched (otherwise boot always
+// lists the unassigned bucket while the bar shows the last worker), and the
+// saved session opens by id — the old check demanded it sit in the current
+// bucket's list and threw the record away when the session belonged to
+// another worker ("刷新后当前会话没有了"). Opening a running session must also
+// fire the ledger resync: es.onopen's resync runs before state.running is
+// set, so without this hook the refreshed view never gets the spinner back
+// or the clock restored.
+func TestBootRestoresCurrentSession(t *testing.T) {
+	js := jsModulesForTest(t)
+
+	barAt := strings.Index(js, "initWorkerBar();")
+	listAt := strings.Index(js, "await loadSessions();")
+	if barAt < 0 || listAt < 0 || barAt > listAt {
+		t.Error("boot must restore the worker bucket before fetching the session list")
+	}
+	if !strings.Contains(js, `api("/api/sessions/" + saved)`) || !strings.Contains(js, "selectSession(saved)") {
+		t.Error("boot must open the saved session by id")
+	}
+	if strings.Contains(js, "state.sessions.some(s => s.session_id === saved)") {
+		t.Error("restore must not gate on the current bucket's list")
+	}
+
+	sel := jsFunc(t, js, "selectSession")
+	if !strings.Contains(sel, "resyncRunning()") || !strings.Contains(sel, "s.active") {
+		t.Errorf("opening a running session must fire the ledger resync:\n%s", sel)
+	}
+}

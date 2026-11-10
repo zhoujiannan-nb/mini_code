@@ -223,6 +223,10 @@ async function selectSession(id) {
       // 刷新不中断服务端任务:历史中已持久化的输出(含工具执行前已完成的回复)
       // 已由 renderHistory 回显;流式中的输出为累积下发,重连后自动补齐。
       addStatus("⏳ 任务正在执行中 — 刷新前的已完成输出已回显,后续输出将实时显示");
+      // 事件账本对账:补上已发生的工具结果、给没有回音的调用恢复计时起点
+      // ("执行 xxs"从真实发起时刻继续)、还在等的挂上转圈。es.onopen 的那次
+      // resync 跑在 state.running 置位之前,到不了这里——这才是刷新后的触发点。
+      resyncRunning();
     }
     paintTokens(data.tokens);
     // 缓存命中 + 输出速度:优先用数据库里持久化的最后一次 LLM 调用实测值
