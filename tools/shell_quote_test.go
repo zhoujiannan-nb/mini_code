@@ -21,6 +21,7 @@ import (
 func TestExecPreservesQuotes(t *testing.T) {
 	dir := t.TempDir()
 	tool := NewExecTool(30, dir)
+	t.Cleanup(func() { _ = tool.Close() })
 
 	// 1. echo with a quoted string: cmd's echo keeps the quotes, so the
 	//    output must contain exactly "hello world" (with quotes) and no

@@ -69,19 +69,32 @@ func IsDestructive(command string) bool {
 type ExecTool struct {
 	timeout    int
 	workingDir string
+
+	// Persistent shell session (Windows): one long-lived cmd.exe per session
+	// so exec calls pay no process cold start and keep cwd/env state. See
+	// persistent_shell.go. psMu guards the lazy spawn; command serialization
+	// lives on the shell itself.
+	psMu          sync.Mutex
+	ps            *persistentShell
+	psFailures    int
+	noPersistentS bool
 }
 
 func NewExecTool(timeout int, workingDir string) *ExecTool {
 	if timeout <= 0 {
 		timeout = 60
 	}
-	return &ExecTool{timeout: timeout, workingDir: workingDir}
+	t := &ExecTool{timeout: timeout, workingDir: workingDir}
+	// Escape hatch for A/B runs and troubleshooting: MINICODE_NO_PERSISTENT_
+	// SHELL=1 pins exec to the classic one-shot cmd.exe path.
+	t.noPersistentS = os.Getenv("MINICODE_NO_PERSISTENT_SHELL") == "1"
+	return t
 }
 
 func (t *ExecTool) Name() string { return "exec" }
 func (t *ExecTool) Description() string {
 	if runtime.GOOS == "windows" {
-		return "Execute a shell command and return stdout/stderr plus exit code. The shell is cmd.exe (Windows): use dir/type/findstr/copy/move/ren and && to chain commands, not Unix syntax. On timeout the whole process tree is killed."
+		return "Execute a shell command and return stdout/stderr plus exit code. The shell is cmd.exe (Windows): use dir/type/findstr/copy/move/ren and && to chain commands, not Unix syntax. The session is persistent: cd and set carry over to later calls, so change directory once instead of passing working_dir every time. On timeout the command's process tree is killed and the shell restarts."
 	}
 	return "Execute a shell command and return stdout/stderr plus exit code. The shell is sh (POSIX). On timeout the whole process tree is killed."
 }
@@ -122,8 +135,10 @@ func (t *ExecTool) run(ctx context.Context, params map[string]interface{}, sink 
 	}
 
 	cwd := t.workingDir
+	cwdExplicit := ""
 	if wd, ok := params["working_dir"].(string); ok && wd != "" {
 		cwd = wd
+		cwdExplicit = wd
 	}
 	timeout := t.timeout
 	if v, ok := params["timeout"].(float64); ok && int(v) > 0 {
@@ -144,6 +159,18 @@ func (t *ExecTool) run(ctx context.Context, params map[string]interface{}, sink 
 	// real fix: write the command to a script file and run that file.
 	if len(command) > 8000 {
 		return NewTextResult(fmt.Sprintf("Error: command is too long (%d chars); the shell command-line limit is ~8191. Write the command to a script file (.bat/.py/.sh) with the write_file tool, then run that file instead.", len(command))), nil
+	}
+
+	// Persistent shell first (Windows): the same command over a long-lived
+	// cmd.exe, no cold start, shell state carried over. Commands that must
+	// not run that way (stdin `input`, batch for-loops, unencodable text, a
+	// repeatedly failing shell) fall through to the one-shot path below.
+	// cwdParam is the EXPLICIT working_dir only — never the tool default:
+	// one-shot pins every call to workingDir, but the persistent shell must
+	// let the model's `cd` stand, or its whole point (carried-over state)
+	// would be undone by the default directory on every next call.
+	if res, handled := t.tryPersistent(ctx, command, cwdExplicit, timeout, params, sink); handled {
+		return res, nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
@@ -214,21 +241,6 @@ func (t *ExecTool) run(ctx context.Context, params map[string]interface{}, sink 
 	defer detachTree()
 
 	err := cmd.Wait()
-	var parts []string
-	// DecodeToUTF8: on Windows cmd.exe emits its diagnostics (and many
-	// console programs their output) in the ANSI code page (GBK on Chinese
-	// systems); normalizing to UTF-8 keeps the text readable for both the
-	// LLM and the persisted session history.
-	if stdout.Len() > 0 {
-		parts = append(parts, util.DecodeToUTF8(stdout.Bytes()))
-	}
-	if stderr.Len() > 0 {
-		s := strings.TrimSpace(util.DecodeToUTF8(stderr.Bytes()))
-		if s != "" {
-			parts = append(parts, "STDERR:\n"+s)
-		}
-	}
-
 	exitCode := 0
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
@@ -240,7 +252,35 @@ func (t *ExecTool) run(ctx context.Context, params map[string]interface{}, sink 
 			exitCode = 1
 		}
 	}
+	return NewTextResult(buildExecResult(command, stdout.Bytes(), stderr.Bytes(), exitCode, "")), nil
+}
+
+// buildExecResult renders the model-visible text of an exec call from the
+// captured streams and the exit code. Both the one-shot and the persistent
+// path run through it so the model sees one format (UTF-8 normalization,
+// STDERR section, cmd-dialect recovery hints, failure diagnostics, hard
+// output cap) regardless of which engine ran the command. note, when set, is
+// an engine-level remark (e.g. "the shell exited") inserted after the exit
+// code line.
+func buildExecResult(command string, stdout, stderr []byte, exitCode int, note string) string {
+	var parts []string
+	// DecodeToUTF8: on Windows cmd.exe emits its diagnostics (and many
+	// console programs their output) in the ANSI code page (GBK on Chinese
+	// systems); normalizing to UTF-8 keeps the text readable for both the
+	// LLM and the persisted session history.
+	if len(stdout) > 0 {
+		parts = append(parts, util.DecodeToUTF8(stdout))
+	}
+	if len(stderr) > 0 {
+		s := strings.TrimSpace(util.DecodeToUTF8(stderr))
+		if s != "" {
+			parts = append(parts, "STDERR:\n"+s)
+		}
+	}
 	parts = append(parts, fmt.Sprintf("\nExit code: %d", exitCode))
+	if note != "" {
+		parts = append(parts, note)
+	}
 	// Recovery hints: when a command fails and looks like it was written for a
 	// POSIX shell, point the model at the cmd.exe equivalent. This is the top
 	// failure mode on Windows (ls/cat/grep/... are not cmd commands) and the
@@ -286,7 +326,7 @@ func (t *ExecTool) run(ctx context.Context, params map[string]interface{}, sink 
 		tail := string(r[len(r)-hardOutputTail:])
 		result = head + fmt.Sprintf("\n\n... (%d chars elided: output over %d-char hard cap) ...\n\n", len(r)-hardOutputHead-hardOutputTail, hardOutputCap) + tail
 	}
-	return NewTextResult(result), nil
+	return result
 }
 
 // Hard caps for exec output (runes). Between the prune threshold (8192) and

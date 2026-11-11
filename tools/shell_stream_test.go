@@ -52,7 +52,9 @@ func TestExecStreamedReportsOutputWhileRunning(t *testing.T) {
 
 	var log chunkLog
 	start := time.Now()
-	res, err := NewExecTool(30, t.TempDir()).
+	tool := NewExecTool(30, t.TempDir())
+	t.Cleanup(func() { _ = tool.Close() })
+	res, err := tool.
 		ExecuteStreamed(context.Background(), map[string]interface{}{"command": command}, log.add)
 	end := time.Now()
 	if err != nil {
@@ -98,7 +100,9 @@ func TestExecStreamedMarksStderr(t *testing.T) {
 		command = "echo bad 1>&2"
 	}
 	var log chunkLog
-	res, err := NewExecTool(20, t.TempDir()).
+	tool := NewExecTool(20, t.TempDir())
+	t.Cleanup(func() { _ = tool.Close() })
+	res, err := tool.
 		ExecuteStreamed(context.Background(), map[string]interface{}{"command": command}, log.add)
 	if err != nil {
 		t.Fatalf("ExecuteStreamed: %v", err)
@@ -114,7 +118,9 @@ func TestExecStreamedMarksStderr(t *testing.T) {
 // TestExecUnstreamedStillWorks guards the delegation: Execute must not start
 // depending on a sink it never passes.
 func TestExecUnstreamedStillWorks(t *testing.T) {
-	res, err := NewExecTool(20, t.TempDir()).Execute(context.Background(),
+	tool := NewExecTool(20, t.TempDir())
+	t.Cleanup(func() { _ = tool.Close() })
+	res, err := tool.Execute(context.Background(),
 		map[string]interface{}{"command": "echo plain"})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)

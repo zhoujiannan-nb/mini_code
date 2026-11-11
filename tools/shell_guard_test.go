@@ -51,6 +51,7 @@ func TestExecWorkingDirIsFile(t *testing.T) {
 func TestExecWorkingDirValid(t *testing.T) {
 	dir := t.TempDir()
 	tool := NewExecTool(60, dir)
+	t.Cleanup(func() { _ = tool.Close() })
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
 		"command":     "echo hello",
 		"working_dir": dir,
@@ -81,6 +82,7 @@ func TestExecTooLongCommand(t *testing.T) {
 // TestExecNormalCommandUnaffected: a normal-length command must run as before.
 func TestExecNormalCommandUnaffected(t *testing.T) {
 	tool := NewExecTool(60, t.TempDir())
+	t.Cleanup(func() { _ = tool.Close() })
 	result, err := tool.Execute(context.Background(), map[string]interface{}{"command": "echo ok"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

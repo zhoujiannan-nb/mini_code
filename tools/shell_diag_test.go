@@ -192,6 +192,7 @@ func TestExecDiagnosisEndToEnd(t *testing.T) {
 		t.Skip("cmd.exe-specific diagnosis")
 	}
 	tool := NewExecTool(30, t.TempDir())
+	t.Cleanup(func() { _ = tool.Close() })
 	res, err := tool.Execute(context.Background(), map[string]interface{}{"command": "definitely_not_a_real_prog_xyz -v"})
 	if err != nil {
 		t.Fatal(err)
@@ -208,6 +209,7 @@ func TestExecDiagnosisEndToEnd(t *testing.T) {
 // traceback diagnosis naming the actual exception.
 func TestExecDiagnosisPythonEndToEnd(t *testing.T) {
 	tool := NewExecTool(30, t.TempDir())
+	t.Cleanup(func() { _ = tool.Close() })
 	script := "raise ValueError('bad input 42')\n"
 	if runtime.GOOS == "windows" {
 		if err := os.WriteFile(filepath.Join(tool.workingDir, "boom.py"), []byte(script), 0644); err != nil {
@@ -293,6 +295,7 @@ func TestExecDiagnosisNodeEndToEnd(t *testing.T) {
 		t.Skip("node not on PATH")
 	}
 	tool := NewExecTool(30, t.TempDir())
+	t.Cleanup(func() { _ = tool.Close() })
 	script := "const x = undefined;\nconsole.log(x.foo);\n"
 	if err := os.WriteFile(filepath.Join(tool.workingDir, "boom.js"), []byte(script), 0644); err != nil {
 		t.Fatal(err)

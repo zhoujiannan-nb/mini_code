@@ -1,0 +1,13 @@
+?   	github.com/user/mini_code	[no test files]
+?   	github.com/user/mini_code/agent	[no test files]
+?   	github.com/user/mini_code/approval	[no test files]
+ok  	github.com/user/mini_code/channels	(cached)
+ok  	github.com/user/mini_code/config	(cached)
+?   	github.com/user/mini_code/desktop	[no test files]
+ok  	github.com/user/mini_code/desktop/windows	(cached)
+ok  	github.com/user/mini_code/plugin	(cached)
+ok  	github.com/user/mini_code/provider	(cached)
+ok  	github.com/user/mini_code/session	(cached)
+ok  	github.com/user/mini_code/tools	(cached)
+ok  	github.com/user/mini_code/util	(cached)
+ok  	github.com/user/mini_code/web	(cached)
