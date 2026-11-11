@@ -12,23 +12,35 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
+// Tool routing follows the dsh convention: name the dedicated tool AND explicitly forbid
+// the shell spelling. "Batch your calls" alone measurably failed — on the SWE-bench round
+// the model walked the tree with dir/type/findstr (43 shell calls) and used search_files
+// 6 times, costing 1.43x the round trips dsh needed.
 const toolConstraints = `<tool_requirements>
 # Tool Usage Instructions
 - Call tools only through structured tool_calls with valid JSON object parameters.
-- Batch all independent tool calls into a single response; sequential round-trips waste turns.
+- Use the dedicated tools, not the shell: glob/list_dir to discover files, search_files to
+  search file contents, read_file to read them. Do not walk the tree with exec (dir, type,
+  findstr, more) to look at code — one dedicated call replaces several shell round trips.
+- exec is for running things (tests, builds, git, package tools), not for inspecting files.
+- Batch every independent call into one response: two or more read-only calls that do not
+  depend on each other go out together, never one per turn.
 </tool_requirements>
 `
+// Deliberately rate-limited: the old wording ("report the result of each tool used ...
+// before/after tool calls") cost a progress line per tool call, i.e. extra output on
+// every round trip.
 const taskProgressAnchor = `<progress_anchor>
 # Progress Reporting
-- When work spans multiple steps, report the result of each tool used and give a short anchor before/after tool calls:
+- Report progress at most once every 3-4 turns, and only when something actually changed:
 【当前进展】 目标: xxx | 已完成: xxx | 下一步: xxx
-- Refresh the full anchor at least every 3-4 turns; keep replies concise and stay on task.
+- Never spend a turn solely on progress — put the anchor in the same message as the work,
+  and do not narrate individual tool calls.
 </progress_anchor>`
 
 const workConstraints = `<work_requirements>
 - The "# Working Directory" block below names this session's folder — it is the same directory stored in the session's database row, and for a worker session it is the worker's shared workspace. Do all reading and writing inside it; database and prompt always mean the same folder.
-- Only throwaway junk goes into a '_work_{timestamp}_{theme}' directory under the working directory (scratch scripts, downloads, notes; theme in the user's language). Final deliverables stay exactly where the task asked for them.
-- Do not write extra helper or verification scripts to check a single-file deliverable — exercise or read the deliverable itself instead.
+- Verify with the project's own tests or commands, not with helper scripts you write. When a scratch script really is the shortest path, put it in a '_work_{timestamp}_{theme}' directory under the working directory (theme in the user's language) and delete it before you finish; final deliverables stay exactly where the task asked for them.
 </work_requirements>`
 
 type PromptBuilder struct {
@@ -92,12 +104,15 @@ func (pb *PromptBuilder) registerDefaultTools() {
 func environmentSection() string {
 	switch runtime.GOOS {
 	case "windows":
+		// The spellings are a translation aid for commands the dedicated tools do not
+		// cover, not a recommendation: an earlier version read "findstr (not grep)",
+		// which pushed the model to grep file contents through exec instead of through
+		// search_files (measured: 25 dir/type/findstr calls per 3 tasks).
 		return `# Environment
 
-Operating system: Windows. The exec tool runs commands through cmd.exe, NOT a Unix shell. Use Windows syntax:
-- dir (not ls), type (not cat), findstr (not grep), copy (not cp), move (not mv), del/erase (not rm), mkdir (no -p flag), ren (not mv)
-- Chain commands with && (the ; separator does not work in cmd)
-- Quote paths that contain spaces; both / and \ work as path separators in most tools
+Operating system: Windows. The exec tool runs commands through cmd.exe, NOT a Unix shell.
+- For code, prefer the dedicated tools over shell equivalents: read_file over type, search_files over findstr, glob/list_dir over dir /s /b. Reaching for the shell to inspect files turns one call into several round trips.
+- When you do use the shell, these are the cmd spellings: dir, type, findstr, copy, move, ren, del/erase, mkdir (no -p flag). Chain with && (';' does not work). Quote paths that contain spaces; both / and \ work as path separators in most tools.
 - Python is usually invoked as "python", not "python3"
 - If a Unix-style command fails, translate it to its cmd equivalent immediately instead of retrying the same command.`
 	case "darwin":
