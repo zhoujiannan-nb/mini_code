@@ -17,7 +17,9 @@ func NewDefaultSessionStore() (*SessionStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &SessionStore{db: db}
+	// Same spill layout as NewSessionStore: full tool outputs of pruned rows
+	// live in the "spill" folder next to the database file.
+	s := &SessionStore{db: db, spillDir: filepath.Join(filepath.Dir(db.Path()), "spill")}
 	s.initDB()
 	return s, nil
 }

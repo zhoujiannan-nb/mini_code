@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/user/mini_code/util"
 )
@@ -274,30 +273,30 @@ func (t *ExecTool) run(ctx context.Context, params map[string]interface{}, sink 
 		result = "(no output)"
 	}
 
-	maxOutput := 10000
-	if len(result) > maxOutput {
-		half := maxOutput / 2
-		// Cut on rune boundaries so the truncated output stays valid UTF-8
-		// (a byte cut mid-rune would inject U+FFFD noise into the LLM's view).
-		head := truncateRuneSafe(result, half)
-		tail := truncateRuneSafe(result[len(result)-half:], half)
-		result = head + fmt.Sprintf("\n\n... (%d chars truncated) ...\n\n", len(result)-len(head)-len(tail)) + tail
+	// Oversized output is NOT trimmed here: the loop's dsh-style prune
+	// (session/prune.go) does the head+tail cut once per result, spills the
+	// full text to a file, and keeps the full row in the ledger — so the
+	// model history carries a small pruned copy that can point at the full
+	// output. An early cut here would defeat that (the old 10K head-only
+	// byte trim lost exit codes and verdicts that sit at the tail). Only a
+	// hard safety cap stays, guarding the process and the ledger against
+	// runaway multi-MB streams; it still keeps the tail.
+	if r := []rune(result); len(r) > hardOutputCap {
+		head := string(r[:hardOutputHead])
+		tail := string(r[len(r)-hardOutputTail:])
+		result = head + fmt.Sprintf("\n\n... (%d chars elided: output over %d-char hard cap) ...\n\n", len(r)-hardOutputHead-hardOutputTail, hardOutputCap) + tail
 	}
 	return NewTextResult(result), nil
 }
 
-// truncateRuneSafe shortens s to at most n bytes without splitting a UTF-8
-// rune at the cut point.
-func truncateRuneSafe(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	cut := s[:n]
-	for len(cut) > 0 && !utf8.RuneStart(cut[len(cut)-1]) {
-		cut = cut[:len(cut)-1]
-	}
-	return cut
-}
+// Hard caps for exec output (runes). Between the prune threshold (8192) and
+// the hard cap the loop's prune handles the cut with a full-text spill;
+// above the cap the stream itself is elided in the middle, keeping both ends.
+const (
+	hardOutputCap  = 200000
+	hardOutputHead = 150000
+	hardOutputTail = 50000
+)
 
 // unixToWindows maps common POSIX command names to their cmd.exe
 // equivalents. It is used only to build a recovery hint after a command has
@@ -309,100 +308,100 @@ func truncateRuneSafe(s string, n int) string {
 // toward a script (python/powershell) instead of it guessing a wrong builtin.
 var unixToWindows = map[string]string{
 	// Direct renames.
-	"ls":       "dir",
-	"cat":      "type",
-	"grep":     "findstr",
-	"rm":       "del",
-	"cp":       "copy",
-	"mv":       "move",
-	"chmod":    "icacls",
-	"chown":    "icacls",
-	"which":    "where",
-	"whereis":  "where",
-	"pwd":      "cd",
-	"head":     "more",
-	"tail":     "more",
-	"less":     "more",
-	"ps":       "tasklist",
-	"kill":     "taskkill",
-	"killall":  "taskkill /IM",
-	"pkill":    "taskkill /FI",
-	"top":      "taskmgr",
-	"htop":     "taskmgr",
-	"python3":  "python",
-	"pip3":     "pip",
-	"wget":     "curl",
-	"diff":     "fc",
-	"clear":    "cls",
-	"ifconfig": "ipconfig",
-	"ip":       "ipconfig",
-	"ss":       "netstat -ano",
-	"lsof":     "netstat -ano",
-	"stat":     "dir",
-	"du":       "dir (size only; no -sh)",
-	"lscpu":    "systeminfo",
-	"uname":    "ver",
-	"id":       "whoami",
+	"ls":         "dir",
+	"cat":        "type",
+	"grep":       "findstr",
+	"rm":         "del",
+	"cp":         "copy",
+	"mv":         "move",
+	"chmod":      "icacls",
+	"chown":      "icacls",
+	"which":      "where",
+	"whereis":    "where",
+	"pwd":        "cd",
+	"head":       "more",
+	"tail":       "more",
+	"less":       "more",
+	"ps":         "tasklist",
+	"kill":       "taskkill",
+	"killall":    "taskkill /IM",
+	"pkill":      "taskkill /FI",
+	"top":        "taskmgr",
+	"htop":       "taskmgr",
+	"python3":    "python",
+	"pip3":       "pip",
+	"wget":       "curl",
+	"diff":       "fc",
+	"clear":      "cls",
+	"ifconfig":   "ipconfig",
+	"ip":         "ipconfig",
+	"ss":         "netstat -ano",
+	"lsof":       "netstat -ano",
+	"stat":       "dir",
+	"du":         "dir (size only; no -sh)",
+	"lscpu":      "systeminfo",
+	"uname":      "ver",
+	"id":         "whoami",
 	"traceroute": "tracert",
-	"dig":      "nslookup",
-	"whois":    "nslookup",
-	"sleep":    "timeout /t",
-	"touch":    "type nul > file (or the write_file tool)",
-	"unzip":    "tar -xf",
-	"zip":      "tar -a -cf out.zip",
-	"ln":       "mklink",
-	"mount":    "subst",
-	"fsck":     "chkdsk",
-	"env":      "set",
-	"export":   "set",
-	"unset":    "set VAR=",
-	"source":   "call",
-	"alias":    "doskey",
-	"history":  "doskey /history",
-	"read":     "set /p",
-	"service":  "sc",
-	"crontab":  "schtasks (Task Scheduler)",
-	"at":       "schtasks (Task Scheduler)",
-	"hexdump":  "certutil -encodehex",
-	"base64":   "certutil -encode / -decode",
-	"sha256sum": "certutil -hashfile SHA256",
-	"md5sum":   "certutil -hashfile MD5",
-	"man":      "use --help",
-	"ping":     "ping -n N (count) / -w ms (timeout)",
-	"date":     "date (no +%Y format; use python for formatted dates)",
-	"sort":     "sort (cmd sort flags differ; no -u)",
-	"cut":      "cmd's cut differs from GNU cut (use a script)",
-	"for":      "for /f (cmd for-loop syntax differs)",
-	"if":       "if exist (cmd if syntax differs)",
-	"printf":   "echo (limited) or a script",
-	"sh":       "cmd (Windows has no sh; run .bat/.cmd or python)",
-	"bash":     "cmd (Windows has no bash; run .bat/.cmd or python)",
-	"zsh":      "cmd (Windows has no zsh; run .bat/.cmd or python)",
-	"dash":     "cmd (Windows has no dash)",
-	"ksh":      "cmd (Windows has no ksh)",
-	"csh":      "cmd (Windows has no csh)",
-	"fish":     "cmd (Windows has no fish)",
-	"apt":      "winget (Windows package manager)",
-	"apt-get":  "winget (Windows package manager)",
-	"yum":      "winget (Windows package manager)",
-	"dnf":      "winget (Windows package manager)",
-	"pacman":   "winget (Windows package manager)",
-	"brew":     "winget (Windows package manager)",
-	"zypper":   "winget (Windows package manager)",
-	"dpkg":     "winget (Windows package manager)",
-	"rpm":      "winget (Windows package manager)",
-	"snap":     "winget (Windows package manager)",
-	"flatpak":  "winget (Windows package manager)",
-	"sudo":     "not needed on Windows (run as-is)",
-	"su":       "not needed on Windows",
-	"doas":     "not needed on Windows",
-	"chgrp":    "no cmd equivalent",
-	"readlink": "no cmd equivalent",
-	"umount":   "no cmd equivalent",
-	"groups":   "no cmd equivalent",
-	"systemctl": "no cmd equivalent (use 'sc' or services.msc)",
+	"dig":        "nslookup",
+	"whois":      "nslookup",
+	"sleep":      "timeout /t",
+	"touch":      "type nul > file (or the write_file tool)",
+	"unzip":      "tar -xf",
+	"zip":        "tar -a -cf out.zip",
+	"ln":         "mklink",
+	"mount":      "subst",
+	"fsck":       "chkdsk",
+	"env":        "set",
+	"export":     "set",
+	"unset":      "set VAR=",
+	"source":     "call",
+	"alias":      "doskey",
+	"history":    "doskey /history",
+	"read":       "set /p",
+	"service":    "sc",
+	"crontab":    "schtasks (Task Scheduler)",
+	"at":         "schtasks (Task Scheduler)",
+	"hexdump":    "certutil -encodehex",
+	"base64":     "certutil -encode / -decode",
+	"sha256sum":  "certutil -hashfile SHA256",
+	"md5sum":     "certutil -hashfile MD5",
+	"man":        "use --help",
+	"ping":       "ping -n N (count) / -w ms (timeout)",
+	"date":       "date (no +%Y format; use python for formatted dates)",
+	"sort":       "sort (cmd sort flags differ; no -u)",
+	"cut":        "cmd's cut differs from GNU cut (use a script)",
+	"for":        "for /f (cmd for-loop syntax differs)",
+	"if":         "if exist (cmd if syntax differs)",
+	"printf":     "echo (limited) or a script",
+	"sh":         "cmd (Windows has no sh; run .bat/.cmd or python)",
+	"bash":       "cmd (Windows has no bash; run .bat/.cmd or python)",
+	"zsh":        "cmd (Windows has no zsh; run .bat/.cmd or python)",
+	"dash":       "cmd (Windows has no dash)",
+	"ksh":        "cmd (Windows has no ksh)",
+	"csh":        "cmd (Windows has no csh)",
+	"fish":       "cmd (Windows has no fish)",
+	"apt":        "winget (Windows package manager)",
+	"apt-get":    "winget (Windows package manager)",
+	"yum":        "winget (Windows package manager)",
+	"dnf":        "winget (Windows package manager)",
+	"pacman":     "winget (Windows package manager)",
+	"brew":       "winget (Windows package manager)",
+	"zypper":     "winget (Windows package manager)",
+	"dpkg":       "winget (Windows package manager)",
+	"rpm":        "winget (Windows package manager)",
+	"snap":       "winget (Windows package manager)",
+	"flatpak":    "winget (Windows package manager)",
+	"sudo":       "not needed on Windows (run as-is)",
+	"su":         "not needed on Windows",
+	"doas":       "not needed on Windows",
+	"chgrp":      "no cmd equivalent",
+	"readlink":   "no cmd equivalent",
+	"umount":     "no cmd equivalent",
+	"groups":     "no cmd equivalent",
+	"systemctl":  "no cmd equivalent (use 'sc' or services.msc)",
 	"journalctl": "no cmd equivalent (use eventvwr)",
-	"dmesg":    "no cmd equivalent (use eventvwr)",
+	"dmesg":      "no cmd equivalent (use eventvwr)",
 	// No cmd equivalent: steer the model to a script.
 	"find":     "dir /s /b (or the glob tool)",
 	"sed":      "no cmd equivalent (use a python/powershell script)",

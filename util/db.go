@@ -128,6 +128,9 @@ func (d *Database) InitTable(createSQL string) {
 	d.db.Exec(createSQL)
 }
 
+// Path returns the file path this database is backed by.
+func (d *Database) Path() string { return d.dbPath }
+
 func (d *Database) InitIndex(indexSQL string) {
 	d.db.Exec(indexSQL)
 }
