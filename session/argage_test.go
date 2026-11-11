@@ -1,4 +1,4 @@
-﻿package session
+package session
 
 import (
 	"context"
@@ -135,6 +135,7 @@ func TestLoopAgesSuccessfulBigWrite(t *testing.T) {
 	reg.Register(bigWriteTool{})
 	loop := NewAgentLoop(client, 5, reg, []provider.ToolSchema{tools.ToSchema(bigWriteTool{})}, nil, nil, nil, nil)
 	loop.compactionOn = false
+	loop.argAgingOn = true
 	rec := &eventRecorder{}
 	loop.SetEventSink(rec.sink)
 
@@ -197,6 +198,7 @@ func TestLoopKeepsFailedWriteArgs(t *testing.T) {
 	reg.Register(bigWriteTool{fail: true})
 	loop := NewAgentLoop(client, 5, reg, []provider.ToolSchema{tools.ToSchema(bigWriteTool{})}, nil, nil, nil, nil)
 	loop.compactionOn = false
+	loop.argAgingOn = true
 	rec := &eventRecorder{}
 	loop.SetEventSink(rec.sink)
 

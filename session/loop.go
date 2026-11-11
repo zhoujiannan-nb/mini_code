@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -33,6 +34,11 @@ type AgentLoop struct {
 	toolDefinitions []provider.ToolSchema
 	compactor       *ContextCompactor
 	compactionOn    bool // false = skip the automatic compaction check entirely
+	// argAgingOn shrinks successful big write/edit arguments in the history to
+	// a summary after each batch (dsh-style per-turn token saving). Initialized
+	// from MC_ARG_AGE=1 — off by default, see handleToolCalls for the round-4
+	// evidence that grounded qwen loses paths when the payloads disappear.
+	argAgingOn bool
 	// compactionTurn is set from the moment the compaction instruction is
 	// appended until the summary comes back: the next model call IS the
 	// summarization turn.
@@ -74,7 +80,7 @@ type AgentLoop struct {
 	// curTurn tags events raised outside the turn-loop body (tool callbacks,
 	// the continue guard) with the turn they happened in.
 	curTurn int
-	gate             ToolGate // runtime permission gate (nil = no gate)
+	gate    ToolGate // runtime permission gate (nil = no gate)
 
 	// Per-path locks serialize batched tool calls that touch the same file
 	// path, so one turn can never interleave two writes/edits of the same
@@ -452,6 +458,7 @@ func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tool
 		toolDefinitions:  defs,
 		compactor:        NewContextCompactor(client),
 		compactionOn:     true, // default keeps legacy behavior; callers may opt out
+		argAgingOn:       os.Getenv("MC_ARG_AGE") == "1",
 		continueGuardOn:  true, // narration-only stops get judged before closing (loop_continue.go)
 		onToolCallStart:  onToolCallStart,
 		onToolCallEnd:    onToolCallEnd,
@@ -1215,20 +1222,29 @@ func (l *AgentLoop) handleToolCalls(ctx context.Context, messages []provider.Mes
 	// payload in the history — the file on disk is the copy of record. Shrink
 	// the assistant message's arguments to a summary so every later turn stops
 	// re-sending them (the loop's per-turn token saving for creative tasks).
-	for i, tc := range toolCalls {
-		text := results[i].Text
-		if results[i].HasMultimodal() || strings.HasPrefix(text, "Error:") || text == "Interrupted" {
-			continue
-		}
-		rep, ok := ageOutCallArgs(tc.Function.Name, tc.Function.Arguments)
-		if !ok {
-			continue
-		}
-		if ageCallArgs(messages, tc.ID, rep) {
-			l.emitEvent(EventCompactionArgAge, l.curTurn, map[string]any{
-				"call_id": tc.ID, "name": tc.Function.Name,
-				"chars_before": len([]rune(tc.Function.Arguments)), "chars_after": len([]rune(rep)),
-			})
+	//
+	// Off by default (MC_ARG_AGE=1 to enable): the round-4 real A/B runs showed
+	// qwen losing path grounding once the payloads vanished from history — it
+	// hallucinated "_work_20260511_..." directories and ballooned to 50-70 turn
+	// failures on exactly the tasks the mechanism was meant to speed up. The
+	// mechanism itself works (ledger keeps full args, events fire), so keep it
+	// switchable for future models that hold grounding better.
+	if l.argAgingOn {
+		for i, tc := range toolCalls {
+			text := results[i].Text
+			if results[i].HasMultimodal() || strings.HasPrefix(text, "Error:") || text == "Interrupted" {
+				continue
+			}
+			rep, ok := ageOutCallArgs(tc.Function.Name, tc.Function.Arguments)
+			if !ok {
+				continue
+			}
+			if ageCallArgs(messages, tc.ID, rep) {
+				l.emitEvent(EventCompactionArgAge, l.curTurn, map[string]any{
+					"call_id": tc.ID, "name": tc.Function.Name,
+					"chars_before": len([]rune(tc.Function.Arguments)), "chars_after": len([]rune(rep)),
+				})
+			}
 		}
 	}
 	for i, tc := range toolCalls {
@@ -1488,9 +1504,9 @@ func (l *AgentLoop) executeToolsConcurrent(ctx context.Context, toolCalls []prov
 			text := results[idx].Text
 			payload := map[string]any{
 				"call_id": tc.ID, "name": tc.Function.Name,
-				"ok": !strings.HasPrefix(text, "Error:"),
+				"ok":          !strings.HasPrefix(text, "Error:"),
 				"duration_ms": time.Since(toolStart).Milliseconds(),
-				"result": text,
+				"result":      text,
 			}
 			// dsh-style tool-result pruning: over-budget output spills its
 			// full text to a file, and the ledger keeps full fidelity —
