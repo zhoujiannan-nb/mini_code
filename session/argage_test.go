@@ -15,10 +15,10 @@ import (
 
 func TestAgeOutCallArgsOnlyBigWriteEdit(t *testing.T) {
 	big := strings.Repeat("x", 3000)
-	if _, ok := ageOutCallArgs("read_file", `{"file_path":"a.txt","old_text":"`+big+`"}`); ok {
+	if _, ok := ageOutCallArgs("read_file", `{"path":"a.txt","old_text":"`+big+`"}`); ok {
 		t.Fatal("read_file must never age")
 	}
-	if _, ok := ageOutCallArgs("write_file", `{"file_path":"a.txt","content":"short"}`); ok {
+	if _, ok := ageOutCallArgs("write_file", `{"path":"a.txt","content":"short"}`); ok {
 		t.Fatal("below-threshold args must stay")
 	}
 	for _, bad := range []string{"not json", `{"content":"` + big + `"}`, `{]`} {
@@ -26,7 +26,7 @@ func TestAgeOutCallArgsOnlyBigWriteEdit(t *testing.T) {
 			t.Fatalf("must not age unparsable/anchor-less args: %q", bad)
 		}
 	}
-	out, ok := ageOutCallArgs("write_file", `{"file_path":"dir/a.txt","content":"`+big+`"}`)
+	out, ok := ageOutCallArgs("write_file", `{"path":"dir/a.txt","content":"`+big+`"}`)
 	if !ok {
 		t.Fatal("big write must age")
 	}
@@ -34,14 +34,14 @@ func TestAgeOutCallArgsOnlyBigWriteEdit(t *testing.T) {
 	if json.Unmarshal([]byte(out), &v) != nil {
 		t.Fatalf("replacement is not valid JSON: %q", out)
 	}
-	if v["file_path"] != "dir/a.txt" || !strings.Contains(v["content"].(string), "aged out") {
+	if v["path"] != "dir/a.txt" || !strings.Contains(v["content"].(string), "aged out") {
 		t.Fatalf("summary lost the anchor: %s", out)
 	}
 	// Idempotent: the summary sits far below the threshold.
 	if _, ok := ageOutCallArgs("write_file", out); ok {
 		t.Fatal("aged args must not re-age")
 	}
-	outE, ok := ageOutCallArgs("edit_file", `{"file_path":"a.txt","old_text":"`+strings.Repeat("o", 2500)+`","new_text":"`+strings.Repeat("n", 2500)+`"}`)
+	outE, ok := ageOutCallArgs("edit_file", `{"path":"a.txt","old_text":"`+strings.Repeat("o", 2500)+`","new_text":"`+strings.Repeat("n", 2500)+`"}`)
 	if !ok || !strings.Contains(outE, "replaced 2500 chars") {
 		t.Fatalf("edit summary wrong: %q", outE)
 	}
@@ -54,17 +54,17 @@ func TestAgeCallArgsWalksTrailingBlock(t *testing.T) {
 	msgs := []provider.Message{
 		{Role: "user", Content: "go"},
 		{Role: "assistant", ToolCalls: []provider.ToolCall{
-			{ID: "c1", Function: provider.FuncCall{Name: "write_file", Arguments: `{"file_path":"a","content":"` + big + `"}`}},
+			{ID: "c1", Function: provider.FuncCall{Name: "write_file", Arguments: `{"path":"a","content":"` + big + `"}`}},
 		}},
 	}
-	msgs[1].ToolCalls[0].Function.Arguments = `{"file_path":"a","content":"` + big + `"}`
-	if !ageCallArgs(msgs, "c1", `{"file_path":"a","content":"[aged out]"}`) {
+	msgs[1].ToolCalls[0].Function.Arguments = `{"path":"a","content":"` + big + `"}`
+	if !ageCallArgs(msgs, "c1", `{"path":"a","content":"[aged out]"}`) {
 		t.Fatal("call not aged")
 	}
 	if !strings.Contains(msgs[1].ToolCalls[0].Function.Arguments, "aged out") {
 		t.Fatal("history not mutated")
 	}
-	if ageCallArgs(msgs, "c1", `{"file_path":"a","content":"[aged out]"}`) {
+	if ageCallArgs(msgs, "c1", `{"path":"a","content":"[aged out]"}`) {
 		t.Fatal("second pass must be a no-op")
 	}
 	if ageCallArgs(msgs, "nope", "x") {
@@ -74,7 +74,7 @@ func TestAgeCallArgsWalksTrailingBlock(t *testing.T) {
 	// block: aging only ever touches the batch that just completed.
 	msgs2 := []provider.Message{
 		{Role: "assistant", ToolCalls: []provider.ToolCall{
-			{ID: "c1", Function: provider.FuncCall{Name: "write_file", Arguments: `{"file_path":"a","content":"` + big + `"}`}},
+			{ID: "c1", Function: provider.FuncCall{Name: "write_file", Arguments: `{"path":"a","content":"` + big + `"}`}},
 		}},
 		{Role: "user", Content: "next"},
 		{Role: "assistant", Content: "hi"},
@@ -122,7 +122,7 @@ func TestLoopAgesSuccessfulBigWrite(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		if requests == 1 {
-			writeSSEChunk(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_w1","type":"function","function":{"name":"write_file","arguments":"{\"file_path\":\"a.txt\",\"content\":\"`+strings.Repeat("Z", 3000)+`\"}"}}]},"finish_reason":"tool_calls"}]}`)
+			writeSSEChunk(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_w1","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"a.txt\",\"content\":\"`+strings.Repeat("Z", 3000)+`\"}"}}]},"finish_reason":"tool_calls"}]}`)
 		} else {
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}`)
 		}
@@ -184,7 +184,7 @@ func TestLoopKeepsFailedWriteArgs(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		if requests == 1 {
-			writeSSEChunk(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_w2","type":"function","function":{"name":"write_file","arguments":"{\"file_path\":\"a.txt\",\"content\":\"`+strings.Repeat("Q", 3000)+`\"}"}}]},"finish_reason":"tool_calls"}]}`)
+			writeSSEChunk(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_w2","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"a.txt\",\"content\":\"`+strings.Repeat("Q", 3000)+`\"}"}}]},"finish_reason":"tool_calls"}]}`)
 		} else {
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}`)
 		}

@@ -45,7 +45,10 @@ func ageOutCallArgs(name, args string) (string, bool) {
 	if json.Unmarshal([]byte(args), &v) != nil {
 		return "", false // not JSON we understand: leave it alone
 	}
-	fp, _ := v["file_path"].(string)
+	fp, _ := v["path"].(string)
+	if fp == "" {
+		fp, _ = v["file_path"].(string) // tolerate dsh-style key if it ever shows up
+	}
 	if fp == "" {
 		return "", false
 	}
@@ -58,8 +61,8 @@ func ageOutCallArgs(name, args string) (string, bool) {
 			n = runeLen(c)
 		}
 		summary = map[string]any{
-			"file_path": fp,
-			"content":   fmt.Sprintf("[aged out: wrote %d chars; the file on disk is the copy of record — read_file before editing again]", n),
+			"path":    fp,
+			"content": fmt.Sprintf("[aged out: wrote %d chars; the file on disk is the copy of record — read_file before editing again]", n),
 		}
 	case "edit_file":
 		o, nn := 0, 0
@@ -70,9 +73,9 @@ func ageOutCallArgs(name, args string) (string, bool) {
 			nn = runeLen(s)
 		}
 		summary = map[string]any{
-			"file_path": fp,
-			"old_text":  fmt.Sprintf("[aged out: replaced %d chars]", o),
-			"new_text":  fmt.Sprintf("[aged out: with %d chars]", nn),
+			"path":     fp,
+			"old_text": fmt.Sprintf("[aged out: replaced %d chars]", o),
+			"new_text": fmt.Sprintf("[aged out: with %d chars]", nn),
 		}
 	}
 	b, err := json.Marshal(summary)
