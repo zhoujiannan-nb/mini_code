@@ -26,10 +26,8 @@ const taskProgressAnchor = `<progress_anchor>
 </progress_anchor>`
 
 const workConstraints = `<work_requirements>
-# Work Requirements
-- Place all scripts, dependencies, and all files needed or generated during task execution into '_work_{timestamp}_{theme}' under the current directory. The theme must use the user's language.
-- If the work involves SSH or remote login to other terminals, still create working files in the remote terminal using the same format, and place all project-related files there.
-- For temporary files only; no final outputs. Auto-cleaned after task completion.
+- Only throwaway junk goes into a '_work_{timestamp}_{theme}' directory under the current directory (scratch scripts, downloads, notes; theme in the user's language). Final deliverables stay exactly where the task asked for them.
+- Do not write extra helper or verification scripts to check a single-file deliverable — exercise or read the deliverable itself instead.
 </work_requirements>`
 
 type PromptBuilder struct {
