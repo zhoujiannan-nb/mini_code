@@ -35,6 +35,11 @@ func TestResyncOnSseReconnect(t *testing.T) {
 	if !strings.Contains(fn, "used[i]") || !strings.Contains(fn, "stepsFill(") {
 		t.Errorf("resyncRunning must consume each result once and fill the step:\n%s", fn)
 	}
+	// Pruned results: a later tool/result row with the same call_id supersedes
+	// the full-text row — resync must fold by call_id and count each call once.
+	if !strings.Contains(fn, "lastByCall") {
+		t.Errorf("resyncRunning must fold tool/result replacements by call_id:\n%s", fn)
+	}
 	// Steps with no recorded result stay untouched (they may truly run);
 	// only a finished task (active=false) freezes whatever is left over.
 	if !strings.Contains(fn, "stepsRunFreeze()") || !strings.Contains(fn, "data.active") {

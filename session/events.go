@@ -30,7 +30,8 @@ const (
 	EventUserMessage      = "user/message"      // {text, source: input|queued|worker_notice|context_usage}
 	EventAssistantMessage = "assistant/message" // {content, reasoning_chars, tool_calls?, usage?}
 	EventToolCall         = "tool/call"         // {call_id, name, args}
-	EventToolResult       = "tool/result"       // {call_id, name, ok, duration_ms, result | error}
+	EventToolResult       = "tool/result"       // {call_id, name, ok, duration_ms, result | error}; a pruned replacement row repeats the call_id with "replaces" set (see compaction/prune)
+	EventCompactionPrune  = "compaction/prune"  // {call_id, name, chars_before, chars_after, spill?} — shadow event pricing one tool-result prune; the following tool/result row with the same call_id supersedes the full row
 	EventCompaction       = "compaction"        // {before_tokens, after_tokens, kind: auto|manual}
 	EventGuardSteer       = "guard/steer"       // {steer}
 )
@@ -59,10 +60,11 @@ func (s *SessionStore) initEvents() {
 
 // AppendEvent adds one fact to the ledger and returns its seq. The seq is
 // assigned by the INSERT itself (MAX+1 in the same statement), so one
-// statement is one atomic append; the event mutex keeps a single process
-// strictly ordered, and the PK guard plus one retry covers a second writer
-// process. Best-effort callers (the loop) log failures and carry on — a
-// ledger write must never break a task.
+// statement is one atomic append; the per-session shard lock keeps a single
+// process strictly ordered while DIFFERENT sessions append concurrently, and
+// the PK guard plus one retry covers a second writer process. Best-effort
+// callers (the loop) log failures and carry on — a ledger write must never
+// break a task.
 func (s *SessionStore) AppendEvent(sessionID, typ string, turn int, payload any) (int64, error) {
 	data := []byte("{}")
 	if payload != nil {
@@ -72,8 +74,9 @@ func (s *SessionStore) AppendEvent(sessionID, typ string, turn int, payload any)
 		}
 		data = b
 	}
-	s.evMu.Lock()
-	defer s.evMu.Unlock()
+	mu := s.evLock(sessionID)
+	mu.Lock()
+	defer mu.Unlock()
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		_, err := s.db.Execute(

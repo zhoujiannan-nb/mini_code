@@ -425,6 +425,9 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 			slog.Error("session event append failed", "session", s.ID(), "type", typ, "err", err)
 		}
 	})
+	// Oversized tool results spill their full text next to the database so
+	// the pruned history copy can point at it (prune.go).
+	loop.SetSpillDir(s.store.SpillDir(), s.ID())
 	// Live tool output (UI only) rides the same callback set; tools that cannot
 	// stream simply never call it.
 	loop.SetOnToolOutput(s.onToolOutput)

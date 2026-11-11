@@ -181,10 +181,19 @@ async function resyncRunning() {
   // 每个工具"最后一次调用/最后一次回执"的位置:调用排在所有回执之后,
   // 说明它还没有回音——它的发生时刻(created_at)就是刷新后计时的起点。
   const lastCall = {}, lastRes = {};
+  // tool/result 修订折叠(修剪行):同 call_id 后到的行覆盖先到的——全文行被
+  // 修剪行取代,只有最后一行作数;compaction/prune 是记账事件,不进步骤。
+  const lastByCall = {};
+  evs.forEach((ev, i) => {
+    if (ev.type === "tool/result" && ev.payload && ev.payload.call_id) lastByCall[ev.payload.call_id] = i;
+  });
   evs.forEach((ev, i) => {
     const p = ev.payload || {};
     const nm = String(p.name || "tool");
-    if (ev.type === "tool/result") { done.push({ name: nm, text: String(p.result != null ? p.result : (p.error || "")) }); lastRes[nm] = i; }
+    if (ev.type === "tool/result") {
+      if (p.call_id && lastByCall[p.call_id] !== i) return; // 已被后到修订行覆盖
+      done.push({ name: nm, text: String(p.result != null ? p.result : (p.error || "")) }); lastRes[nm] = i;
+    }
     else if (ev.type === "tool/call") { lastCall[nm] = { i: i, t: parseEvTime(ev.created_at), args: p.args }; }
   });
   const used = {};

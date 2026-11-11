@@ -66,6 +66,11 @@ type AgentLoop struct {
 	// eventSink appends conversation facts to the session event ledger (see
 	// events.go). nil = no ledger (tests, or a loop built without a store).
 	eventSink func(typ string, turn int, payload map[string]any)
+	// spillDir/spillID locate the full-text files behind pruned tool results
+	// (prune.go). Empty spillDir = no spilling: pruned markers omit the path
+	// and the ledger's full row stays the only escape hatch.
+	spillDir string
+	spillID  string
 	// curTurn tags events raised outside the turn-loop body (tool callbacks,
 	// the continue guard) with the turn they happened in.
 	curTurn int
@@ -256,6 +261,13 @@ func (l *AgentLoop) SetOnUsage(fn func(promptTokens, cachedTokens, completionTok
 // keeps only process diagnostics. Must be called before Run.
 func (l *AgentLoop) SetEventSink(fn func(typ string, turn int, payload map[string]any)) {
 	l.eventSink = fn
+}
+
+// SetSpillDir wires where oversized tool results spill their full text
+// (folder + owning session id used to name the file). Must be called before Run.
+func (l *AgentLoop) SetSpillDir(dir, sessionID string) {
+	l.spillDir = dir
+	l.spillID = sessionID
 }
 
 // emitEvent raises one ledger event. Best-effort by contract: the sink
@@ -1454,12 +1466,42 @@ func (l *AgentLoop) executeToolsConcurrent(ctx context.Context, toolCalls []prov
 				l.onToolCallEnd(tc.Function.Name, params, results[idx].Text)
 			}
 			text := results[idx].Text
-			l.emitEvent(EventToolResult, l.curTurn, map[string]any{
+			payload := map[string]any{
 				"call_id": tc.ID, "name": tc.Function.Name,
 				"ok": !strings.HasPrefix(text, "Error:"),
 				"duration_ms": time.Since(toolStart).Milliseconds(),
 				"result": text,
-			})
+			}
+			// dsh-style tool-result pruning: over-budget output spills its
+			// full text to a file, and the ledger keeps full fidelity —
+			// original full row, then a compaction/prune shadow event
+			// pricing the cut, then a pruned replacement row (same call_id,
+			// "replaces" set) that readers fold over the original. The model
+			// history carries only the pruned copy: that is the per-turn
+			// token saving this pass exists for. Multimodal results are left
+			// alone (their parts are not plain text).
+			if !results[idx].HasMultimodal() {
+				if before := len([]rune(text)); before > defaultPrune.Threshold {
+					spillPath := spillToolText(l.spillDir, l.spillID, tc.ID, text)
+					if pruned, ok := pruneToolText(text, spillPath); ok {
+						fullRow := map[string]any{} // clone: the sink may keep this map
+						for k, v := range payload {
+							fullRow[k] = v
+						}
+						l.emitEvent(EventToolResult, l.curTurn, fullRow) // full row stays
+						l.emitEvent(EventCompactionPrune, l.curTurn, map[string]any{
+							"call_id": tc.ID, "name": tc.Function.Name,
+							"chars_before": before, "chars_after": len([]rune(pruned)),
+							"spill": spillPath,
+						})
+						payload["result"] = pruned
+						payload["replaces"] = tc.ID
+						text = pruned
+						results[idx].Text = pruned // model history gets the pruned copy
+					}
+				}
+			}
+			l.emitEvent(EventToolResult, l.curTurn, payload)
 		}(i, tc)
 	}
 	wg.Wait()

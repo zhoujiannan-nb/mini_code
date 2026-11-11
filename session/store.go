@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -61,9 +62,14 @@ func NewSessionRecord(title, agentRole, workDir, parentID string) *SessionRecord
 
 type SessionStore struct {
 	db *util.Database
-	// evMu serializes ledger appends within this process so seq stays
-	// contiguous even when parallel tool goroutines emit events.
-	evMu sync.Mutex
+	// evLocks shards ledger-append serialization by session id: appends to
+	// the SAME session stay strictly ordered (contiguous seq), while
+	// different sessions — parallel tasks, sub-agents, workers — append
+	// concurrently instead of queueing behind one global mutex. WAL mode
+	// plus busy_timeout (util.NewDatabase) arbitrates at the SQLite layer.
+	evLocks [64]sync.Mutex
+	// spillDir holds full tool outputs behind pruned ledger rows (see prune.go).
+	spillDir string
 }
 
 func NewSessionStore(dbPath string) (*SessionStore, error) {
@@ -71,10 +77,24 @@ func NewSessionStore(dbPath string) (*SessionStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &SessionStore{db: db}
+	s := &SessionStore{db: db, spillDir: filepath.Join(filepath.Dir(dbPath), "spill")}
 	s.initDB()
 	return s, nil
 }
+
+// evLock returns the shard guarding one session's ledger appends (FNV-1a over
+// the session id).
+func (s *SessionStore) evLock(sessionID string) *sync.Mutex {
+	var h uint32 = 2166136261
+	for i := 0; i < len(sessionID); i++ {
+		h = (h ^ uint32(sessionID[i])) * 16777619
+	}
+	return &s.evLocks[h%uint32(len(s.evLocks))]
+}
+
+// SpillDir is where full tool outputs behind pruned rows are written
+// (sibling "spill" folder of the database file).
+func (s *SessionStore) SpillDir() string { return s.spillDir }
 
 func (s *SessionStore) initDB() {
 	s.db.InitTable(`CREATE TABLE IF NOT EXISTS sessions (
