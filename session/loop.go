@@ -743,7 +743,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		// exact extension of the previous one — everything before the new
 		// message is byte-identical and keeps hitting the provider's KV prefix
 		// cache — and the model itself answers with the summary. The context is
-		// then restarted from [system][verbatim tail][summary] (RebuildContext).
+		// then restarted from [system][summary][verbatim tail] (RebuildContext).
 		// Estimate the context about to be sent: first locally (raw cl100k
 		// proxy), then calibrated onto the provider's own token scale (see
 		// tokenCalibrator). The calibrated count drives the auto-compaction

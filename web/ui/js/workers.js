@@ -1,7 +1,8 @@
 /* ---------------- Worker(工作大类)----------------
  * 一个 worker = 一条工作线:一个共享工作目录 + 一份共享公约(存在 worker 记录里,带版本)。
- * 这里的职责:切换条(‹ worker ›)、按 worker 过滤会话列表、把会话移动到
- * worker(原"归档"按钮的位置)、以及公约的查看/编辑。
+ * 这里的职责:切换条(‹ worker ›)、按 worker 过滤会话列表、以及公约的查看/编辑。
+ * 会话归属创建即固定(没有"移动到 Worker"了),会话的工作目录就是所在 worker 的
+ * 共享目录 —— 数据库、提示词、磁盘三方从出生起就是同一个文件夹。
  *
  * 会话侧的归属规则在服务端:会话创建即有归属(worker 名下建就归该 worker,否则归
  * 固定的「其他」桶)—— 没有"未分配"这一档,也没有加入提醒了。剩下的注入只有一种:
@@ -44,7 +45,7 @@ function workerLabel(id) {
 
 function workerEmptyHint() {
   if (workerBucketId() === WK_OTHER) return '这里还没有会话<br>顶部「＋ 新建会话」建的会话默认落在这里';
-  return '这个 worker 还没有会话<br>点「＋ 新建会话」直接在这里开工,或把别的会话 📁 移进来';
+  return '这个 worker 还没有会话<br>先切到它再点顶部「＋ 新建会话」,新会话就落在这里';
 }
 
 async function loadWorkers() {
@@ -87,38 +88,24 @@ function paintWorkerBar() {
     sub.innerHTML = "";
   } else {
     // 固定的「其他」能写公约、能改摘要,但删不掉、名字也写死了 —— 不渲染 🗑 和改名。
-    // 「＋ 会话」所有 worker 都有:在这里建的会话默认就归这个 worker(见 send.js)。
+    // 「＋ 会话」小按钮已删:顶部「＋ 新建会话」就落在当前区,语义完全重复。
     sub.innerHTML =
       '<button class="wk-sub-btn" id="wk-note-btn" title="查看/编辑公约(共享给这个 worker 的全部会话)">📄 公约</button>' +
       '<button class="wk-sub-btn" id="wk-summary-btn" title="改写摘要(新会话靠它决定加入哪个 worker)">✎ 摘要</button>' +
       (w.reserved ? "" :
         '<button class="wk-sub-btn" id="wk-rename-btn" title="改名(只改名字:目录不动,会话里的路径不受影响)">✎ 名称</button>') +
-      '<button class="wk-sub-btn" id="wk-new-sess-btn" title="在这个 worker 里新建会话(发出第一条消息即归属这里)">＋ 会话</button>' +
       (w.reserved ? "" :
         '<button class="wk-sub-btn wk-sub-danger" id="wk-del-btn" title="删除工作区及其全部会话(需手打确认语;目录保留)">🗑</button>');
     const bind = (sel, fn) => { const el = $(sel); if (el) el.addEventListener("click", fn); };
     bind("#wk-note-btn", () => openNoteEditor(w.worker_id));
     bind("#wk-summary-btn", () => editSummary(w.worker_id));
     bind("#wk-rename-btn", () => renameWorker(w.worker_id));
-    bind("#wk-new-sess-btn", newSessionInWorker);
     bind("#wk-del-btn", () => deleteWorker(w.worker_id));
   }
 }
 
-// 小「＋ 会话」:草稿**明确挂到当前 worker**(「其他」也算,归属只有 send.js 一处
-// 来源 body.worker_id = state.worker,而 resetToNew 不碰它,所以这里要钉成当前区)。
-function newSessionInWorker() {
-  if (state.currentGroup && typeof exitGroupView === "function") exitGroupView();
-  const id = workerBucketId();
-  if (id) {
-    state.worker = id;
-    rememberWorker(id);
-  }
-  state.unassignedActive = 0;
-  resetToNew();
-  const input = $("#input");
-  if (input) input.focus();
-}
+// (removed) newSessionInWorker:worker 子栏的小「＋ 会话」与顶部大「＋ 新建会话」
+// 语义相同(都落在当前选中的区),小按钮纯属重复,删了。
 
 // 顶部大「＋ 新建会话」:与小「＋ 会话」同一语义 —— 会话落在**当前选中的区**
 // (后端保证创建即归属,没得选"无主")。之前的大按钮会把归属清空让 agent 自己
@@ -249,29 +236,8 @@ function openWorkerMenu(anchor) {
   });
 }
 
-// 会话卡上的 📁:把这条会话移动到某个 worker(原归档按钮的位置)。
-function openWorkerMoveMenu(sess, anchor) {
-  const menu = $("#worker-menu");
-  if (!menu) return;
-  const cur = sess.worker_id || WK_OTHER;
-  let html = '<div class="wk-menu-head">移动到 Worker</div>';
-  for (const w of workerBuckets()) {
-    html += '<div class="wk-menu-item' + (w.worker_id === cur ? " cur" : "") + '" data-id="' + esc(w.worker_id) + '">' +
-      wkIcon(w.worker_id) +
-      '<span class="wk-menu-name">' + esc(w.name) + '</span>' +
-      '<span class="wk-menu-n">' + (w.worker_id === cur ? "当前" : "") + "</span></div>";
-  }
-  menu.innerHTML = html;
-  menu.classList.add("open");
-  placeWorkerMenu(menu, anchor);
-  const target = sess.session_id;
-  menu.querySelectorAll(".wk-menu-item").forEach(el => {
-    el.addEventListener("click", () => {
-      closeWorkerMenu();
-      moveSessionToWorker(target, el.dataset.id, cur);
-    });
-  });
-}
+// (removed) openWorkerMoveMenu:会话卡上的 📁"移动到 Worker"菜单已删 —— 归属创建
+// 即固定,worker 目录与会话目录自出生绑定,不存在 mid-life 搬家。
 
 /* ---------------- 新建 / 改名 / 删除 ---------------- */
 async function createWorker() {

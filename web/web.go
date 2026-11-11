@@ -140,8 +140,9 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/reasoning", s.handleSetReasoning)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleRenameSession)
 	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handleSetArchived)
-	// Workers (工作大类): the sidebar switcher, the "移动到 Worker" action and the
-	// shared 公约 editor.
+	// Workers (工作大类): the sidebar switcher and the shared 公约 editor.
+	// (Sessions can no longer be moved between workers: membership is fixed at
+	// creation, so worker 目录 and session 工作目录 stay one folder.)
 	mux.HandleFunc("GET /api/workers", s.handleWorkersList)
 	mux.HandleFunc("POST /api/workers", s.handleWorkersCreate)
 	mux.HandleFunc("POST /api/workers/{id}/summary", s.handleWorkersSummary)
@@ -149,7 +150,6 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("DELETE /api/workers/{id}", s.handleWorkersDelete)
 	mux.HandleFunc("GET /api/workers/{id}/note", s.handleWorkersNoteGet)
 	mux.HandleFunc("POST /api/workers/{id}/note", s.handleWorkersNoteWrite)
-	mux.HandleFunc("POST /api/sessions/{id}/worker", s.handleSessionsMoveWorker)
 	mux.HandleFunc("GET /api/sessions/{id}/children", s.handleListChildren)
 	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)

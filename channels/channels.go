@@ -689,7 +689,22 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 	if title == "" {
 		title = "Chat"
 	}
-	created, err := h.mgr.CreateSessionRecord(title, h.agentRole, h.workDir, nil)
+	// The worker is decided BEFORE the row is written. A session born under a
+	// worker is born inside its shared directory: the first persisted row, the
+	// restored projections and the prompt's Working Directory block then all
+	// name one folder (worker dir == session dir, database == prompt) for the
+	// whole life of the session — membership is fixed at birth.
+	wid := m.WorkerID
+	if wid == "" {
+		wid = session.WorkerOtherID
+	}
+	birthDir := h.workDir
+	if w := h.mgr.Workers(); w != nil {
+		if rec, err := w.Get(wid); err == nil && rec != nil && rec.WorkDir != "" {
+			birthDir = rec.WorkDir
+		}
+	}
+	created, err := h.mgr.CreateSessionRecord(title, h.agentRole, birthDir, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -722,16 +737,10 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 			slog.Warn("bind channel key failed", "session", created.ID(), "key", m.SessionKey, "err", err)
 		}
 	}
-	// Worker for the new session. Every root session is born inside a worker:
-	// the sidebar's switcher names one, and a chat started without one falls
-	// into the fixed 其他 bucket (its attach carries no name/dir, so the
-	// prompt stays byte-identical to the old worker-less one). Attaching
-	// happens before the first task, so the very first request already carries
-	// the membership — the retired join reminder used to cost two turns here.
-	wid := m.WorkerID
-	if wid == "" {
-		wid = session.WorkerOtherID
-	}
+	// Attach the membership (name label + shared dir were already resolved above
+	// into birthDir). Attaching happens before the first task, so the very first
+	// request already carries the worker — the retired join reminder used to
+	// cost two turns here.
 	if err := h.mgr.MoveToWorker(created.ID(), wid); err != nil {
 		slog.Warn("attach new session to worker failed", "session", created.ID(), "worker", wid, "err", err)
 	}

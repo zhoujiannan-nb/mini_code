@@ -164,21 +164,25 @@ func SummaryBlock(summary string) string {
 
 // RebuildContext restarts the conversation from a summary. Input is the
 // context as it was sent for the summarization turn (compaction instruction
-// included). Output is [system][verbatim tail][summary]:
+// included). Output is [system][summary][verbatim tail] — the dsh shape, where
+// the summary replaces the compacted region and heads the surviving window:
 //
 //   - the system message is kept byte-identical (it is the one prefix segment
 //     that survives any rewrite);
+//   - the summary is the first history message: the model reads the compressed
+//     past before the verbatim present, the same order a fresh reader would
+//     reconstruct from the ledger;
 //   - the last keep verbatim messages are walked backwards, never splitting a
 //     tool result from the assistant tool_calls that produced it, and never
 //     starting with a tool message; they stay a contiguous block, in order,
-//     exactly as they were sent before — that block is what the provider's
-//     prefix cache can still match, so it goes first;
-//   - the summary is appended as a single user message *after* that block: it
-//     is the only new bytes of the request, which keeps [system][tail] a
-//     byte-stable prefix for every later turn and for the next compaction
-//     (which retains a suffix of this very tail);
+//     exactly as they were sent before;
 //   - the verbatim block stays within budget tokens; a single message that is
 //     itself too large is truncated to fit.
+//
+// The prefix-cache argument for trailing the summary does not hold: the
+// compacted bytes are gone from before the tail either way, so every request
+// after a compaction re-seats the cache no matter where the summary sits —
+// there is nothing to buy by putting it last.
 //
 // Compaction instructions, usage notices and worker briefs are dropped (all three
 // are derived data the next turn re-creates). ok is false when
@@ -284,12 +288,12 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 	if system != nil {
 		out = append(out, *system)
 	}
+	// [system][summary][tail] (dsh's order): the summary stands where the
+	// compacted region used to be, ahead of the verbatim tail.
+	out = append(out, provider.Message{Role: "user", Content: SummaryBlock(summary)})
 	for i := len(taken) - 1; i >= 0; i-- {
 		out = append(out, taken[i])
 	}
-	// The summary closes the context: everything before it is byte-identical to
-	// what has already been sent (and cached), only these new bytes are not.
-	out = append(out, provider.Message{Role: "user", Content: SummaryBlock(summary)})
 	return out, true
 }
 

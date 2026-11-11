@@ -26,7 +26,8 @@ const taskProgressAnchor = `<progress_anchor>
 </progress_anchor>`
 
 const workConstraints = `<work_requirements>
-- Only throwaway junk goes into a '_work_{timestamp}_{theme}' directory under the current directory (scratch scripts, downloads, notes; theme in the user's language). Final deliverables stay exactly where the task asked for them.
+- The "# Working Directory" block below names this session's folder — it is the same directory stored in the session's database row, and for a worker session it is the worker's shared workspace. Do all reading and writing inside it; database and prompt always mean the same folder.
+- Only throwaway junk goes into a '_work_{timestamp}_{theme}' directory under the working directory (scratch scripts, downloads, notes; theme in the user's language). Final deliverables stay exactly where the task asked for them.
 - Do not write extra helper or verification scripts to check a single-file deliverable — exercise or read the deliverable itself instead.
 </work_requirements>`
 

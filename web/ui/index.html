@@ -244,7 +244,7 @@ window.__mcBoot = __mcBoot;
       <div class="group-list" id="group-list"></div>
     </div>
   </aside>
-  <!-- worker 下拉(切换 / 移动到)必须挂在 body 下:aside 带 backdrop-filter,
+  <!-- worker 下拉(切换)必须挂在 body 下:aside 带 backdrop-filter,
        会把自己变成后代 position:fixed 的包含块 —— 菜单放在侧栏里就会被侧栏右缘
        剪掉,worker 名读不全(而且 JS 算的 left/top 是视口坐标,会被再偏移一次)。 -->
   <div class="worker-menu" id="worker-menu"></div>

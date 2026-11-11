@@ -95,7 +95,7 @@ function renderSessions() {
   for (const s of state.sessions) {
     const el = document.createElement("div");
     el.className = "sess-item" + (s.session_id === state.current ? " active" : "");
-    // 拖到侧边栏的群上 = 加入该群;拖到 worker 菜单里的分桶 = 移动到该 worker
+    // 拖到侧边栏的群上 = 加入该群(会话归属创建即固定,不再能移动 worker)
     el.draggable = true;
     el.addEventListener("dragstart", (e) => {
       e.dataTransfer.setData("text/plain", JSON.stringify({ kind: "session", sid: s.session_id }));
@@ -115,19 +115,14 @@ function renderSessions() {
       (statusText ? "<span>" + statusText + "</span>" : "") +
        "<span>" + relTime(s.updated_at) + "</span><span>" + s.message_count + " 条</span></div>" +
        '<button class="rename-btn" title="重命名会话">✎</button>' +
-       '<button class="wk-btn" title="移动到 Worker">📁</button>' +
        '<button class="del-btn" title="删除会话">✕</button>';
     el.addEventListener("click", (e) => {
-      if (e.target.classList.contains("del-btn") || e.target.classList.contains("rename-btn") || e.target.classList.contains("wk-btn")) return;
+      if (e.target.classList.contains("del-btn") || e.target.classList.contains("rename-btn")) return;
       selectSession(s.session_id);
     });
     el.querySelector(".rename-btn").addEventListener("click", (e) => {
       e.stopPropagation();
       renameSession(s.session_id, s.title);
-    });
-    el.querySelector(".wk-btn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      openWorkerMoveMenu(s, e.target);
     });
     el.querySelector(".del-btn").addEventListener("click", async (e) => {
       e.stopPropagation();
@@ -164,32 +159,10 @@ async function renameSession(id, currentTitle) {
   } catch (err) { toast("重命名失败:" + err.message, "err"); }
 }
 
-/* ---------------- 移动到 Worker ---------------- */
-// 原"归档"按钮的位置。移动会改变会话的工作目录(变成该 worker 的共享目录)。
-// 已有内容一个字都不动,缓存照常命中 —— 但目录变了这件事要在确认框里说清,
-// 让用户自己选时机。
-async function moveSessionToWorker(sid, workerID, label) {
-  const target = workerLabel(workerID);
-  if (target === label) { toast("会话已经在「" + label + "」", "ok"); return; }
-  const hasMsg = (state.sessions.find(x => x.session_id === sid) || {}).message_count > 0;
-  const tip = "把该会话移动到「" + target + "」?" +
-    (hasMsg ? "\n\n注意:之后这个会话的读写都落在该 worker 的共享目录里;若该 worker 已有公约,下一条消息会把它带进来。已有对话不动。" : "");
-  if (!confirm(tip)) return;
-  try {
-    await api("/api/sessions/" + sid + "/worker", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ worker_id: workerID || "" }),
-    });
-    toast("已移动到 " + target, "ok");
-    await Promise.all([loadSessions(), loadWorkers()]);
-    // 移动改变了工作目录:重新拉一次会话视图,聊天里的相对路径才会按新目录解析
-    if (state.current === sid) await selectSession(sid);
-  } catch (err) { toast("移动失败:" + err.message, "err"); }
-}
-
+// (removed) 移动到 Worker:会话归属在创建时就固定,worker 的共享目录与会话工作
+// 目录从出生起就是同一个,不存在"搬家"了。
 // 拖拽载荷:新版为 JSON({kind:"session", sid}),兼容旧版纯 sid 文本(按会话处理)。
-// kind 目前只有 session:群区分组用 sid 加入,worker 移动走会话卡上的 📁 菜单。
+// kind 目前只有 session:群区分组用 sid 加入。
 function readDragPayload(e) {
   const raw = e.dataTransfer.getData("text/plain");
   if (!raw) return null;

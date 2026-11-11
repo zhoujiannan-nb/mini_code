@@ -380,10 +380,11 @@ func (w *WorkerService) Leave(sessionID string) error {
 	return nil
 }
 
-// Move is the session-centric entry point the UI uses ("移动到 Worker").
-// bucket == "" (or "*") re-files the session under 其他 (Leave). Unlike the
-// model-facing join, it accepts the built-in buckets too — that is how the old
-// "归档" action keeps working.
+// Move is the session-centric membership entry point. The UI can no longer move
+// sessions between workers (membership is fixed at birth); what is left here is
+// the birth attach the hub performs for every fresh session and the legacy
+// "归档" alias — bucket "" (or "*") re-files under 其他 (Leave), and the
+// built-in 已归档 bucket is accepted for the old archive API.
 func (w *WorkerService) Move(sessionID, bucket string) error {
 	if bucket == WorkerUnassignedID || bucket == WorkerAllID {
 		return w.Leave(sessionID)

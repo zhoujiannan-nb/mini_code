@@ -12,9 +12,9 @@ import (
 //
 // A worker is one line of work: a shared workspace directory plus a shared
 // convention (公约) stored in the worker row with a version. These handlers back
-// the sidebar's worker switcher, the "移动到 Worker" action, and the convention
-// editor. See session.WorkerService for the rules (a version bump is what tells
-// every session of the worker on its next task).
+// the sidebar's worker switcher and the convention editor. See
+// session.WorkerService for the rules (a version bump is what tells every
+// session of the worker on its next task).
 
 // workerService returns the wired worker service (nil = not wired).
 func (s *server) workerService() *session.WorkerService {
@@ -291,38 +291,9 @@ func (s *server) handleWorkersNoteWrite(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"worker_id": id, "ver": ver, "status": "saved"})
 }
 
-// handleSessionsMoveWorker is the "移动到 Worker: xx" action: worker_id "" (or
-// "*") moves the session back to 未分配. The move rewrites the session's working
-// directory, so a session that already has a conversation recomputes its prompt
-// prefix on its next request — the UI says so in the confirmation.
-func (s *server) handleSessionsMoveWorker(w http.ResponseWriter, r *http.Request) {
-	wsvc := s.workerService()
-	if wsvc == nil {
-		writeErr(w, http.StatusServiceUnavailable, "worker 功能未启用")
-		return
-	}
-	id := r.PathValue("id")
-	if sess, err := s.be.Mgr().Get(id); err != nil || sess == nil {
-		writeErr(w, http.StatusNotFound, "session not found: "+id)
-		return
-	}
-	var req struct {
-		WorkerID string `json:"worker_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if req.WorkerID != session.WorkerUnassignedID && req.WorkerID != session.WorkerAllID {
-		rec, err := wsvc.Get(req.WorkerID)
-		if err != nil || rec == nil {
-			writeErr(w, http.StatusNotFound, "worker not found: "+req.WorkerID)
-			return
-		}
-	}
-	if err := s.be.Mgr().MoveToWorker(id, req.WorkerID); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"session_id": id, "worker_id": req.WorkerID})
-}
+// (removed) handleSessionsMoveWorker: "移动到 Worker" is gone from the UI and the
+// API. Worker membership is fixed when the session is born, which keeps the
+// worker's shared directory and the session's working directory (and the
+// prompt's Working Directory block) pointed at one folder for the whole life of
+// the session. The service-level Move stays for the birth attach and the
+// legacy archive alias.

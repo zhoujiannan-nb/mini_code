@@ -137,34 +137,20 @@ func cssRuleForTest(t *testing.T, css, selector string) string {
 	return rule
 }
 
-// TestWorkerBarNewSessionAndTypedDelete pins two things about the worker
-// sub-bar (📄 公约 / ✎ 摘要 / ✎ 名称 / ＋ 会话 / 🗑):
+// TestWorkerBarTypedDeleteAndNoNewSessionButton pins two things about the
+// worker sub-bar (📄 公约 / ✎ 摘要 / ✎ 名称 / 🗑):
 //
-//	(a) it can start a session for that worker, and a session started there is
-//	    born inside the worker — the send path attaches the selected worker to the
-//	    first message, so the session gets its shared dir and 公约 from the start;
+//	(a) it no longer carries a "＋ 会话" button: the header's ＋ 新建会话 already
+//	    lands a draft in the currently selected bucket, the small button was a
+//	    duplicate of that one semantics;
 //	(b) deleting a worker takes a typed phrase, not one click: deleting one takes
 //	    every session in it along with it.
-func TestWorkerBarNewSessionAndTypedDelete(t *testing.T) {
+func TestWorkerBarTypedDeleteAndNoNewSessionButton(t *testing.T) {
 	js := jsModulesForTest(t)
 
 	bar := jsBlockForTest(t, js, "function paintWorkerBar()")
-	newBtn, delBtn := strings.Index(bar, `id="wk-new-sess-btn"`), strings.Index(bar, `id="wk-del-btn"`)
-	switch {
-	case newBtn < 0:
-		t.Error(`the worker bar lost ＋ 会话 (#wk-new-sess-btn)`)
-	case delBtn >= 0 && delBtn < newBtn:
-		t.Errorf("＋ 会话 must be rendered before 🗑 (right after 名称): new=%d del=%d", newBtn, delBtn)
-	}
-	if !strings.Contains(bar, `bind("#wk-new-sess-btn", newSessionInWorker)`) {
-		t.Error(`#wk-new-sess-btn is not wired to newSessionInWorker`)
-	}
-
-	draft := jsBlockForTest(t, js, "function newSessionInWorker()")
-	for _, want := range []string{"resetToNew()", `$("#input")`} {
-		if !strings.Contains(draft, want) {
-			t.Errorf("newSessionInWorker should carry %s:\n%s", want, draft)
-		}
+	if strings.Contains(bar, `id="wk-new-sess-btn"`) {
+		t.Error(`the worker bar must not resurrect ＋ 会话 (#wk-new-sess-btn) — the header button already lands drafts in the current bucket`)
 	}
 	// The other half of "created here, lives here" is the send path: a session
 	// created from the draft carries the selected worker.
@@ -286,9 +272,11 @@ func TestNewSessionButtonsShareOwnership(t *testing.T) {
 	}
 
 	detach := strings.Index(wk, "function detachWorkerForNewSession()")
-	attach := strings.Index(wk, "function newSessionInWorker()")
-	if detach < 0 || attach < 0 {
-		t.Fatal("workers.js lost detachWorkerForNewSession/newSessionInWorker")
+	if detach < 0 {
+		t.Fatal("workers.js lost detachWorkerForNewSession")
+	}
+	if strings.Contains(wk, "function newSessionInWorker()") {
+		t.Error(`the worker-scoped ＋会话 entry point must stay deleted — one new-session semantics (the header button)`)
 	}
 	detachBody := wk[detach:]
 	if strings.Contains(detachBody, `state.worker = ""`) || strings.Contains(detachBody, `rememberWorker("")`) {
@@ -296,10 +284,6 @@ func TestNewSessionButtonsShareOwnership(t *testing.T) {
 	}
 	if !strings.Contains(detachBody, "workerBucketId()") || !strings.Contains(detachBody, "state.worker = id") {
 		t.Error(`detachWorkerForNewSession must pin the draft to the current bucket (state.worker = id)`)
-	}
-	attachBody := wk[attach:]
-	if !strings.Contains(attachBody, "workerBucketId()") || !strings.Contains(attachBody, "state.worker = id") {
-		t.Error(`newSessionInWorker must pin the draft to the currently selected worker (state.worker = id)`)
 	}
 
 	// The semantics have to be readable from the UI, not only from the code.

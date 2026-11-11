@@ -98,10 +98,13 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 		t.Fatalf("a fresh session should be born under 其他, got %+v", before)
 	}
 
-	// Move it in: the bucket list must follow, and the session takes the
-	// worker's shared directory.
-	code, body = doJSON(t, "POST", srv.URL+"/api/sessions/"+id+"/worker", `{"worker_id":"`+created.WorkerID+`"}`)
-	mustOK(t, "move into worker", code, body)
+	// Move it in through the service: the "移动到 Worker" HTTP endpoint is gone
+	// (membership is fixed at birth), only the birth attach and the legacy
+	// archive alias call MoveToWorker any more. The bucket list must follow,
+	// and the session takes the worker's shared directory.
+	if err := be.mgr.MoveToWorker(id, created.WorkerID); err != nil {
+		t.Fatalf("move into worker: %v", err)
+	}
 
 	var inBucket []SessionSummary
 	workerReq(t, "GET", srv.URL+"/api/sessions?worker="+created.WorkerID, "", &inBucket)
@@ -258,28 +261,16 @@ func TestArchiveAPIIsTheWorkerBucket(t *testing.T) {
 // another window) from silently filing a session nowhere. The session does not
 // have to exist for the worker lookup to answer, so the unknown worker wins.
 func TestWorkersAPIRejectsUnknownTargets(t *testing.T) {
-	be, srv := newTestWorkerBackend(t)
-	sess, err := be.mgr.CreateSessionRecord("s", "build", t.TempDir(), nil)
-	if err != nil {
-		t.Fatalf("CreateSessionRecord: %v", err)
-	}
-	if code, body := doJSON(t, "POST", srv.URL+"/api/sessions/"+sess.ID()+"/worker", `{"worker_id":"w-nope"}`); code != http.StatusNotFound {
-		t.Fatalf("status = %d (%s), want 404", code, body)
-	}
-	// And a worker without a workspace cannot host a convention file edit.
+	_, srv := newTestWorkerBackend(t)
+	// A worker without a workspace cannot host a convention file edit.
 	if code, body := doJSON(t, "POST", srv.URL+"/api/workers/nope/note", `{"content":"x"}`); code == http.StatusOK {
 		t.Fatalf("note write on an unknown worker succeeded: %s", body)
 	}
 	// A session that no longer exists (deleted in another window) must answer 404
-	// on every membership route — it used to nil-deref and drop the connection.
-	for _, p := range []string{"/api/sessions/s-gone/worker", "/api/sessions/s-gone/archive"} {
-		body := `{"worker_id":"w-nope"}`
-		if p != "/api/sessions/s-gone/worker" {
-			body = ""
-		}
-		if code, msg := doJSON(t, "POST", srv.URL+p, body); code != http.StatusNotFound {
-			t.Errorf("%s: status = %d (%s), want 404", p, code, msg)
-		}
+	// on the membership route that survives — it used to nil-deref and drop the
+	// connection. (The /worker move route itself is gone: membership at birth.)
+	if code, msg := doJSON(t, "POST", srv.URL+"/api/sessions/s-gone/archive", `{"archived":true}`); code != http.StatusNotFound {
+		t.Errorf("/api/sessions/s-gone/archive: status = %d (%s), want 404", code, msg)
 	}
 }
 
@@ -422,8 +413,9 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &created); err != nil {
 		t.Fatalf("decode create: %v (%s)", err, body)
 	}
-	code, body = doJSON(t, "POST", srv.URL+"/api/sessions/"+id+"/worker", `{"worker_id":"`+created.WorkerID+`"}`)
-	mustOK(t, "POST join", code, body)
+	if err := mgr.MoveToWorker(id, created.WorkerID); err != nil {
+		t.Fatalf("join worker: %v", err)
+	}
 
 	code, body = doJSON(t, "POST", srv.URL+"/api/messages", `{"session_id":"`+id+`","content":"加入之后问一句"}`)
 	mustOK(t, "POST /api/messages after join", code, body)
@@ -576,9 +568,8 @@ func TestWorkersListBusyCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("child session: %v", err)
 	}
-	if code, body = doJSON(t, "POST", srv.URL+"/api/sessions/"+inWorker.ID()+"/worker",
-		`{"worker_id":"`+created.WorkerID+`"}`); code != http.StatusOK {
-		t.Fatalf("move into worker: %d %s", code, body)
+	if err := be.mgr.MoveToWorker(inWorker.ID(), created.WorkerID); err != nil {
+		t.Fatalf("move into worker: %v", err)
 	}
 
 	// busy reads the switcher payload: per-worker busy count + 未分配's.
@@ -654,9 +645,8 @@ func TestWorkersDeleteRemovesSessionsIncludingARunningOne(t *testing.T) {
 	pid := s1
 	kid := mk("子 agent", &pid)
 	for _, sid := range []string{s1, s2} {
-		if code, body = doJSON(t, "POST", srv.URL+"/api/sessions/"+sid+"/worker",
-			`{"worker_id":"`+created.WorkerID+`"}`); code != http.StatusOK {
-			t.Fatalf("move %s: %d %s", sid, code, body)
+		if err := be.mgr.MoveToWorker(sid, created.WorkerID); err != nil {
+			t.Fatalf("move %s: %v", sid, err)
 		}
 	}
 	// The worker's first session has a live task, as when you delete the worker

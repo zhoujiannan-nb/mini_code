@@ -89,7 +89,8 @@ func historyMsgs() []provider.Message {
 // ---------------------------------------------------------------------------
 
 // TestRebuildContextShape pins the compaction shape:
-// [system][verbatim tail][summary].
+// [system][summary][verbatim tail] — the summary replaces the compacted region
+// and heads the surviving window (dsh's order).
 func TestRebuildContextShape(t *testing.T) {
 	in := append(historyMsgs(), BuildCompactRequest(""))
 	out, ok := RebuildContext(in, "## Goal\ndemo", CompactKeepMessages, CompactKeepMaxTokens)
@@ -99,11 +100,11 @@ func TestRebuildContextShape(t *testing.T) {
 	if out[0].Role != "system" || out[0].Content != "SYSTEM" {
 		t.Fatalf("system message not kept first/identical: %+v", out[0])
 	}
-	// The summary closes the context: it is the only new content, so everything
-	// before it stays a byte-stable, cacheable prefix.
-	sum := out[len(out)-1]
+	// The summary stands right after the system message: the model reads the
+	// compressed past before the verbatim tail.
+	sum := out[1]
 	if !strings.Contains(sum.GetText(), "<previous-summary>") || !strings.Contains(sum.GetText(), "## Goal") {
-		t.Fatalf("summary is not the anchored block closing the context: %q", sum.GetText())
+		t.Fatalf("summary is not the anchored block heading the context: %q", sum.GetText())
 	}
 	if sum.Role != "user" {
 		t.Fatalf("summary must be a user message, got %q", sum.Role)
@@ -113,7 +114,7 @@ func TestRebuildContextShape(t *testing.T) {
 			t.Fatal("compaction instruction survived the rebuild")
 		}
 	}
-	tail := out[1 : len(out)-1]
+	tail := out[2:]
 	if len(tail) < 2 || len(tail) > CompactKeepMessages+1 {
 		t.Fatalf("unexpected retained tail size %d: %+v", len(tail), tail)
 	}
@@ -175,16 +176,16 @@ func TestRebuildContextHonorsBudget(t *testing.T) {
 		t.Fatal("rebuild refused")
 	}
 	if len(out) != 3 {
-		t.Fatalf("expected [system][one truncated message][summary], got %d: %+v", len(out), out)
+		t.Fatalf("expected [system][summary][one truncated message], got %d: %+v", len(out), out)
 	}
-	if got := countTokens(out[1]); got > budget {
+	if !strings.Contains(out[1].GetText(), "<previous-summary>") {
+		t.Fatalf("summary does not head the context: %q", out[1].GetText())
+	}
+	if got := countTokens(out[2]); got > budget {
 		t.Fatalf("retained message costs %d tokens, over the %d budget", got, budget)
 	}
-	if !strings.Contains(out[1].GetText(), "truncated to fit") {
-		t.Fatalf("oversized message was not truncated: len=%d", len(out[1].GetText()))
-	}
-	if !strings.Contains(out[2].GetText(), "<previous-summary>") {
-		t.Fatalf("summary does not close the context: %q", out[2].GetText())
+	if !strings.Contains(out[2].GetText(), "truncated to fit") {
+		t.Fatalf("oversized message was not truncated: len=%d", len(out[2].GetText()))
 	}
 }
 
@@ -205,25 +206,25 @@ func TestRebuildContextChargesTheToolCallParent(t *testing.T) {
 	if !ok {
 		t.Fatal("rebuild refused")
 	}
-	if len(out) != 4 || out[1].Role != "assistant" || out[2].Role != "tool" {
-		t.Fatalf("expected [system][assistant][tool][summary], got %d messages: %+v", len(out), out)
+	if len(out) != 4 || out[2].Role != "assistant" || out[3].Role != "tool" {
+		t.Fatalf("expected [system][summary][assistant][tool], got %d messages: %+v", len(out), out)
 	}
-	if !strings.Contains(out[3].GetText(), "<previous-summary>") {
-		t.Fatalf("summary does not close the context: %q", out[3].GetText())
+	if !strings.Contains(out[1].GetText(), "<previous-summary>") {
+		t.Fatalf("summary does not head the context: %q", out[1].GetText())
 	}
 	// The pairing survives: the tool result still has its declaring call.
-	if len(out[1].ToolCalls) != 1 || out[1].ToolCalls[0].ID != out[2].ToolCallID {
-		t.Fatalf("tool call pairing broken: %+v", out[1].ToolCalls)
+	if len(out[2].ToolCalls) != 1 || out[2].ToolCalls[0].ID != out[3].ToolCallID {
+		t.Fatalf("tool call pairing broken: %+v", out[2].ToolCalls)
 	}
-	if out[1].ToolCalls[0].Function.Arguments != `{"command":"dir"}` {
+	if out[2].ToolCalls[0].Function.Arguments != `{"command":"dir"}` {
 		t.Fatal("tool_call arguments were altered — the request would be malformed")
 	}
-	cost := countTokens(out[1]) + countTokens(out[2])
+	cost := countTokens(out[2]) + countTokens(out[3])
 	if cost > budget+minParentTokens+64 {
 		t.Fatalf("retained tail costs %d tokens, over the %d budget plus the %d parent allowance",
 			cost, budget, minParentTokens)
 	}
-	if !strings.Contains(out[1].GetText(), "truncated to fit") {
+	if !strings.Contains(out[2].GetText(), "truncated to fit") {
 		t.Fatal("oversized parent narration was not truncated to its allowance")
 	}
 }
@@ -474,10 +475,10 @@ func TestActiveCompactionReusesTheCachedPrefix(t *testing.T) {
 	if sys := msgAt(t, after, 0); sys.Role != "system" || sys.Content != "SYSTEM PROMPT" {
 		t.Fatalf("system prompt is not byte-identical after compaction: %q", sys.Content)
 	}
-	if last := len(after.Messages) - 1; true {
-		// The summary closes the rebuilt context (it is the only new content).
-		if got := msgAt(t, after, last); !strings.Contains(got.GetText(), "<previous-summary>") || !strings.Contains(got.GetText(), "summarized work") {
-			t.Fatalf("summary block does not close the context: %q", got.GetText())
+	if first := msgAt(t, after, 1); true {
+		// The summary heads the rebuilt context, ahead of the verbatim tail.
+		if !strings.Contains(first.GetText(), "<previous-summary>") || !strings.Contains(first.GetText(), "summarized work") {
+			t.Fatalf("summary block does not head the context: %q", first.GetText())
 		}
 	}
 	for _, raw := range after.Messages {
@@ -544,9 +545,9 @@ func TestAutomaticCompactionTurnRunsAtTheThreshold(t *testing.T) {
 		t.Fatal("passive compaction must use the fixed prompt only")
 	}
 	if after := srv.at(1); true {
-		got := msgAt(t, after, len(after.Messages)-1)
+		got := msgAt(t, after, 1)
 		if !strings.Contains(got.GetText(), "auto summary") {
-			t.Fatal("the summary does not close the rebuilt context")
+			t.Fatal("the summary does not head the rebuilt context")
 		}
 	}
 	if a, b := sumTokens(t, srv.at(1)), sumTokens(t, srv.at(0)); a >= b {
@@ -644,9 +645,9 @@ func TestResumingAnInterruptedCompactionTurn(t *testing.T) {
 		t.Fatalf("expected exactly one instruction on the resumed turn, got %d", instructions)
 	}
 	if after := srv.at(1); true {
-		got := msgAt(t, after, len(after.Messages)-1)
+		got := msgAt(t, after, 1)
 		if !strings.Contains(got.GetText(), "resumed summary") {
-			t.Fatal("resumed compaction did not close the context with the summary")
+			t.Fatal("resumed compaction did not head the context with the summary")
 		}
 	}
 }
@@ -688,7 +689,7 @@ func TestSummarizeAndRebuildRequestShape(t *testing.T) {
 	if len(out) >= len(msgs) {
 		t.Fatalf("context not shortened: %d vs %d", len(out), len(msgs))
 	}
-	if !strings.Contains(out[len(out)-1].GetText(), "manual summary") {
-		t.Fatalf("summary does not close the rebuilt context: %q", out[len(out)-1].GetText())
+	if len(out) < 2 || !strings.Contains(out[1].GetText(), "manual summary") {
+		t.Fatalf("summary does not head the rebuilt context: %+v", out[1].GetText())
 	}
 }
