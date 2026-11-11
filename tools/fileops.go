@@ -26,7 +26,7 @@ func NewDeleteFileTool(workspace string) *DeleteFileTool {
 
 func (t *DeleteFileTool) Name() string { return "delete_file" }
 func (t *DeleteFileTool) Description() string {
-	return "Delete a file, or a directory. Use recursive=true to delete a directory together with all of its contents. Prefer this tool over shell commands (del/rm) for reliable deletion."
+	return "Delete a file, or a directory. Use recursive=true to delete a directory together with all of its contents."
 }
 func (t *DeleteFileTool) IsHidden() bool { return false }
 func (t *DeleteFileTool) Parameters() map[string]interface{} {
@@ -94,7 +94,7 @@ func NewMoveFileTool(workspace string) *MoveFileTool {
 
 func (t *MoveFileTool) Name() string { return "move_file" }
 func (t *MoveFileTool) Description() string {
-	return "Move or rename a file or directory. The destination parent directory is created when missing. If the destination is an existing directory (or ends with a path separator), the source is moved into it. Prefer this tool over shell move/rename commands."
+	return "Move or rename a file or directory. The destination parent directory is created when missing. If the destination is an existing directory (or ends with a path separator), the source is moved into it."
 }
 func (t *MoveFileTool) IsHidden() bool { return false }
 func (t *MoveFileTool) Parameters() map[string]interface{} {
@@ -172,7 +172,7 @@ func NewCopyFileTool(workspace string) *CopyFileTool {
 
 func (t *CopyFileTool) Name() string { return "copy_file" }
 func (t *CopyFileTool) Description() string {
-	return "Copy a file or directory to a new path. The source is left in place. Use recursive=true to copy a directory together with all of its contents. The destination parent directory is created when missing. If the destination is an existing directory (or ends with a path separator), the source is copied into it, keeping its base name. Prefer this tool over shell copy/xcopy commands."
+	return "Copy a file or directory to a new path. The source is left in place. Use recursive=true to copy a directory together with all of its contents. The destination parent directory is created when missing. If the destination is an existing directory (or ends with a path separator), the source is copied into it, keeping its base name."
 }
 func (t *CopyFileTool) IsHidden() bool { return false }
 func (t *CopyFileTool) Parameters() map[string]interface{} {

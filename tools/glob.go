@@ -32,12 +32,8 @@ func NewGlobTool(workspace string) *GlobTool {
 func (t *GlobTool) Name() string { return "glob" }
 
 func (t *GlobTool) Description() string {
-	return "Find files and directories by name pattern (glob). " +
-		"'*' matches within one path segment, '?' one character, '[...]' a character class, " +
-		"'**' crosses directories (e.g. '**/*.go', 'src/**/*.py'). " +
-		"A pattern without '**' matches only inside the search root. " +
-		"Returns matching paths relative to the search root (directories end with '/'), sorted, capped by max_results. " +
-		"Prefer this over shell dir/find when locating files by name."
+	return "Find files and directories by name pattern (glob) under the search root. " +
+		"Returns matching paths relative to the search root (directories end with '/'), sorted, capped by max_results."
 }
 
 func (t *GlobTool) IsHidden() bool { return false }
@@ -48,7 +44,7 @@ func (t *GlobTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"pattern": map[string]interface{}{
 				"type":        "string",
-				"description": "Glob pattern, e.g. '*.go', 'src/*.py', '**/*.md'",
+				"description": "Glob pattern: '*' matches within one segment, '?' one character, '[...]' a character class, '**' crosses directories (e.g. '**/*.go', 'src/**/*.py'). A pattern without '**' matches only inside the search root.",
 			},
 			"path": map[string]interface{}{
 				"type":        "string",

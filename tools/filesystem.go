@@ -307,14 +307,14 @@ func NewWriteFileTool(workspace string) *WriteFileTool {
 
 func (t *WriteFileTool) Name() string { return "write_file" }
 func (t *WriteFileTool) Description() string {
-	return "Write content to a file. Creates parent directories as needed. Set append=true to add content to the END of the file instead of overwriting it (the file is created if it does not exist) — use it to build large files in several smaller chunks."
+	return "Write content to a file. Creates parent directories as needed. Set append=true to add content to the END of the file instead of replacing it (the file is created if it does not exist)."
 }
 func (t *WriteFileTool) IsHidden() bool { return false }
 func (t *WriteFileTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"path":    map[string]interface{}{"type": "string", "description": "File path to write to"},
+			"path":    map[string]interface{}{"type": "string", "description": "File path to write to. Provide `path` before `content` in the arguments."},
 			"content": map[string]interface{}{"type": "string", "description": "Content to write (or append when append=true)"},
 			"append":  map[string]interface{}{"type": "boolean", "description": "Append to the end of the file instead of overwriting it (default false; the file is created if it does not exist)"},
 		},
@@ -391,13 +391,13 @@ func overwriteNote(fp string) string {
 	// Counting lines requires reading the file; skip it for large files so
 	// the note stays cheap (a large clobber is reported by size alone).
 	if size > 1<<20 { // 1 MiB
-		return fmt.Sprintf("Note: this OVERWROTE an existing file (previously %s). If you meant to keep the old content, re-read it from your earlier result and write it back, or use append=true.", humanSize(size))
+		return fmt.Sprintf("Note: this replaced an existing file (previously %s).", humanSize(size))
 	}
 	raw, rerr := os.ReadFile(fp)
 	if rerr != nil {
-		return fmt.Sprintf("Note: this OVERWROTE an existing file (previously %s). If you meant to keep the old content, re-read it from your earlier result and write it back, or use append=true.", humanSize(size))
+		return fmt.Sprintf("Note: this replaced an existing file (previously %s).", humanSize(size))
 	}
-	return fmt.Sprintf("Note: this OVERWROTE an existing file (previously %s, %d lines). If you meant to keep the old content, re-read it from your earlier result and write it back, or use append=true.", humanSize(size), countTextLines(raw))
+	return fmt.Sprintf("Note: this replaced an existing file (previously %s, %d lines).", humanSize(size), countTextLines(raw))
 }
 
 // countTextLines counts lines the same way read_file does: a trailing newline
@@ -424,7 +424,7 @@ func NewEditFileTool(workspace string) *EditFileTool {
 
 func (t *EditFileTool) Name() string { return "edit_file" }
 func (t *EditFileTool) Description() string {
-	return "Replace text in a file. Tolerates minor whitespace differences. Set replace_all=true to replace every occurrence."
+	return "Replace text in a file. Tolerates minor whitespace differences. Set replace_all=true to replace every occurrence. Provide `path` first in the arguments."
 }
 func (t *EditFileTool) IsHidden() bool { return false }
 func (t *EditFileTool) Parameters() map[string]interface{} {
@@ -676,9 +676,9 @@ func spliceLineRanges(fileLines []string, ranges [][2]int, newLines []string) st
 // the success path is byte-for-byte unchanged.
 
 const (
-	closestHintLineCap    = 20000 // only scan the first N file lines
-	closestHintTextCap    = 400   // per-line comparison cap (runes)
-	closestHintMinScore   = 0.5   // below this the "closest" line is noise
+	closestHintLineCap  = 20000 // only scan the first N file lines
+	closestHintTextCap  = 400   // per-line comparison cap (runes)
+	closestHintMinScore = 0.5   // below this the "closest" line is noise
 )
 
 // closestLineHint finds the file line most similar to the most distinctive
@@ -786,7 +786,7 @@ func NewListDirTool(workspace string) *ListDirTool {
 
 func (t *ListDirTool) Name() string { return "list_dir" }
 func (t *ListDirTool) Description() string {
-	return "List directory contents. File entries show their size in parentheses (e.g. \"notes.txt (2.3 KB)\"), so size questions (largest file, empty files, total size) can be answered from this listing alone. Set recursive=true for nested listing."
+	return "List directory contents. File entries show their size in parentheses (e.g. \"notes.txt (2.3 KB)\"). Set recursive=true to list nested contents."
 }
 func (t *ListDirTool) IsHidden() bool { return false }
 func (t *ListDirTool) Parameters() map[string]interface{} {

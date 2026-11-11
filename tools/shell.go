@@ -81,9 +81,9 @@ func NewExecTool(timeout int, workingDir string) *ExecTool {
 func (t *ExecTool) Name() string { return "exec" }
 func (t *ExecTool) Description() string {
 	if runtime.GOOS == "windows" {
-		return "Execute a shell command and return stdout/stderr plus exit code. The shell is cmd.exe (Windows): use dir/type/findstr/copy/move/del and && to chain commands, not Unix syntax. Use the optional `input` parameter to feed text to the command's stdin (more reliable than shell redirection)."
+		return "Execute a shell command and return stdout/stderr plus exit code. The shell is cmd.exe (Windows): use dir/type/findstr/copy/move/ren and && to chain commands, not Unix syntax. On timeout the whole process tree is killed."
 	}
-	return "Execute a shell command and return stdout/stderr plus exit code. The shell is sh (POSIX). Use the optional `input` parameter to feed text to the command's stdin (more reliable than shell redirection)."
+	return "Execute a shell command and return stdout/stderr plus exit code. The shell is sh (POSIX). On timeout the whole process tree is killed."
 }
 func (t *ExecTool) IsHidden() bool { return false }
 func (t *ExecTool) Parameters() map[string]interface{} {
@@ -483,6 +483,7 @@ func windowsCommandHint(command string) string {
 // Unix-style arguments that misbehave on Windows. Verified behavior:
 //   - "mkdir -p x"    exits 0 but creates a junk directory literally named "-p x"
 //   - "mkdir a/b/c"   fails: an unquoted '/' is parsed as a switch
+//
 // cmd's mkdir wants backslashes (a\b\c), creates parent directories
 // automatically, and takes one path per call. The note is advisory text only;
 // it never changes what gets executed.

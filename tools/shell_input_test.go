@@ -20,8 +20,12 @@ func TestExecInputSchema(t *testing.T) {
 	if _, ok := props["input"]; !ok {
 		t.Errorf("Parameters() does not declare an 'input' parameter")
 	}
-	if desc := tt.Description(); !strings.Contains(desc, "stdin") {
-		t.Errorf("Description() should mention stdin, got: %s", desc)
+	inp, ok := props["input"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("'input' parameter is not an object")
+	}
+	if desc, _ := inp["description"].(string); !strings.Contains(desc, "stdin") {
+		t.Errorf("input parameter description should mention stdin, got: %s", desc)
 	}
 }
 

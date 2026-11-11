@@ -120,7 +120,7 @@ func NewCompactContextTool(state *ContextState) *CompactContextTool {
 
 func (t *CompactContextTool) Name() string { return "compact_context" }
 func (t *CompactContextTool) Description() string {
-	return "Actively compress this session's context now, regardless of the automatic threshold. Provide an instruction describing what the summary should focus on or preserve (e.g. 'keep the test results and the failing case'); with it the compression prompt is yours instead of the fixed one. The next model turn is spent writing that summary, and the conversation then restarts from [system prompt][summary][the last few messages], so nothing else is lost from the model's working set."
+	return "Actively compress this session's context now, regardless of the automatic threshold. The next model turn is spent writing the summary; the conversation then restarts from [system prompt][summary][the last few messages]. Optionally pass an instruction telling the summary what to focus on or preserve."
 }
 func (t *CompactContextTool) IsHidden() bool { return false }
 func (t *CompactContextTool) Parameters() map[string]interface{} {

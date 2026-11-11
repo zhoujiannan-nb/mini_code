@@ -29,8 +29,7 @@ func (t *SearchTool) Description() string {
 	return "Search for a pattern (plain text or regex) across files in the workspace. " +
 		"Returns matching lines as 'path:line: content' with a total match count. " +
 		"Set context=N to also show N lines before/after each match (like grep -C): " +
-		"context lines are printed as 'path-line: content' and groups are separated by '--'. " +
-		"Use it to locate definitions, usages, constants or occurrences without reading whole files."
+		"context lines are printed as 'path-line: content' and groups are separated by '--'."
 }
 
 func (t *SearchTool) IsHidden() bool { return false }
@@ -75,9 +74,9 @@ func (t *SearchTool) Parameters() map[string]interface{} {
 const (
 	searchDefaultMax = 100
 	searchHardMax    = 500
-	searchLineCap    = 240  // per-line display cap
+	searchLineCap    = 240 // per-line display cap
 	searchFileCap    = 200000
-	searchMaxContext = 20   // max context lines per match (like grep -C)
+	searchMaxContext = 20 // max context lines per match (like grep -C)
 )
 
 // intParam reads a positive integer parameter that may arrive as float64

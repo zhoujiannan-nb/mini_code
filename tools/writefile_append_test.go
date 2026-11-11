@@ -124,7 +124,7 @@ func TestWriteFileOverwriteExistingReportsNote(t *testing.T) {
 	if !strings.Contains(out, "wrote") {
 		t.Fatalf("expected write confirmation, got: %s", out)
 	}
-	if !strings.Contains(out, "OVERWROTE") {
+	if !strings.Contains(out, "replaced an existing file") {
 		t.Fatalf("expected overwrite note, got: %s", out)
 	}
 	if !strings.Contains(out, "3 lines") {

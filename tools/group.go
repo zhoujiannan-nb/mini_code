@@ -23,7 +23,7 @@ type GroupChatTool struct {
 	api GroupChatDispatcher
 }
 
-func NewGroupChatTool() *GroupChatTool { return &GroupChatTool{} }
+func NewGroupChatTool() *GroupChatTool                      { return &GroupChatTool{} }
 func (t *GroupChatTool) SetContext(api GroupChatDispatcher) { t.api = api }
 
 func (t *GroupChatTool) Name() string { return "group_chat" }
@@ -43,8 +43,7 @@ func (t *GroupChatTool) Description() string {
 			"send 发消息,target 传成员群内名称或 'group'。"+
 			"target='group' 的消息只在群聊中展示(用户可见),不会通知其他成员;"+
 			"要让指定成员收到并处理,用 target=该成员群内名称(或在正文中写 @该成员名,可多个);"+
-			"@用户(群外)仅展示,不触发任何人。"+
-			"重要结论、需要用户知道的信息,应主动用 send(target='group') 发到群里。",
+			"@用户(群外)仅展示,不触发任何人。",
 		group, own)
 }
 

@@ -52,16 +52,8 @@ func (t *WorkersTool) Name() string { return "workers" }
 // it, so the tool schema is byte-identical for every session (a schema that
 // varies per session would make every session pay for its own cold prefix).
 func (t *WorkersTool) Description() string {
-	return "工作大类(Worker)管理。Worker = 一条工作线:一个共享工作目录 + 一份共享公约(存在 worker 记录里,带版本)。" +
-		"同一个 worker 下的会话共用该目录,并自动收到那份公约(所以公约必须写得简短、可执行)。\n" +
-		"list=列出所有 worker(名称/摘要/工作目录/会话数),用于决定加入哪个;\n" +
-		"create=新建 worker(name 必填,summary 建议填,会在当前目录下建立 worker-<名字> 工作目录并自动加入;copy_from 可把已有目录/文件复制进去作为起点);\n" +
-		"join=把本会话加入指定 worker(worker_id 必填);leave=退出当前 worker;\n" +
-		"info=看本会话当前所属 worker 与其工作目录;\n" +
-		"update=改写本 worker 的摘要(summary),摘要会影响别的会话怎么选 worker;\n" +
-		"history=列出同 worker 的兄弟会话(可跨会话了解进度);messages=读取某个兄弟会话的历史(跨会话取上下文);\n" +
-		"note_read=读本 worker 的最新公约;公约只能由用户在界面里改写,你不能写。\n" +
-		"新会话若尚未归属任何 worker:先 list 再决定 join / create / 不加入(一次性小问题不必建 worker)。"
+	return "Worker(工作大类)管理:一个 worker = 共享工作目录 + 带版本的共享公约,同 worker 的会话共用目录并自动收到公约;" +
+		"action 与参数的语义见各字段描述,公约只能由用户在界面里改写。"
 }
 
 func (t *WorkersTool) Parameters() map[string]interface{} {

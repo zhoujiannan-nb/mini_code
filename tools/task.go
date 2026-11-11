@@ -79,11 +79,7 @@ func (t *TaskTool) Description() string {
 	}
 	return fmt.Sprintf(
 		"Dispatch a sub-task to a dedicated sub-agent. The sub-agent inherits the caller's full tool permissions (minus task) and the current permission mode.\n\n"+
-			"Available sub-agents:\n%s\n\n"+
-			"Usage:\n"+
-			"- goal: a clear, self-contained task description.\n"+
-			"- run_in_background: false (default) blocks until the sub-agent finishes and returns its result; true returns immediately with a job id while the sub-agent keeps working — dispatch several in one turn to run them in parallel. Retrieve results later with task_output / task_status / task_cancel / task_list; a settlement notice also appears when a background job finishes.\n"+
-			"- fork: true copies the current conversation history into the sub-agent as its starting context, so it already knows what was discussed — use it to 'continue with the approach we discussed' without re-explaining the background in goal. Costs the sub-agent's initial context tokens; avoid when the conversation is very long.",
+			"Available sub-agents:\n%s",
 		strings.Join(lines, "\n"),
 	)
 }
