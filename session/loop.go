@@ -1211,6 +1211,26 @@ func (l *AgentLoop) handleToolCalls(ctx context.Context, messages []provider.Mes
 	}
 
 	results := l.executeToolsConcurrent(ctx, toolCalls)
+	// dsh-style argument aging: a successful big write/edit no longer needs its
+	// payload in the history — the file on disk is the copy of record. Shrink
+	// the assistant message's arguments to a summary so every later turn stops
+	// re-sending them (the loop's per-turn token saving for creative tasks).
+	for i, tc := range toolCalls {
+		text := results[i].Text
+		if results[i].HasMultimodal() || strings.HasPrefix(text, "Error:") || text == "Interrupted" {
+			continue
+		}
+		rep, ok := ageOutCallArgs(tc.Function.Name, tc.Function.Arguments)
+		if !ok {
+			continue
+		}
+		if ageCallArgs(messages, tc.ID, rep) {
+			l.emitEvent(EventCompactionArgAge, l.curTurn, map[string]any{
+				"call_id": tc.ID, "name": tc.Function.Name,
+				"chars_before": len([]rune(tc.Function.Arguments)), "chars_after": len([]rune(rep)),
+			})
+		}
+	}
 	for i, tc := range toolCalls {
 		result := results[i]
 		tcName := tc.Function.Name
