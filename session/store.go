@@ -21,6 +21,7 @@ func NewDefaultSessionStore() (*SessionStore, error) {
 	// live in the "spill" folder next to the database file.
 	s := &SessionStore{db: db, spillDir: filepath.Join(filepath.Dir(db.Path()), "spill")}
 	s.initDB()
+	go cleanupSpillDir(s.spillDir) // dsh-style boot sweep of stale spill files
 	return s, nil
 }
 
@@ -81,6 +82,7 @@ func NewSessionStore(dbPath string) (*SessionStore, error) {
 	}
 	s := &SessionStore{db: db, spillDir: filepath.Join(filepath.Dir(dbPath), "spill")}
 	s.initDB()
+	go cleanupSpillDir(s.spillDir) // dsh-style boot sweep of stale spill files
 	return s, nil
 }
 

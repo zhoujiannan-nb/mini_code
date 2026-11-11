@@ -1598,7 +1598,7 @@ func (l *AgentLoop) executeToolsConcurrent(ctx context.Context, toolCalls []prov
 			// history carries only the pruned copy: that is the per-turn
 			// token saving this pass exists for. Multimodal results are left
 			// alone (their parts are not plain text).
-			if !results[idx].HasMultimodal() {
+			if !results[idx].HasMultimodal() && !pruneExempt(tc.Function.Name) {
 				if before := len([]rune(text)); before > defaultPrune.Threshold {
 					spillPath := spillToolText(l.spillDir, l.spillID, tc.ID, text)
 					if pruned, ok := pruneToolText(text, spillPath); ok {

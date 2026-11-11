@@ -318,13 +318,16 @@ func buildExecResult(command string, stdout, stderr []byte, exitCode int, note s
 	// full text to a file, and keeps the full row in the ledger — so the
 	// model history carries a small pruned copy that can point at the full
 	// output. An early cut here would defeat that (the old 10K head-only
-	// byte trim lost exit codes and verdicts that sit at the tail). Only a
-	// hard safety cap stays, guarding the process and the ledger against
-	// runaway multi-MB streams; it still keeps the tail.
+	// byte trim lost exit codes and verdicts that sit at the tail, and the
+	// first hard cap at 200K runes elided the middle BEFORE the ledger or
+	// the spill ever saw it — the middle was gone everywhere). Only a true
+	// runaway guard stays, sized so ordinary floods (multi-MB build logs)
+	// still reach the ledger intact; past it the middle elision is honestly
+	// labeled as unrecoverable.
 	if r := []rune(result); len(r) > hardOutputCap {
 		head := string(r[:hardOutputHead])
 		tail := string(r[len(r)-hardOutputTail:])
-		result = head + fmt.Sprintf("\n\n... (%d chars elided: output over %d-char hard cap) ...\n\n", len(r)-hardOutputHead-hardOutputTail, hardOutputCap) + tail
+		result = head + fmt.Sprintf("\n\n... (%d chars elided: output over the %d-char runaway guard; the elided middle was NOT stored anywhere) ...\n\n", len(r)-hardOutputHead-hardOutputTail, hardOutputCap) + tail
 	}
 	return result
 }
@@ -333,9 +336,9 @@ func buildExecResult(command string, stdout, stderr []byte, exitCode int, note s
 // the hard cap the loop's prune handles the cut with a full-text spill;
 // above the cap the stream itself is elided in the middle, keeping both ends.
 const (
-	hardOutputCap  = 200000
-	hardOutputHead = 150000
-	hardOutputTail = 50000
+	hardOutputCap  = 4000000
+	hardOutputHead = 3000000
+	hardOutputTail = 1000000
 )
 
 // unixToWindows maps common POSIX command names to their cmd.exe
