@@ -35,10 +35,11 @@ func TestWorkerMenuIsBodyLevel(t *testing.T) {
 	}
 }
 
-// TestUnassignedBucketSortsLast pins the order of the worker switcher: the real
-// lines of work come first and 未分配 goes last. It is the fallback bucket, so
-// having it on the first row put the row you almost never want at the top.
-func TestUnassignedBucketSortsLast(t *testing.T) {
+// TestWorkerBucketsHaveNoUnassignedRow pins the retirement of 未分配: every
+// session is born under a worker (the fixed 其他 is the fallback), so the
+// switcher lists exactly the non-builtin workers the server reports — no fake
+// "{ worker_id: \"\" }" row pushed on the client.
+func TestWorkerBucketsHaveNoUnassignedRow(t *testing.T) {
 	js := jsModulesForTest(t)
 	start := strings.Index(js, "function workerBuckets()")
 	if start < 0 {
@@ -48,13 +49,11 @@ func TestUnassignedBucketSortsLast(t *testing.T) {
 	if end := strings.Index(body, "\n}"); end > 0 {
 		body = body[:end]
 	}
-	workers := strings.Index(body, "state.workers || []")
-	unassigned := strings.Index(body, `name: "未分配"`)
-	switch {
-	case workers < 0 || unassigned < 0:
+	if !strings.Contains(body, "state.workers || []") || !strings.Contains(body, "!x.builtin") {
 		t.Fatalf("workerBuckets changed shape:\n%s", body)
-	case unassigned < workers:
-		t.Errorf("未分配 must be appended after the real workers:\n%s", body)
+	}
+	if strings.Contains(body, `name: "未分配"`) || strings.Contains(body, "out.push") {
+		t.Errorf("the fake 未分配 row must be gone — 其他 is a real server-side bucket:\n%s", body)
 	}
 }
 
@@ -256,14 +255,14 @@ func TestWorkerControlsHoverGreen(t *testing.T) {
 	}
 }
 
-// TestNewSessionButtonsSplitOwnership pins the two "new session" entry points.
-// They used to be the same thing: resetToNew() leaves state.worker alone, and
-// send.js takes the worker from exactly that field — so the big header button
-// quietly filed the new session under whichever worker happened to be selected,
-// duplicating the small ＋会话 under the worker bar. Now the big one detaches the
-// draft (an ownerless session then decides for itself, via the join reminder in
-// session/worker.go), and the small one pins the current worker.
-func TestNewSessionButtonsSplitOwnership(t *testing.T) {
+// TestNewSessionButtonsShareOwnership pins the two "new session" entry points to
+// one semantics: a draft is always owned by the bucket it is created in. The big
+// header button used to clear state.worker (an ownerless session then got a join
+// reminder and burned turns picking a worker); with ownership fixed at creation
+// — the server files every session under the selected bucket, 其他 by default —
+// both buttons merely pin state.worker, which is what send.js sends as
+// body.worker_id.
+func TestNewSessionButtonsShareOwnership(t *testing.T) {
 	app := string(uiAssetBody(t, "ui/js/app.js"))
 	wk := string(uiAssetBody(t, "ui/js/workers.js"))
 	page, err := embeddedPage()
@@ -292,19 +291,19 @@ func TestNewSessionButtonsSplitOwnership(t *testing.T) {
 		t.Fatal("workers.js lost detachWorkerForNewSession/newSessionInWorker")
 	}
 	detachBody := wk[detach:]
-	if !strings.Contains(detachBody, `state.worker = ""`) || !strings.Contains(detachBody, `rememberWorker("")`) {
-		t.Error(`detachWorkerForNewSession must clear both state.worker and rememberWorker — send.js reads state.worker as the only ownership source`)
+	if strings.Contains(detachBody, `state.worker = ""`) || strings.Contains(detachBody, `rememberWorker("")`) {
+		t.Error(`detachWorkerForNewSession must not clear ownership — there is no unassigned state anymore`)
 	}
-	if !strings.Contains(detachBody, "state.unassignedActive = 1") {
-		t.Error(`detachWorkerForNewSession must surface the 未分配 bucket (state.unassignedActive = 1) while the draft has no session yet`)
+	if !strings.Contains(detachBody, "workerBucketId()") || !strings.Contains(detachBody, "state.worker = id") {
+		t.Error(`detachWorkerForNewSession must pin the draft to the current bucket (state.worker = id)`)
 	}
 	attachBody := wk[attach:]
 	if !strings.Contains(attachBody, "workerBucketId()") || !strings.Contains(attachBody, "state.worker = id") {
 		t.Error(`newSessionInWorker must pin the draft to the currently selected worker (state.worker = id)`)
 	}
 
-	// The split has to be readable from the UI, not only from the code.
-	if !strings.Contains(page, `id="btn-new" title="新建会话（不属于任何工作区`) {
-		t.Error(`#btn-new lost the tooltip telling the user the new session belongs to no worker`)
+	// The semantics have to be readable from the UI, not only from the code.
+	if !strings.Contains(page, `id="btn-new" title="新建会话（落在当前选中的工作区`) {
+		t.Error(`#btn-new lost the tooltip telling the user where the new session lands`)
 	}
 }

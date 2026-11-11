@@ -92,9 +92,9 @@ type Message struct {
 	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
 	// WorkerID puts a NEW session into that worker (工作大类) straight away: the
 	// sidebar's switcher sends it when the user starts a chat inside a worker.
-	// "" = leave the decision to the model (it inspects the workers tool and
-	// joins or creates one); ignored when the message continues an existing
-	// session, whose membership is already decided.
+	// "" = the fixed 其他 bucket (the catch-all — every root session is born
+	// inside a worker); ignored when the message continues an existing session,
+	// whose membership is already decided.
 	WorkerID string `json:"worker_id,omitempty"`
 	Content         string   `json:"content"`
 	Images          []string `json:"images,omitempty"`    // data URLs (data:image/...;base64,...) attached to a user message; the model sees them on the first turn
@@ -722,15 +722,18 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 			slog.Warn("bind channel key failed", "session", created.ID(), "key", m.SessionKey, "err", err)
 		}
 	}
-	// Worker for the new session (the sidebar's switcher). Attaching happens
-	// before the first task, so the very first request already carries the
-	// worker block: a chat started inside a worker never has to recompute its
-	// prefix. "" leaves it unassigned, and the first task is told to decide with
-	// the workers tool.
-	if m.WorkerID != "" {
-		if err := h.mgr.MoveToWorker(created.ID(), m.WorkerID); err != nil {
-			slog.Warn("attach new session to worker failed", "session", created.ID(), "worker", m.WorkerID, "err", err)
-		}
+	// Worker for the new session. Every root session is born inside a worker:
+	// the sidebar's switcher names one, and a chat started without one falls
+	// into the fixed 其他 bucket (its attach carries no name/dir, so the
+	// prompt stays byte-identical to the old worker-less one). Attaching
+	// happens before the first task, so the very first request already carries
+	// the membership — the retired join reminder used to cost two turns here.
+	wid := m.WorkerID
+	if wid == "" {
+		wid = session.WorkerOtherID
+	}
+	if err := h.mgr.MoveToWorker(created.ID(), wid); err != nil {
+		slog.Warn("attach new session to worker failed", "session", created.ID(), "worker", wid, "err", err)
 	}
 	h.emit(NewStatusMessage(m.ID, created.ID(), m.Channel, StatusSessionCreated, m.SessionKey))
 	return created, nil

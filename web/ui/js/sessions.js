@@ -1,6 +1,6 @@
 /* ---------------- 会话列表 ---------------- */
 // 列表按 worker(工作大类)分桶:GET /api/sessions?worker=<id>。
-// state.worker: "" = 未分配 | 其余 = worker_id(见 workers.js;没有"全部"这一档)。
+// state.worker: 当前分桶 id,「其他」=w-other 兜底(见 workers.js;没有"未分配"也没有"全部"这一档)。
 // 列表刷新中的两个状态:切换 worker / 删 worker 会先清空再拉(fresh),那几百毫秒
 // 摆骨架而不是留着上一个 worker 的旧行;拉失败要说出来,静默 return 会让旧行一直
 // 挂在界面上,谁也不知道其实没刷出来。

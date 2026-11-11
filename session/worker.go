@@ -365,22 +365,25 @@ func (w *WorkerService) attach(sess *Session, rec *WorkerRecord) error {
 	return nil
 }
 
-// Leave detaches a session. The working directory stays where it is (the files
-// the session wrote stay put; the next task simply stops carrying the worker
-// block and starts reminding about the missing worker again).
+// Leave detaches a session — which in practice means re-filing it under 其他:
+// the catch-all bucket every session falls back to, so "no worker" is no
+// longer a state a root session can be in. The working directory stays where
+// it is (the files the session wrote stay put; 其他 carries no shared dir, so
+// the next task simply stops carrying the worker block).
 func (w *WorkerService) Leave(sessionID string) error {
 	sess, err := w.sessionOf(sessionID)
 	if err != nil {
 		return err
 	}
-	sess.SetWorkerMembership(WorkerUnassignedID, "", "")
-	slog.Info("session left worker", "session", sessionID)
+	sess.SetWorkerMembership(WorkerOtherID, "", "")
+	slog.Info("session left worker", "session", sessionID, "to", WorkerOtherID)
 	return nil
 }
 
 // Move is the session-centric entry point the UI uses ("移动到 Worker").
-// bucket == "" (or "*") detaches. Unlike the model-facing join, it accepts the
-// built-in buckets too — that is how the old "归档" action keeps working.
+// bucket == "" (or "*") re-files the session under 其他 (Leave). Unlike the
+// model-facing join, it accepts the built-in buckets too — that is how the old
+// "归档" action keeps working.
 func (w *WorkerService) Move(sessionID, bucket string) error {
 	if bucket == WorkerUnassignedID || bucket == WorkerAllID {
 		return w.Leave(sessionID)
@@ -465,9 +468,10 @@ func (w *WorkerService) WriteNote(workerID, content string) (int, error) {
 // --- worker notice (one plain user message, at most once per task) ---
 
 const (
-	// workerNoticeJoin marks the "join a worker" reminder. It is deliberately
-	// versionless: it repeats on the next task if the session still has not
-	// decided, so nothing about it may be deduplicated across tasks.
+	// workerNoticeJoin marked the retired "join a worker" reminder. No new
+	// copies are produced (sessions are filed at creation), but the marker
+	// stays so historical conversations still recognize it — compaction and
+	// notice-dedup must keep classifying old rows correctly.
 	workerNoticeJoin = "__MC_WORKER_JOIN__"
 	// workerNoticeNote marks a convention delivery and carries
 	// "<worker id>:<version>" — which is how the version a session holds is read
@@ -526,20 +530,14 @@ func heldNoteVersion(messages []provider.Message, workerID string) int {
 	return best
 }
 
-// workerJoinReminder is the notice an unattached root session gets, once per
-// task. It repeats until the session resolves it, so it stays a few lines. The
-// worker cap is stated here on purpose: the model learns it before it tries to
-// create, instead of from a failed create. The wording (and the numbers) is
-// static, so it never costs a cached prefix.
-var workerJoinReminder = fmt.Sprintf(
-	`<worker_notice>本会话还没有归属 worker。先用 workers 工具处理:join 已有 worker,或 create 新建;确属一次性问题可以不处理。本轮先做这个决定。`+
-		`worker 最多 %d 个(固定的「%s」也占一格),新建前先 list 看清名额。</worker_notice>`,
-	MaxWorkers, WorkerOtherName)
-
-// WorkerNotice renders what this session must be told right now, once per task:
-// the join reminder when it has no worker, or the latest 公约 when the version its
-// own conversation carries is behind. The zero message means "nothing to say".
-// Sub-agents and the built-in buckets never get one.
+// WorkerNotice renders what this session must be told right now, once per
+// task: the latest 公约 when the version its own conversation carries is
+// behind. The zero message means "nothing to say".
+// The old join reminder is GONE: every root session is filed under a worker at
+// creation (the caller's worker, or the fixed 其他 bucket), so there is nothing
+// to remind about, and the two turns the reminder used to burn (list + join)
+// are saved on every fresh chat. Sub-agents and the built-in buckets never get
+// a notice.
 func (s *Session) WorkerNotice(messages []provider.Message) provider.Message {
 	s.mu.Lock()
 	id := s.record.WorkerID
@@ -555,12 +553,9 @@ func (s *Session) WorkerNotice(messages []provider.Message) provider.Message {
 		return provider.Message{}
 	}
 	if id == WorkerUnassignedID {
-		// The reminder tells the model to use the workers tool, so it stays quiet
-		// when that tool is not exposed (a tool-ablation run; production never does).
-		if disabledTools()["workers"] {
-			return provider.Message{}
-		}
-		return BuildWorkerNotice(workerJoinReminder, workerNoticeJoin)
+		// Legacy rows get re-filed under 其他 at startup (see worker_store.go);
+		// an empty bucket here means a hand-edited row — nothing to inject.
+		return provider.Message{}
 	}
 	rec, err := w.store.GetWorker(id)
 	if err != nil || rec == nil || rec.NoteVer < 1 || strings.TrimSpace(rec.Note) == "" {

@@ -99,7 +99,26 @@ func (s *SessionStore) initWorkers() {
 	s.migrateWorkerNote()
 	s.migrateArchivedToWorker()
 	s.ensureOtherWorker()
+	s.refileRootlessSessions()
 	s.db.InitIndex(`CREATE INDEX IF NOT EXISTS idx_sessions_worker ON sessions(worker_id)`)
+}
+
+// refileRootlessSessions re-files legacy root sessions with an empty worker_id
+// under 其他. Since the join reminder was retired — every root session is now
+// filed at creation, by the hub's catch-all — "no worker" is no longer a state
+// a root session may be in, and leaving such rows behind would hide them from
+// every bucket view. Sub-agents keep an empty membership on purpose: they hang
+// under their parent, not in a worker bucket.
+func (s *SessionStore) refileRootlessSessions() {
+	res, err := s.db.Execute(
+		"UPDATE sessions SET worker_id = ? WHERE COALESCE(worker_id, '') = '' AND COALESCE(parent_id, '') = ''",
+		WorkerOtherID)
+	if err != nil {
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		slog.Info("re-filed unattached sessions under 其他", "count", n)
+	}
 }
 
 // ensureOtherWorker creates the fixed 其他 worker. It is seeded on every start

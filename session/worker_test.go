@@ -118,8 +118,8 @@ func TestWorkerCreateJoinAndCascadeDelete(t *testing.T) {
 	if b.WorkDir() != w.WorkDir {
 		t.Fatalf("Leave changed the working directory to %q", b.WorkDir())
 	}
-	if id, _, _ := b.WorkerSnapshot(); id != WorkerUnassignedID {
-		t.Fatalf("Leave left worker id %q", id)
+	if id, _, _ := b.WorkerSnapshot(); id != WorkerOtherID {
+		t.Fatalf("Leave re-filed worker id %q, want %q", id, WorkerOtherID)
 	}
 
 	// Deleting the worker deletes its sessions and keeps the files.
@@ -307,24 +307,23 @@ func TestApplyWorkerNoticeOncePerTask(t *testing.T) {
 		t.Fatal("a silent session must not append a notice")
 	}
 
-	// An unattached root session is reminded once per task, and again on the task
-	// after that as long as it never resolves the worker.
+	// A fresh root session is born under 其他 and gets no notice at all: the
+	// join reminder is retired, and 其他 carries no shared convention.
 	free := mustSession(t, mgr, "free")
+	if id, _, _ := free.WorkerSnapshot(); id != WorkerOtherID {
+		t.Fatalf("a fresh root session should be born under %q, got %q", WorkerOtherID, id)
+	}
 	loop.SetWorkerNotice(free.WorkerNotice)
 	task1 := loop.applyWorkerNotice([]provider.Message{{Role: "user", Content: "hi"}})
-	// The reminder also states the cap, so a model learns it before it tries to
-	// create — not from a create that got refused.
-	if len(task1) != 2 || !strings.Contains(task1[1].GetText(), "还没有归属 worker") ||
-		!strings.Contains(task1[1].GetText(), fmt.Sprintf("worker 最多 %d 个", MaxWorkers)) {
-		t.Fatalf("no join reminder (with the worker cap) for an unattached session: %+v", task1)
-	}
-	task2 := loop.applyWorkerNotice(append(task1, provider.Message{Role: "assistant", Content: "ok"}))
-	if countWorkerNotices(task2) != 2 {
-		t.Fatal("an unresolved reminder should come back on the next task")
+	if countWorkerNotices(task1) != 0 {
+		t.Fatalf("a fresh session should start notice-free: %+v", task1)
 	}
 
-	// A compaction rebuild drops notices (derived data); the next task re-appends one.
-	rebuilt, ok := RebuildContext(append(task2, BuildCompactRequest("")), "summary here", CompactKeepMessages, CompactKeepMaxTokens)
+	// A compaction rebuild drops notices (derived data); the next task re-delivers
+	// the convention. The history rebuilt here carries none, so the owed note is
+	// re-created — the held version resets with the dropped notices.
+	loop.SetWorkerNotice(s.WorkerNotice)
+	rebuilt, ok := RebuildContext(append(after, BuildCompactRequest("")), "summary here", CompactKeepMessages, CompactKeepMaxTokens)
 	if !ok {
 		t.Fatal("RebuildContext refused")
 	}
@@ -484,9 +483,16 @@ func TestWorkerBucketsAndArchiveMigration(t *testing.T) {
 	if err != nil || len(all) != 1 || all[0].SessionID != plain.SessionID {
 		t.Fatalf("default list must show only the visible session, got %+v (%v)", all, err)
 	}
+	// The plain session (empty worker_id) is re-filed under 其他 when the store
+	// reopens: "no worker" is no longer a state a root session may be in, and
+	// the unassigned bucket is gone with the join reminder.
+	other, err := reopened.ListBucketSummaries(WorkerOtherID, 10, 0)
+	if err != nil || len(other) != 1 || other[0].SessionID != plain.SessionID {
+		t.Fatalf("其他 bucket should hold the re-filed session, got %+v (%v)", other, err)
+	}
 	unassigned, err := reopened.ListBucketSummaries(WorkerUnassignedID, 10, 0)
-	if err != nil || len(unassigned) != 1 {
-		t.Fatalf("unassigned bucket returned %+v (%v)", unassigned, err)
+	if err != nil || len(unassigned) != 0 {
+		t.Fatalf("unassigned bucket must be empty after the refile, got %+v (%v)", unassigned, err)
 	}
 }
 

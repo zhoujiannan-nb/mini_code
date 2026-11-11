@@ -1,7 +1,7 @@
 /* ---------------- 初始化 ---------------- */
 (async function init() {
-  // “＋ 新建会话”:高频操作一键直达(不再弹下拉)。归属上刻意清空 —— 大按钮建的会话
-  // 不属于任何 worker(由会话自己决定要不要加入),worker 名下的小「＋ 会话」才是显式归属。
+  // “＋ 新建会话”:高频操作一键直达(不再弹下拉)。归属跟着当前选中的区走
+  // (创建即归属,大按钮和小「＋ 会话」同一语义)。
   $("#btn-new").addEventListener("click", () => {
     if (state.currentGroup) exitGroupView();
     detachWorkerForNewSession();

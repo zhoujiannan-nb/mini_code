@@ -94,8 +94,8 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 
 	var before []SessionSummary
 	workerReq(t, "GET", srv.URL+"/api/sessions", "", &before)
-	if len(before) != 1 || before[0].WorkerID != "" {
-		t.Fatalf("a fresh session should be unassigned, got %+v", before)
+	if len(before) != 1 || before[0].WorkerID != session.WorkerOtherID {
+		t.Fatalf("a fresh session should be born under 其他, got %+v", before)
 	}
 
 	// Move it in: the bucket list must follow, and the session takes the
@@ -244,12 +244,13 @@ func TestArchiveAPIIsTheWorkerBucket(t *testing.T) {
 		t.Fatalf("archive did not map to the built-in bucket: %+v", bucket)
 	}
 
-	// Restoring means "back to 未分配".
+	// Restoring means "back to the fixed 其他 bucket" — there is no unassigned
+	// state anymore.
 	code, body = doJSON(t, "POST", srv.URL+"/api/sessions/"+id+"/archive", `{"archived":false}`)
 	mustOK(t, "POST un-archive", code, body)
 	workerReq(t, "GET", srv.URL+"/api/sessions", "", &visible)
-	if len(visible) != 1 || visible[0].WorkerID != "" {
-		t.Fatalf("restore did not return the session to 未分配: %+v", visible)
+	if len(visible) != 1 || visible[0].WorkerID != session.WorkerOtherID {
+		t.Fatalf("restore did not return the session to 其他: %+v", visible)
 	}
 }
 
@@ -388,10 +389,13 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 		}
 	}
 
-	// 1) A session with no worker is reminded to pick or create one.
+	// 1) A fresh session is born under the fixed 其他 bucket and receives no
+	// notice at all — the old "pick or create a worker" reminder is retired.
 	code, body := doJSON(t, "POST", srv.URL+"/api/messages", `{"content":"随便问一句"}`)
 	mustOK(t, "POST /api/messages", code, body)
-	awaitBody("join reminder", noticeJoinMarker)
+	if req := awaitBody("first task", "随便问一句"); strings.Contains(req, noticeJoinMarker) || strings.Contains(req, noticeNoteMarker) {
+		t.Error("a fresh session should start with zero worker notices")
+	}
 
 	var list []SessionSummary
 	for i := 0; i < 200; i++ {
@@ -407,7 +411,7 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 	id := list[0].SessionID
 
 	// 2) Joining through the sidebar: attached, but the worker has no 公约 yet, so
-	// the next task says nothing new — and the reminder never comes back.
+	// the next task still says nothing — and the retired join reminder stays gone.
 	base := t.TempDir()
 	code, body = doJSON(t, "POST", srv.URL+"/api/workers", `{"name":"gpu","summary":"统一跑分脚本","base_dir":"`+jsonEscape(base)+`"}`)
 	mustOK(t, "POST /api/workers", code, body)
@@ -424,8 +428,8 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 	code, body = doJSON(t, "POST", srv.URL+"/api/messages", `{"session_id":"`+id+`","content":"加入之后问一句"}`)
 	mustOK(t, "POST /api/messages after join", code, body)
 	req := awaitBody("task after join", "加入之后问一句")
-	if n := strings.Count(req, noticeJoinMarker); n != 1 {
-		t.Errorf("the join reminder appeared %d times; an attached session should not be reminded again", n)
+	if n := strings.Count(req, noticeJoinMarker); n != 0 {
+		t.Errorf("the retired join reminder appeared %d times; it must never be injected", n)
 	}
 	if strings.Contains(req, noticeNoteMarker) {
 		t.Error("a worker with an empty v0 公约 should not send a notice")
@@ -442,8 +446,8 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 	if !strings.Contains(req, noticeNoteMarker+created.WorkerID+":1") {
 		t.Errorf("the notice does not mark the version it carries: %s", noticeNoteMarker+created.WorkerID+":1")
 	}
-	if n := strings.Count(req, noticeJoinMarker); n != 1 {
-		t.Errorf("join reminder count = %d, want the single historical one", n)
+	if n := strings.Count(req, noticeJoinMarker); n != 0 {
+		t.Errorf("join reminder count = %d, want 0 (retired)", n)
 	}
 	if strings.LastIndex(req, noticeNoteMarker) < strings.LastIndex(req, "新约定生效了吗") {
 		t.Error("the 公约 notice was not appended after the user message")
@@ -451,7 +455,7 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 
 	// 4) The UI transcript shows them — they are context the user is entitled to
 	// see — while the system prompt stays worker-free and byte-stable.
-	awaitNotices(t, mgr, id, 2)
+	awaitNotices(t, mgr, id, 1)
 	var view struct {
 		Messages []struct {
 			Role    string `json:"role"`
@@ -466,8 +470,8 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 			inTranscript++
 		}
 	}
-	if inTranscript != 2 {
-		t.Fatalf("the transcript shows %d notices, want the join reminder + the 公约 update", inTranscript)
+	if inTranscript != 1 {
+		t.Fatalf("the transcript shows %d notices, want just the 公约 update", inTranscript)
 	}
 	if view.Tokens <= 0 {
 		t.Error("the token estimate went missing with the notices")
@@ -504,7 +508,7 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 		t.Error("the second notice does not carry v2")
 	}
 	// The record keeps notices: the model must see them on every later turn.
-	awaitNotices(t, mgr, id, 3)
+	awaitNotices(t, mgr, id, 2)
 }
 
 // awaitNotices polls until the session's record carries want notices — one is
@@ -610,11 +614,12 @@ func TestWorkersListBusyCounts(t *testing.T) {
 
 	// A task on a sub-agent only: the sub-agent is not a root session, so the
 	// number has to come from its parent's bucket — exactly like the session row.
+	// The parent is a plain session, which now lives in the fixed 其他 bucket.
 	_, cancel2 := context.WithCancel(context.Background())
 	defer cancel2()
 	be.hub.RegisterExternalTask(kid.ID(), cancel2)
-	if got, freeN := busy(); freeN != 1 || got[created.WorkerID] != 0 {
-		t.Fatalf("sub-agent task not counted for its parent's bucket: %+v / 未分配 %d", got, freeN)
+	if got, freeN := busy(); got[session.WorkerOtherID] != 1 || got[created.WorkerID] != 0 || freeN != 0 {
+		t.Fatalf("sub-agent task not counted for its parent's 其他 bucket: %+v / 未分配 %d", got, freeN)
 	}
 }
 

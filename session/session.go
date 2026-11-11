@@ -379,6 +379,15 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		s.updateStatus("failed")
 		return "", "", err
 	}
+	// Name the model in the persona placeholder ("a coding agent powered by the
+	// {{model}} model"), dsh-style. The session keeps its client for life, so
+	// this cannot change the prompt of an ongoing conversation.
+	s.mu.Lock()
+	mdl := s.client
+	s.mu.Unlock()
+	if mdl != nil {
+		pb.SetModelName(mdl.ModelName())
+	}
 	systemPrompt := pb.BuildSystemPrompt(s.record.WorkDir, groupBackground)
 	defs := pb.GetFilteredDefinitions(cfg)
 
@@ -1190,6 +1199,14 @@ func (m *SessionManager) CreateSessionRecord(title, agentRole, workDir string, p
 		pid = *parentID
 	}
 	record := NewSessionRecord(title, agentRole, workDir, pid)
+	// Root sessions are born inside a worker: the catch-all 其他 bucket, unless
+	// the creator re-files them (the hub moves a sidebar-created chat to the
+	// chosen worker before its first task). "No worker" is no longer a state a
+	// root session passes through — the join reminder that used to ask the
+	// model to fix the missing membership cost two turns per fresh chat.
+	if pid == "" {
+		record.WorkerID = WorkerOtherID
+	}
 	if err := m.store.Create(record); err != nil {
 		return nil, err
 	}

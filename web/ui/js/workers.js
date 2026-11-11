@@ -3,46 +3,47 @@
  * 这里的职责:切换条(‹ worker ›)、按 worker 过滤会话列表、把会话移动到
  * worker(原"归档"按钮的位置)、以及公约的查看/编辑。
  *
- * 会话侧的注入规则在服务端(session/worker.go):每个任务开始时检查一次 —— 没归属
- * worker 就插一条加入提醒;已归属但持有的公约版本落后,就插一条最新公约。都是往
- * 对话尾部追加(和用量提醒、压缩摘要同一套路),前缀缓存不受影响;消息发送成功后
- * 才随对话一起落库,所以那一条就是它的"已消费"凭证。保存公约即升版本,同 worker 的
- * 会话下一轮各自收到更新,不需要这里的任何按钮。
+ * 会话侧的归属规则在服务端:会话创建即有归属(worker 名下建就归该 worker,否则归
+ * 固定的「其他」桶)—— 没有"未分配"这一档,也没有加入提醒了。剩下的注入只有一种:
+ * 已归属 worker 的公约版本落后时,把最新公约追加到对话尾部(和用量提醒同一套路),
+ * 前缀缓存不受影响;消息发送成功后才随对话一起落库,那条消息就是"已消费"凭证。
+ * 保存公约即升版本,同 worker 的会话下一轮各自收到更新,不需要这里的任何按钮。
  */
 const LS_WORKER_KEY = "mini_code.worker";
+// 固定「其他」桶:所有无主会话的家(服务端 session.WorkerOtherID,同名常量)。
+const WK_OTHER = "w-other";
 
 function workerBucketId() {
   const id = state.worker == null ? "" : state.worker;
-  return id === "*" ? "" : id; // 老版本存过 "*",一律归到"未分配"
+  // 老版本存过 ""(未分配)和 "*",统一映射到「其他」。
+  return (id === "" || id === "*") ? WK_OTHER : id;
 }
 
 function restoreWorker() {
   try {
     const v = localStorage.getItem(LS_WORKER_KEY);
-    if (v != null) state.worker = v === "*" ? "" : v; // 老版本可能存着 "*"
-  } catch (e) { /* 隐私模式 / 禁用存储:留在"未分配" */ }
+    if (v != null) state.worker = (v === "" || v === "*") ? WK_OTHER : v;
+  } catch (e) { /* 隐私模式 / 禁用存储:留在初始桶 */ }
 }
 function rememberWorker(id) {
   try { localStorage.setItem(LS_WORKER_KEY, id); } catch (e) {}
 }
 
-// workerBuckets 是切换条的全部序列:各 worker → 未分配。未分配排最后,它是"没归属"
-// 的兜底档,不该抢在真正的工作线前面。没有"全部"这一档,内置分桶(旧版"已归档")也
-// 不再列出 —— 归档按钮早就没了,那个桶也不会再被创建。
+// workerBuckets 是切换条的全部序列:各 worker(含固定的「其他」,它是服务端常驻的
+// 一条)。没有"未分配"也没有"全部"这一档 —— 会话创建即有归属,兜底档就是「其他」。
+// 内置分桶(旧版"已归档")不列出。
 function workerBuckets() {
-  const out = (state.workers || []).filter(x => !x.builtin).slice();
-  out.push({ worker_id: "", name: "未分配", sessions: state.unassigned || 0, active: state.unassignedActive || 0 });
-  return out;
+  return (state.workers || []).filter(x => !x.builtin).slice();
 }
 
 function workerLabel(id) {
-  if (id === "" || id == null || id === "*") return "未分配";
+  if (id === "" || id == null || id === "*") id = WK_OTHER;
   const w = (state.workers || []).find(x => x.worker_id === id);
   return w ? w.name : "未知 worker";
 }
 
 function workerEmptyHint() {
-  if (workerBucketId() === "") return '暂无未分配会话<br>新建会话时选「未分配」即由 agent 自己判断归属';
+  if (workerBucketId() === WK_OTHER) return '这里还没有会话<br>顶部「＋ 新建会话」建的会话默认落在这里';
   return '这个 worker 还没有会话<br>点「＋ 新建会话」直接在这里开工,或把别的会话 📁 移进来';
 }
 
@@ -60,12 +61,12 @@ async function loadWorkers() {
     state.unassigned = state.unassigned || 0;
     state.unassignedActive = 0;
   }
-  // 选中的 worker 被删了:回到"未分配",别把列表卡成空。只在真的拿到列表时才校准,
+  // 选中的 worker 被删了:回到固定的「其他」,别把列表卡成空。只在真的拿到列表时才校准,
   // 否则一次网络抖动就会把用户正在看的 worker 踢走。
   const id = workerBucketId();
-  if (got && id !== "" && !state.workers.some(w => w.worker_id === id)) {
-    state.worker = "";
-    rememberWorker("");
+  if (got && id !== WK_OTHER && !state.workers.some(w => w.worker_id === id)) {
+    state.worker = WK_OTHER;
+    rememberWorker(WK_OTHER);
   }
   paintWorkerBar();
 }
@@ -75,14 +76,14 @@ function paintWorkerBar() {
   if (!name) return;
   const id = workerBucketId();
   const w = (state.workers || []).find(x => x.worker_id === id);
-  const count = id === "" ? (state.unassigned || 0) : (w ? w.sessions || 0 : 0);
+  const count = w ? w.sessions || 0 : 0;
   name.textContent = (w ? w.name : workerLabel(id)) + (count ? " · " + count : "");
 
   const sub = $("#worker-sub");
   if (!sub) return;
   if (!w || (!w.work_dir && !w.reserved)) {
-    // "未分配"/"已归档"没有共享目录,原来那行解释性小字("未分配:新会话会自己判断…")是纯
-    // 噪音,还老跟下拉菜单打架 —— 删了。空的 .worker-sub 由 CSS 的 :empty 折叠,不留空隙。
+    // 查不到 worker(服务端过旧 / 刚被删)时没有共享目录,子栏整行留空。
+    // 原来那行解释性小字是纯噪音,还老跟下拉菜单打架 —— 删了。空的 .worker-sub 由 CSS 的 :empty 折叠,不留空隙。
     sub.innerHTML = "";
   } else {
     // 固定的「其他」能写公约、能改摘要,但删不掉、名字也写死了 —— 不渲染 🗑 和改名。
@@ -104,13 +105,12 @@ function paintWorkerBar() {
   }
 }
 
-// 小「＋ 会话」:草稿**明确挂到当前 worker**。归属只有 send.js 一处来源
-// (body.worker_id = state.worker),而 resetToNew 不碰它,所以这里要把它钉成当前区。
-// "已归档"是个虚拟桶,不能当归属,那种情况下草稿留作未分配。
+// 小「＋ 会话」:草稿**明确挂到当前 worker**(「其他」也算,归属只有 send.js 一处
+// 来源 body.worker_id = state.worker,而 resetToNew 不碰它,所以这里要钉成当前区)。
 function newSessionInWorker() {
   if (state.currentGroup && typeof exitGroupView === "function") exitGroupView();
   const id = workerBucketId();
-  if (id && id !== "*") {
+  if (id) {
     state.worker = id;
     rememberWorker(id);
   }
@@ -120,14 +120,13 @@ function newSessionInWorker() {
   if (input) input.focus();
 }
 
-// 顶部大「＋ 新建会话」:建一个**不属于任何 worker** 的会话,归属交给会话自己判断 ——
-// 没有 worker 时后端会注入 join 提醒(session/worker.go 的 BuildWorkerNotice),
-// 由 agent 决定 join 哪条线 / create 新线 / 干脆不处理。
-// 不清 state.worker 的话,大按钮会跟着上一个选中的区走,和小「＋ 会话」变成同一件事。
+// 顶部大「＋ 新建会话」:与小「＋ 会话」同一语义 —— 会话落在**当前选中的区**
+// (后端保证创建即归属,没得选"无主")。之前的大按钮会把归属清空让 agent 自己
+// 判断,连带每轮注入加入提醒;那套已删,这里只需把草稿钉在当前区。
 function detachWorkerForNewSession() {
-  state.worker = "";
-  rememberWorker("");
-  state.unassignedActive = 1; // 会话还没建出来,也要让"未分配"出现在切换器里
+  const id = workerBucketId();
+  state.worker = id;
+  rememberWorker(id);
   paintWorkerBar();
 }
 
@@ -151,13 +150,13 @@ async function switchWorker(id) {
 // 和 switchWorker 的区别是它**不**去挑「新区的第一条会话」——要看的还是这一条,
 // 谁调用谁负责 selectSession。返回是否真的换了区。
 async function followSessionWorker(workerID) {
-  const id = workerID || "";
+  const id = workerID || WK_OTHER; // 老数据可能还带着空归属,一律当「其他」
   // 已经在这个区就别折腾了:打开会话是高频动作,不该为它多打一次 /api/workers。
-  if (id === workerBucketId() && (id === "" || (state.workers || []).some(w => w.worker_id === id))) return false;
+  if (id === workerBucketId() && (state.workers || []).some(w => w.worker_id === id)) return false;
   // 先拉一次 worker 列表:agent 可能在会话里刚 create 出一条新线,列表里没有它,
   // 直接切过去只会是个空区。
   await loadWorkers();
-  if (id !== "" && !(state.workers || []).some(w => w.worker_id === id)) return false; // 已被删掉:别切
+  if (!(state.workers || []).some(w => w.worker_id === id)) return false; // 已被删掉:别切
   if (id === workerBucketId()) return false;
   state.worker = id;
   rememberWorker(id);
@@ -180,10 +179,10 @@ async function resyncSessionWorker(sid) {
 }
 
 /* ---------------- worker 菜单(切换 / 新建)---------------- */
-// 菜单图标:未分配是一格虚线框,真 worker 一律文件夹。
+// 菜单图标:固定的「其他」是一格虚线框(它不是工作线,是兜底档),真 worker 一律文件夹。
 // 用内联 SVG 不用 emoji —— emoji 在不同字体下大小/基线全飘,颜色也没法跟主题走。
 const WK_ICONS = {
-  "": '<rect x="4.2" y="4.2" width="15.6" height="15.6" rx="3.2" stroke-dasharray="3.6 3"/>',
+  "w-other": '<rect x="4.2" y="4.2" width="15.6" height="15.6" rx="3.2" stroke-dasharray="3.6 3"/>',
 };
 const WK_ICON_FOLDER = '<path d="M4 7.2A2.2 2.2 0 0 1 6.2 5h3.4l1.8 2.2H17.8A2.2 2.2 0 0 1 20 9.4v7.4A2.2 2.2 0 0 1 17.8 19H6.2A2.2 2.2 0 0 1 4 16.8V7.2Z"/>';
 function wkIcon(id) {
@@ -254,7 +253,7 @@ function openWorkerMenu(anchor) {
 function openWorkerMoveMenu(sess, anchor) {
   const menu = $("#worker-menu");
   if (!menu) return;
-  const cur = sess.worker_id || "";
+  const cur = sess.worker_id || WK_OTHER;
   let html = '<div class="wk-menu-head">移动到 Worker</div>';
   for (const w of workerBuckets()) {
     html += '<div class="wk-menu-item' + (w.worker_id === cur ? " cur" : "") + '" data-id="' + esc(w.worker_id) + '">' +
@@ -354,7 +353,7 @@ async function deleteWorker(workerID) {
   try {
     const r = await api("/api/workers/" + workerID, { method: "DELETE" });
     toast("已删除(" + (r.deleted_sessions || 0) + " 个会话)", "ok");
-    if (workerBucketId() === workerID) { state.worker = ""; rememberWorker(""); }
+    if (workerBucketId() === workerID) { state.worker = WK_OTHER; rememberWorker(WK_OTHER); }
     await loadWorkers();
     await loadSessions(null, true);
     if (shown && shown.worker_id === workerID) resetToNew();

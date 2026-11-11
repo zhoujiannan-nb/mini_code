@@ -69,8 +69,8 @@ if (window.matchMedia) {
 
 const state = {
   sessions: [],
-  // worker(工作大类):当前分桶、worker 列表、以及未分配会话数。
-  // "" = 未分配,其余 = worker_id。没有"全部"这一档,筛选只在服务端做,列表天然干净。
+  // worker(工作大类):当前分桶与 worker 列表。"" 只是初始值,workerBucketId() 会
+  // 映射到固定的「其他」(w-other);没有"未分配"这一档,筛选只在服务端做。
   worker: "",
   workers: [],
   unassigned: 0,
