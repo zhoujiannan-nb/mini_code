@@ -58,6 +58,16 @@ type Session struct {
 	// (e.g. group-chat messages for a busy member); the agent loop drains
 	// them at the start of each turn (AgentLoop.SetInjections). Guarded by mu.
 	pendingInjects []string
+
+	// execTool is the session's one exec tool, kept across tasks. It owns the
+	// shell pool and the background-command registry, and both are session state
+	// by definition: rebuilding the tool per task would cold-start every shell,
+	// orphan the shells and background commands the previous task left running,
+	// and leave job ids that no longer resolve. execDir remembers which working
+	// directory it was built for, because joining a worker can move the directory.
+	// Guarded by mu.
+	execTool *tools.ExecTool
+	execDir  string
 }
 
 func (s *Session) ID() string             { return s.record.SessionID }
@@ -286,6 +296,45 @@ func (s *Session) WorkerSnapshot() (workerID, name, dir string) {
 		metadataString(s.record, workerDirMetaKey)
 }
 
+// sharedExec returns the session's exec tool, building it on first use. It is
+// cached on purpose: the tool owns the shell pool and the background-command
+// registry, so a fresh instance per task would cold-start every shell, orphan the
+// shells and jobs the previous task left running, and hand out job ids that stop
+// resolving as soon as the next task begins. A moved working directory (joining a
+// worker relocates the session) is the one change that rebuilds it — and retires
+// the old shells with it.
+func (s *Session) sharedExec(dir string) *tools.ExecTool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.execTool != nil && s.execDir == dir {
+		return s.execTool
+	}
+	if old := s.execTool; old != nil {
+		go old.Close() // those shells were opened in a directory this session left
+	}
+	s.execTool = tools.NewExecTool(120, dir)
+	s.execDir = dir
+	return s.execTool
+}
+
+// stopBackground ends the session's background commands and frees its shells.
+// Called when the conversation goes away (deleted, or the app closing): work
+// nobody will ever read is stopped rather than left running, and the settlement
+// is marked as teardown so no notice is injected into a session that is gone.
+func (s *Session) stopBackground(reason string) {
+	s.mu.Lock()
+	ex := s.execTool
+	s.execTool = nil
+	s.mu.Unlock()
+	if ex == nil {
+		return
+	}
+	if n := ex.Jobs().CancelAll(s.ID(), reason); n > 0 {
+		slog.Info("background commands stopped", "session", s.ID(), "count", n, "reason", reason)
+	}
+	ex.Close()
+}
+
 // preparePromptTools assembles the agent config, the prompt builder (tool set
 // and system-prompt inputs) and the per-task context state.
 //
@@ -306,9 +355,22 @@ func (s *Session) preparePromptTools() (*agent.AgentConfig, *PromptBuilder, *too
 	}
 
 	pb := NewPromptBuilder(cfg, s.record.WorkDir)
+	// One exec tool per session, not per task (see sharedExec). Registering it
+	// here replaces the instance the builder created for itself, and it has to
+	// happen before the job tools are attached: they take the job registry from
+	// the exec tool, so "what is running in this session" can only ever mean the
+	// commands this session's own exec started.
+	pb.Tools.Register(s.sharedExec(s.record.WorkDir))
 	isRootSession := s.record.ParentID == ""
 	if cfg.Mode == "primary" && s.manager != nil && isRootSession {
 		pb.EnableTaskTool(s.manager, s.ID(), s.record.WorkDir)
+	}
+	// Background commands (exec jobs), the tools that read and stop them, and the
+	// notice a command gets when it ends after its wait was given up on. Every
+	// session, children included: the job ids it hands out must resolve in the
+	// conversation that received them.
+	if s.manager != nil {
+		pb.EnableJobTools(s.manager, s.ID())
 	}
 	// Context-management tools (context_usage / compact_context), wired to a
 	// per-task context state the agent loop updates each turn.
@@ -437,6 +499,14 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	// Oversized tool results spill their full text next to the database so
 	// the pruned history copy can point at it (prune.go).
 	loop.SetSpillDir(s.store.SpillDir(), s.ID())
+	// Background commands belong to this session: the loop passes the id to the
+	// job runtime, and every async-capable tool starts its work under it. No owner
+	// means no job runtime, which is the correct fallback for a loop built without
+	// a session (tests, the one-shot CLI).
+	loop.SetJobOwner(s.ID())
+	// What this session has looked at, so a mutation of a file it never read can
+	// be recorded (measured, never blocked — see policy.go).
+	loop.SetObservation(tools.NewObservation())
 	// Live tool output (UI only) rides the same callback set; tools that cannot
 	// stream simply never call it.
 	loop.SetOnToolOutput(s.onToolOutput)
@@ -1281,12 +1351,32 @@ func (m *SessionManager) SetChannelKey(sessionID, key string) error {
 
 func (m *SessionManager) Delete(sessionID string) error {
 	m.mu.Lock()
+	s := m.sessions[sessionID]
 	delete(m.sessions, sessionID)
 	m.mu.Unlock()
+	// A conversation that goes away stops owning work: anything it left running
+	// is stopped, so a build nobody will ever read does not outlive the session
+	// that started it.
+	if s != nil {
+		s.stopBackground("session deleted")
+	}
 	return m.store.Delete(sessionID)
 }
 
+// Close shuts the manager down. Every live session is asked to stop its
+// background commands first: the OS job object would kill the shells when this
+// process exits anyway, but stopping them here is what makes "I closed the app"
+// and "the build is still running somewhere" two different sentences.
 func (m *SessionManager) Close() error {
+	m.mu.Lock()
+	live := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		live = append(live, s)
+	}
+	m.mu.Unlock()
+	for _, s := range live {
+		s.stopBackground("app closed")
+	}
 	return m.store.Close()
 }
 

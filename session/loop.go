@@ -77,6 +77,13 @@ type AgentLoop struct {
 	// and the ledger's full row stays the only escape hatch.
 	spillDir string
 	spillID  string
+	// jobOwner is the session id background work is registered to: a command that
+	// outlives its wait belongs to the conversation that started it, and only
+	// that conversation may read it or stop it. Empty means this loop has no job
+	// runtime, which leaves every async-capable tool on its synchronous path.
+	jobOwner string
+	// obs is the session's file-observation memory (policy.go). Nil = inert.
+	obs *tools.Observation
 	// curTurn tags events raised outside the turn-loop body (tool callbacks,
 	// the continue guard) with the turn they happened in.
 	curTurn int
@@ -272,6 +279,12 @@ func (l *AgentLoop) SetSpillDir(dir, sessionID string) {
 	l.spillDir = dir
 	l.spillID = sessionID
 }
+
+// SetJobOwner names the session that background work belongs to. Until it is
+// called, tools that could hand their work to the job runtime run synchronously,
+// which is the correct fallback for a loop built without a session (tests, the
+// one-shot CLI).
+func (l *AgentLoop) SetJobOwner(sessionID string) { l.jobOwner = sessionID }
 
 // emitEvent raises one ledger event. Best-effort by contract: the sink
 // implementation owns its error handling; the loop never blocks on the ledger.
@@ -1625,6 +1638,26 @@ func (l *AgentLoop) executeSingleTool(ctx context.Context, tc provider.ToolCall)
 	if l.gate != nil {
 		if allow, denyMsg := l.gate(ctx, tc.Function.Name, params); !allow {
 			return tools.NewTextResult(denyMsg)
+		}
+	}
+	// What the ledger learns about file mutations relative to what the session
+	// read. Observation only: this has never blocked a call and does not now.
+	l.observePolicy(tc.ID, tc.Function.Name, params)
+	// A tool whose work can outlive the call goes to the job runtime: the work is
+	// started under a context this turn does not own, and the call either returns
+	// with the answer or hands over a job id. An error here means nothing was
+	// started, so falling through to the ordinary path below cannot run anything
+	// twice — that is the whole of the contract between the two paths.
+	if at, ok := l.tools.Get(tc.Function.Name).(tools.AsyncTool); ok && l.jobOwner != "" {
+		var sink func(string)
+		if l.onToolOutput != nil {
+			sink = func(chunk string) { l.onToolOutput(tc.Function.Name, chunk) }
+		}
+		if call, aerr := at.StartAsync(ctx, l.jobOwner, params, sink); aerr == nil && call != nil && call.Job != nil {
+			if call.Settled {
+				return tools.NewTextResult(call.Job.Output(true))
+			}
+			return tools.NewTextResult(call.Note)
 		}
 	}
 	// A tool that reports output while it runs gets a sink when someone is

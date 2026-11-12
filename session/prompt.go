@@ -97,6 +97,28 @@ func (pb *PromptBuilder) registerDefaultTools() {
 	pb.Tools.Register(tools.NewReadImgTool(ws))
 }
 
+// EnableJobTools attaches the tools that read and stop this session's background
+// commands, and installs the hook that turns a job's lifecycle into ledger rows
+// plus (when nobody was waiting on it) a settlement notice in the conversation.
+//
+// The registry is not created here: exec owns it, because exec is what hands work
+// to it. Taking it from the tool instead of injecting it keeps the wiring honest
+// — the job tools can only ever see the commands this session's exec actually
+// started. Called once per session, like EnableTaskTool.
+func (pb *PromptBuilder) EnableJobTools(mgr *SessionManager, sessionID string) {
+	host, ok := pb.Tools.Get("exec").(tools.JobHost)
+	if !ok || host.Jobs() == nil {
+		slog.Warn("exec tool exposes no job registry; background commands unavailable", "session", sessionID)
+		return
+	}
+	reg := host.Jobs()
+	reg.SetListener(jobListener(mgr, sessionID))
+	for _, jt := range tools.NewJobTools(reg) {
+		pb.Tools.Register(jt)
+	}
+	slog.Debug("job tools enabled", "session", sessionID)
+}
+
 // environmentSection tells the model which OS it runs on and which shell
 // dialect the exec tool speaks. LLMs default to Unix syntax (ls, cat, grep,
 // ";"); on Windows cmd.exe that fails on the first try, so an explicit,

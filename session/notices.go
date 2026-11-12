@@ -32,6 +32,10 @@ const (
 	NoticeContext = "context"
 	// NoticeSubagent is a background sub-agent's settlement notice (subagent.go).
 	NoticeSubagent = "subagent"
+	// NoticeJob is a background command's settlement notice (job/jobs.go): a
+	// command that outlived its exec wait and finished later, announced in the
+	// conversation it was started in (jobnotice.go).
+	NoticeJob = "job"
 	// NoticeSteer labels the continue guard's old nudge. The guard itself is
 	// gone (loop_continue.go deleted); the exact bytes stay registered here so
 	// steer rows written into older sessions still render as runtime notices
@@ -78,6 +82,8 @@ func NoticeKind(m provider.Message) (kind string, ok bool) {
 		return NoticeSummary, true
 	case strings.HasPrefix(trimmed, "<subagent "):
 		return NoticeSubagent, true
+	case strings.HasPrefix(trimmed, "<job "):
+		return NoticeJob, true
 	case trimmed == legacySteerText:
 		return NoticeSteer, true
 	case trimmed == strings.TrimSpace(emptyRetryNotice):

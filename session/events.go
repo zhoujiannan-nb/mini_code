@@ -35,6 +35,22 @@ const (
 	EventCompactionArgAge = "compaction/argage" // {call_id, name, chars_before, chars_after} — shadow event for aging a successful big write/edit call's arguments out of the model history (see argage.go)
 	EventCompaction       = "compaction"        // {before_tokens, after_tokens, kind: auto|manual}
 	EventGuardSteer       = "guard/steer"       // {steer} — legacy: emitted by the removed continue guard (loop_continue.go, deleted)
+
+	// The background-command ledger (job/jobs.go). A command that outlives its
+	// foreground wait stops being a tool result and becomes a piece of work with
+	// a lifetime of its own, so its lifetime is recorded the same way every other
+	// fact in this table is: registered when it starts, promoted when the wait
+	// gave up on it, settled when it ended. "How long was the model waiting on
+	// tools" must stay a query, not a guess — without these rows the wall-clock
+	// spent inside a promoted job would be invisible, which is precisely the cost
+	// this machinery exists to remove.
+	EventJobRegistered = "job/registered" // {job_id, kind, label}
+	EventJobPromoted   = "job/promoted"   // {job_id, kind, label, waited_ms} — the wait expired; the work continues
+	EventJobSettled    = "job/settled"    // {job_id, kind, status, detail, waited_ms?, elapsed_ms, bytes, notified}
+	// EventPolicyObserve records what a mutation was done to a file the session
+	// had or had not looked at (see tools/policy.go). It is an observation, not a
+	// gate: nothing here has ever blocked a call.
+	EventPolicyObserve = "policy/observe" // {call_id, tool, path, blind}
 )
 
 // EventRecord is one row of the ledger as returned to readers.

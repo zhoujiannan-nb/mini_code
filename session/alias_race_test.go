@@ -127,6 +127,13 @@ func TestQueueDuringRunningTaskNoCorruption(t *testing.T) {
 					t.Fatalf("empty system message: %+v", m)
 				}
 			case "user", "assistant":
+				// A runtime-injected notice (a job or sub-agent settlement, a
+				// context reminder) is a well-formed message by design, so it is
+				// not what this test looks for: a torn read of a slot mid-write,
+				// which shows up as garbage text, not as an extra notice.
+				if m.Role == "user" && IsInjectedNotice(m) {
+					continue
+				}
 				if !expected[m.Content] {
 					t.Fatalf("corrupted %s message content %q", m.Role, m.Content)
 				}
