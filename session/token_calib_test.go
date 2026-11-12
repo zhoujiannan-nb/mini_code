@@ -207,9 +207,6 @@ func TestRunCalibratesUsage(t *testing.T) {
 	defer client.Close()
 	loop.tools = reg
 	loop.SetTokenCalibrator(newTokenCalibrator()) // hermetic: not the shared registry
-	// The fake server scripts turns by request count; the continue guard's
-	// judge call would add an extra one (guard: loop_continue_test.go).
-	loop.SetContinueGuard(false)
 
 	var published []int
 	var pubMu sync.Mutex

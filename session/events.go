@@ -34,7 +34,7 @@ const (
 	EventCompactionPrune  = "compaction/prune"  // {call_id, name, chars_before, chars_after, spill?} — shadow event pricing one tool-result prune; the following tool/result row with the same call_id supersedes the full row
 	EventCompactionArgAge = "compaction/argage" // {call_id, name, chars_before, chars_after} — shadow event for aging a successful big write/edit call's arguments out of the model history (see argage.go)
 	EventCompaction       = "compaction"        // {before_tokens, after_tokens, kind: auto|manual}
-	EventGuardSteer       = "guard/steer"       // {steer}
+	EventGuardSteer       = "guard/steer"       // {steer} — legacy: emitted by the removed continue guard (loop_continue.go, deleted)
 )
 
 // EventRecord is one row of the ledger as returned to readers.

@@ -170,9 +170,6 @@ func TestTruncationStateResetOnToolCall(t *testing.T) {
 	loop, client := newTestLoop(t, srv.URL)
 	defer client.Close()
 	loop.tools = reg
-	// Request count is asserted exactly; keep the continue guard's judge call
-	// out of this test's scripted turns (guard itself: loop_continue_test.go).
-	loop.SetContinueGuard(false)
 
 	res, err := loop.Run(context.Background(), "system prompt", "do the thing", nil)
 	if err != nil {

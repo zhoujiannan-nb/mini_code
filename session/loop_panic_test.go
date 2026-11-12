@@ -46,10 +46,6 @@ func TestToolPanicContained(t *testing.T) {
 
 	loop, client := newTestLoop(t, srv.URL)
 	defer client.Close()
-	// This test counts LLM requests exactly; the continue guard's judge call
-	// would add one, and it is not what this test is about (covered in
-	// loop_continue_test.go).
-	loop.SetContinueGuard(false)
 
 	registry := tools.NewToolRegistry()
 	registry.Register(panicTool{})

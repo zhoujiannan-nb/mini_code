@@ -143,19 +143,6 @@ type AgentLoop struct {
 	// instead of burning the turn budget.
 	emptyRetries int
 
-	// Continue guard (loop_continue.go): a narration-only stop — the model
-	// promises the next action in text and stops WITHOUT a tool call —
-	// must not close the task as completed. A text-only stop in a task
-	// that used tools gets one judge call; "unfinished" steers the loop
-	// another step. toolCallsSeen counts tool calls executed this task
-	// (the deterministic gate) and continueSteers counts the steers spent on
-	// the current user turn — obeying a steer never spends a new one, only a
-	// real user message re-arms the allowance (rearmContinueGuard).
-	continueGuardOn bool
-	judgeClient     *provider.ModelClient
-	toolCallsSeen   int
-	continueSteers  int
-
 	// userImages carries image data URLs (data:image/...;base64,...) that
 	// are attached to the initial user message as multimodal content parts,
 	// so the model sees them on the very first turn. Set via SetUserImages
@@ -469,7 +456,6 @@ func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tool
 		compactor:        NewContextCompactor(client),
 		compactionOn:     true, // default keeps legacy behavior; callers may opt out
 		argAgingOn:       os.Getenv("MC_ARG_AGE") == "1",
-		continueGuardOn:  os.Getenv("MC_CONTINUE_GUARD") != "0", // narration-only stops get judged before closing (loop_continue.go)
 		onToolCallStart:  onToolCallStart,
 		onToolCallEnd:    onToolCallEnd,
 		onAssistantReply: onAssistantReply,
@@ -735,13 +721,6 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				}
 				messages = append(messages, provider.Message{Role: "user", Content: t})
 				l.emitEvent(EventUserMessage, turn, map[string]any{"text": t, "source": "queued"})
-				// A real human message re-arms the continue guard's steer
-				// allowance. A runtime notice riding this same channel (a
-				// sub-agent settlement, a group-chat relay) is not new work and
-				// must not buy the model a fresh steer.
-				if _, notice := NoticeKind(provider.Message{Role: "user", Content: t}); !notice {
-					l.rearmContinueGuard()
-				}
 			}
 		}
 
@@ -1006,9 +985,6 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 
 		if len(parsed.toolCalls) > 0 {
 			l.resetTruncation()
-			// Feed the continue-guard gate: this task now has real tool
-			// activity, so a later text-only stop is worth evaluating.
-			l.toolCallsSeen += len(parsed.toolCalls)
 			if ctx.Err() != nil {
 				l.emitTaskEnd("interrupted", turn, "cancelled before tool execution")
 				return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
@@ -1066,16 +1042,6 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			l.emitAssistantMessage(turn, parsed.content, resp.ReasoningContent, nil, usageEvent)
 			messages = append(messages, provider.Message{Role: "user", Content: emptyRetryNotice})
 			l.persistTurn(turn, messages)
-			continue
-		}
-
-		// Continue guard: a narration-only stop ("I'll do X now" with no
-		// tool call) in a task that used tools is judged before closing;
-		// an "unfinished" verdict steers the loop another step instead of
-		// marking the task completed (see loop_continue.go).
-		if steered, guarded := l.tryContinueGuard(ctx, messages, parsed.content, resp.ReasoningContent); guarded {
-			l.persistTurn(turn, steered)
-			messages = steered
 			continue
 		}
 

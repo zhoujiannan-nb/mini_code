@@ -32,7 +32,10 @@ const (
 	NoticeContext = "context"
 	// NoticeSubagent is a background sub-agent's settlement notice (subagent.go).
 	NoticeSubagent = "subagent"
-	// NoticeSteer is the continue guard's nudge (loop_continue.go).
+	// NoticeSteer labels the continue guard's old nudge. The guard itself is
+	// gone (loop_continue.go deleted); the exact bytes stay registered here so
+	// steer rows written into older sessions still render as runtime notices
+	// instead of user speech.
 	NoticeSteer = "steer"
 	// NoticeRetry is the empty-response nudge (loop.go).
 	NoticeRetry = "retry"
@@ -46,6 +49,13 @@ const (
 // Named so the transcript can label it: it is the runtime prompting, not the
 // user repeating themselves.
 const emptyRetryNotice = "Your previous response was empty. Continue the task: take the next concrete step (a tool call) or answer the user directly."
+
+// legacySteerText is the deleted continue guard's steer message, verbatim. Old
+// session transcripts contain these exact bytes as role:"user" rows; keeping
+// the constant here is what lets NoticeKind still label them.
+const legacySteerText = "You described an action but did not call any tool. " +
+	"If the work is not finished, emit the tool call for it now. " +
+	"If it is genuinely finished, give the final answer instead."
 
 // NoticeKind classifies a user-role message the runtime injected itself. ok is
 // false for anything the human actually typed. The classification leans on the
@@ -68,7 +78,7 @@ func NoticeKind(m provider.Message) (kind string, ok bool) {
 		return NoticeSummary, true
 	case strings.HasPrefix(trimmed, "<subagent "):
 		return NoticeSubagent, true
-	case trimmed == strings.TrimSpace(continueSteerText):
+	case trimmed == legacySteerText:
 		return NoticeSteer, true
 	case trimmed == strings.TrimSpace(emptyRetryNotice):
 		return NoticeRetry, true
