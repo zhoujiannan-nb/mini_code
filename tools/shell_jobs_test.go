@@ -158,7 +158,7 @@ func TestExecStateCarriesToNewShell(t *testing.T) {
 func TestJobToolsReadAndKill(t *testing.T) {
 	tool := newShellTool(t, t.TempDir(), 30)
 	call := startAsync(t, tool, map[string]interface{}{
-		"command":           "ping -n 20 127.0.0.1 >nul",
+		"command":           "ping -n 9 127.0.0.1 >nul",
 		"run_in_background": true,
 	})
 	id := call.Job.ID

@@ -115,6 +115,13 @@ func (t *ExecTool) execSpec(params map[string]interface{}) (*execSpec, *ToolResu
 	if len(spec.command) > 8000 {
 		return nil, NewTextResult(fmt.Sprintf("Error: command is too long (%d chars); the shell command-line limit is ~8191. Write the command to a script file (.bat/.py/.sh) with the write_file tool, then run that file instead.", len(spec.command))), nil
 	}
+	// Sleeping to wait for work is not a command, it is a habit — and it is the
+	// cost that survives every timeout mechanism, because nothing is timing out:
+	// the model is choosing to burn the turn. Skipped above the threshold; see
+	// waitloop.go for why this one is intercepted instead of annotated.
+	if sec := pureWaitSeconds(spec.command); sec >= waitInterceptSec {
+		return nil, NewTextResult(waitLoopNote(sec)), nil
+	}
 	return spec, nil, nil
 }
 

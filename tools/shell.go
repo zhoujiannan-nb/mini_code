@@ -106,7 +106,7 @@ func (t *ExecTool) Jobs() *job.Registry { return t.jobs }
 func (t *ExecTool) Name() string { return "exec" }
 func (t *ExecTool) Description() string {
 	if runtime.GOOS == "windows" {
-		return "Execute a shell command and return stdout/stderr plus exit code. The shell is cmd.exe (Windows): use dir/type/findstr/copy/move/ren and && to chain commands, not Unix syntax. The session is persistent: cd and set carry over to later calls, so change directory once instead of passing working_dir every time. A command still running after ~110s is NOT killed: it keeps running as a background job and you are notified when it finishes (read it with job_output). For work you know is long (test suites, builds, servers), pass run_in_background instead of waiting."
+		return "Execute a shell command and return stdout/stderr plus exit code. The shell is cmd.exe (Windows): use dir/type/findstr/copy/move/ren and && to chain commands, not Unix syntax. The session is persistent: cd and set carry over to later calls, so change directory once instead of passing working_dir every time. A command still running after ~110s is NOT killed: it keeps running as a background job and you are notified when it finishes (read it with job_output). For work you know is long (test suites, builds, servers), pass run_in_background instead of waiting. Never sleep to wait for work (ping -n / timeout /t / Start-Sleep): background commands notify you, and job_output(wait=true) waits for one properly."
 	}
 	return "Execute a shell command and return stdout/stderr plus exit code. The shell is sh (POSIX). A command still running after ~110s keeps running as a background job and you are notified when it finishes (read it with job_output)."
 }
