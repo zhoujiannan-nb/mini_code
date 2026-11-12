@@ -162,6 +162,69 @@ func SummaryBlock(summary string) string {
 		"\n</previous-summary>\n\nContinue the task from this checkpoint. Do not greet the user, do not acknowledge this summary, and do not re-read files or re-run commands whose results are already recorded above."
 }
 
+// compactToolName is the model-facing name of the active-compaction tool
+// (tools.CompactContextTool). A model-initiated compaction leaves that call and
+// its result as the two NEWEST messages in the context, exactly where
+// RebuildContext walks backwards from.
+const compactToolName = "compact_context"
+
+// stripCompactionCeremony removes the model's own compact_context turn from a
+// history before it competes for the verbatim tail.
+//
+// Without this, a model-initiated compaction spends the surviving "last few
+// messages" on its own ceremony: [.., assistant(compact_context), tool(result)]
+// are the newest two of the three kept slots, so the last real tool call — the
+// thing a resuming reader actually needs verbatim — is pushed out. Worse, the
+// tool result echoes the model's own focus instruction (it can run to several
+// thousand characters), which then eats most of the tail budget. Both are
+// derived data the summary already covers, so they go:
+//
+//   - the compact_context entry is pruned from the assistant's tool_calls (its
+//     text and reasoning stay), and the matching tool result is dropped with it
+//     — so no tool result is ever orphaned from the calls that declared it;
+//   - an assistant message left with neither tool calls nor text is dropped.
+func stripCompactionCeremony(history []provider.Message) []provider.Message {
+	// Call ids of every compact_context invocation: the ids are what pair a
+	// tool result with its call, and an id may be empty on an old record, so
+	// the tool message's own Name is checked as well.
+	compactIDs := make(map[string]bool)
+	for _, m := range history {
+		if m.Role != "assistant" {
+			continue
+		}
+		for _, tc := range m.ToolCalls {
+			if tc.Function.Name == compactToolName && tc.ID != "" {
+				compactIDs[tc.ID] = true
+			}
+		}
+	}
+	out := make([]provider.Message, 0, len(history))
+	for _, m := range history {
+		if m.Role == "tool" && (compactIDs[m.ToolCallID] || m.Name == compactToolName) {
+			continue
+		}
+		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+			kept := make([]provider.ToolCall, 0, len(m.ToolCalls))
+			for _, tc := range m.ToolCalls {
+				if tc.Function.Name != compactToolName {
+					kept = append(kept, tc)
+				}
+			}
+			if len(kept) != len(m.ToolCalls) {
+				if len(kept) == 0 && m.GetText() == "" {
+					continue // an empty assistant turn is noise (and illegal on some providers)
+				}
+				cp := m
+				cp.ToolCalls = kept
+				out = append(out, cp)
+				continue
+			}
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // RebuildContext restarts the conversation from a summary. Input is the
 // context as it was sent for the summarization turn (compaction instruction
 // included). Output is [system][summary][verbatim tail] — the dsh shape, where
@@ -185,7 +248,9 @@ func SummaryBlock(summary string) string {
 // there is nothing to buy by putting it last.
 //
 // Compaction instructions, usage notices and worker briefs are dropped (all three
-// are derived data the next turn re-creates). ok is false when
+// are derived data the next turn re-creates), and so is the model's own
+// compact_context call together with its result (stripCompactionCeremony) — it is
+// the compaction's own ceremony, not recent work. ok is false when
 // nothing could be kept and the caller should keep the original context.
 func RebuildContext(messages []provider.Message, summary string, keep, budget int) (out []provider.Message, ok bool) {
 	return RebuildContextEst(messages, summary, keep, budget, defaultTokenEstimator)
@@ -218,6 +283,9 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 		}
 		history = append(history, m)
 	}
+	// The model's own compact_context turn is not "recent work" — drop it
+	// before the tail walk so the kept slots hold real recent messages.
+	history = stripCompactionCeremony(history)
 	if len(history) == 0 {
 		return messages, false
 	}

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -140,5 +141,16 @@ func (t *CompactContextTool) Execute(ctx context.Context, params map[string]inte
 	if instruction == "" {
 		return NewTextResult("Compaction scheduled. The context will be compressed before the next model call. Continue working; the compressed context takes effect on the next turn."), nil
 	}
-	return NewTextResult(fmt.Sprintf("Compaction scheduled. The context will be compressed before the next model call, focusing on: %q. Continue working; the compressed context takes effect on the next turn.", instruction)), nil
+	// Echo at most a short prefix of the focus: the result travels back into the
+	// context, and a model-authored focus can run to several thousand characters
+	// — repeating it here doubles the cost of a turn that is about to be
+	// summarized anyway.
+	echo := []rune(strings.TrimSpace(instruction))
+	const maxEcho = 200
+	suffix := ""
+	if len(echo) > maxEcho {
+		echo = echo[:maxEcho]
+		suffix = "…"
+	}
+	return NewTextResult(fmt.Sprintf("Compaction scheduled. The context will be compressed before the next model call, focusing on: %q. Continue working; the compressed context takes effect on the next turn.", string(echo)+suffix)), nil
 }
