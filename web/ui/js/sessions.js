@@ -68,11 +68,14 @@ function syncRunning() {
   if (state.sending && state.running) return;
   if (!state.current) {
     // 消息刚发出、会话还没创建完:保持 running,等 session_created 接管
-    if (!state.sending && !state.pendingTask) setRunning(false);
+    if (!state.sending && !state.pendingTask) { setChildrenActive(false); setRunning(false); }
     return;
   }
   const s = state.sessions.find(x => x.session_id === state.current);
   if (!s) return;
+  // active = 本会话自己有任务在跑 → 上锁输入框;children_active = 后台子 agent
+  // 还在跑 → 只画停止按钮,输入框照常能用(见 send.js paintRunButtons)。
+  setChildrenActive(!!s.children_active);
   setRunning(!!s.active);
   // 兜底:SSE 漏掉终结事件(assistant/task_done)时,服务端已收敛为空闲、
   // 本地也没有流式块——把残留的"等待模型响应"转圈清掉(最多等一次 30s 轮询)
@@ -102,10 +105,13 @@ function renderSessions() {
       e.dataTransfer.effectAllowed = "move";
       setGroupCollapsed(false);
     });
-    // 执行中只看服务端的 active 标志(本进程是否有活动任务):
+    // 执行中只看服务端的实时标志(本进程是否有活动任务):
     // 持久化的 status 在进程崩溃/重启后可能停留在 "running",不可信。
-    const dotClass = s.active ? "running" : (["completed", "failed", "interrupted"].includes(s.status) ? s.status : "idle");
-    const statusText = s.active ? "执行中" : { completed: "已完成", failed: "失败", interrupted: "已中断" }[s.status] || "";
+    // 后台子 agent 在跑也算执行中(侧边栏是"这个会话有没有活在干"的口径;
+    // 输入框是否上锁另说,由 active 决定)。
+    const busy = s.active || !!s.children_active;
+    const dotClass = busy ? "running" : (["completed", "failed", "interrupted"].includes(s.status) ? s.status : "idle");
+    const statusText = s.active ? "执行中" : (s.children_active ? "子任务中" : { completed: "已完成", failed: "失败", interrupted: "已中断" }[s.status] || "");
     el.innerHTML =
       '<div class="sess-title-row">' +
       agentAvatarBox("sess-ava", "span") +

@@ -82,7 +82,8 @@ const state = {
   // TODO(设置页):config.Config 加 agent_avatar 字段 + 设置里加上传入口,
   // 存好之后 paintAgentAvatarDom() 和 paintChatAva() 会自动切到图片。
   agentAvatar: "",
-  running: false,     // 当前会话是否有活动任务(以服务端为准)
+  running: false,     // 当前会话是否有活动任务(以服务端为准;只此项上锁输入框)
+  childrenActive: false, // 当前会话是否有后台子 agent 在跑(只画停止按钮,不上锁输入框)
    pendingTask: null,  // 等待 session_created 的 task_id
     recentCreated: [], // 最近收到的 session_created 事件队列(竞态兜底:事件比 POST 响应早到时,响应回来按 task_id 精确匹配接管)
   sending: false,     // 消息已发出、task_started 还没回来(此期间不要用轮询重置 running)

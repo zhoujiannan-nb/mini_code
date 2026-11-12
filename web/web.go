@@ -365,11 +365,18 @@ type SessionSummary struct {
 	// the session (hub task registry). It is the authoritative "running
 	// right now" flag for the UI: a persisted status of "running" can be
 	// stale after a process restart, but an active task never is.
-	Active           bool   `json:"active"`
-	AgentRole        string `json:"agent_role"`
-	Mode             string `json:"mode"`
-	WorkDir          string `json:"work_dir"`
-	ChannelKey       string `json:"channel_key,omitempty"`
+	Active bool `json:"active"`
+	// ChildrenActive is true while a (transitively) descendant sub-agent
+	// session has a live task. It is a SEPARATE flag from Active on purpose:
+	// background sub-agents run in their own child sessions, so the parent is
+	// idle and must stay able to take new messages. The UI paints this as
+	// "运行中" in the sidebar and lights the stop button with it, but it must
+	// never lock the composer — that is what Active is for.
+	ChildrenActive bool   `json:"children_active"`
+	AgentRole      string `json:"agent_role"`
+	Mode           string `json:"mode"`
+	WorkDir        string `json:"work_dir"`
+	ChannelKey     string `json:"channel_key,omitempty"`
 	// WorkerID is the worker (工作大类) the session belongs to; "" = 未分配.
 	WorkerID         string `json:"worker_id,omitempty"`
 	CreatedAt        string `json:"created_at"`
@@ -453,14 +460,15 @@ func (s *server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 子 agent 在独立子会话里跑:父会话自己的回合结束后,只要(孙)子会话
-	// 还有活动任务,父会话也要显示"运行中"(停止按钮行为一致:CancelTask
-	// 本来就会级联取消子任务)。查询失败时退回仅看父会话自身状态。
+	// 还有活动任务,父会话在侧边栏也要显示"运行中",并允许从这里一键停止
+	// (CancelTask 会级联取消子任务)。这是 children_active,不是 active:
+	// 父会话此刻是空闲的,输入框必须继续能用。查询失败时只剩仅看父会话自身。
 	children, _ := s.be.Mgr().GetStore().ChildIDsByParent()
 	out := make([]SessionSummary, 0, len(records))
 	for _, r := range records {
 		sum := s.summarizeSummary(r)
-		if !sum.Active && childrenRunning(s.be.Hub(), r.SessionID, children) {
-			sum.Active = true
+		if !sum.Active {
+			sum.ChildrenActive = childrenRunning(s.be.Hub(), r.SessionID, children)
 		}
 		out = append(out, sum)
 	}
@@ -500,12 +508,11 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	all := sess.SnapshotMessages()
 	sum := s.summarize(rec)
 	if !sum.Active {
-		// 与列表一致:后台子 agent 还在跑时,主会话按"运行中"返回
-		// (前端据此恢复停止按钮;syncRunning 轮询也会随之收敛)。
+		// 与列表一致:后台子 agent 还在跑时,主会话按"有子任务在跑"返回
+		// (前端据此恢复停止按钮;syncRunning 轮询也会随之收敛)。输入框
+		// 不受影响——主会话自己的回合已经结束了。
 		if children, err := s.be.Mgr().GetStore().ChildIDsByParent(); err == nil {
-			if childrenRunning(s.be.Hub(), rec.SessionID, children) {
-				sum.Active = true
-			}
+			sum.ChildrenActive = childrenRunning(s.be.Hub(), rec.SessionID, children)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -960,6 +967,15 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// Count the live sub-agent jobs before the cancel cascades: the UI has to
+	// tell "nothing was running" from "only background sub-agents were" (the
+	// parent's own turn had already ended, so canceled=false there too).
+	kids := 0
+	for _, c := range s.be.Mgr().ListChildrenIDs(id) {
+		if s.be.Hub().ActiveTask(c) {
+			kids++
+		}
+	}
 	canceled := s.be.Hub().CancelTask(id)
 	status := "cancelling"
 	if !canceled {
@@ -969,9 +985,10 @@ func (s *server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		status = "no_active_task"
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":     status,
-		"canceled":   canceled,
-		"session_id": id,
+		"status":            status,
+		"canceled":          canceled,
+		"children_canceled": kids,
+		"session_id":        id,
 	})
 }
 

@@ -153,6 +153,7 @@ async function updateTokenUsage() {
     clearSending();
     saveSession(null);
   // setRunning(false) 已负责按钮与侧边栏刷新,这里不再重复渲染
+  setChildrenActive(false); // 新会话没有后台子任务
   setRunning(false); // 新会话没有运行中的任务;旧会话仍在跑的,点回它可恢复
   liveRemove();
   pendingRemove();
@@ -219,6 +220,8 @@ async function selectSession(id) {
     loadChildren();
     // 执行状态以服务端为准:会话正在跑时恢复停止按钮,并提示任务仍在进行
     // (刷新页面不会中断服务端的任务)。setRunning 已同步按钮/侧边栏/压缩键。
+    // 后台子 agent 在跑只恢复停止按钮,不上锁输入框。
+    setChildrenActive(!!s.children_active);
     setRunning(!!s.active);
     if (s.active) {
       // 刷新不中断服务端任务:历史中已持久化的输出(含工具执行前已完成的回复)

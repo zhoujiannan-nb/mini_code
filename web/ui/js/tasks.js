@@ -10,6 +10,9 @@ function renderTasksPanel() {
   const btn = $("#btn-tasks");
   const kids = state.children || [];
   const running = kids.filter(c => c.active).length;
+  // 子任务面板是「当前会话的子任务」的权威视图:它一刷,停止按钮的后台那一半
+  // 就跟着收敛(派出子任务后不必等会话列表那轮轮询)。
+  if (typeof setChildrenActive === "function") setChildrenActive(running > 0);
   btn.classList.toggle("show", !!state.current && kids.length > 0);
   const cnt = $("#tasks-count");
   cnt.textContent = running > 0 ? running : kids.length;
