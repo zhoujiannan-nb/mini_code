@@ -126,6 +126,7 @@ func (mc *ModelClient) ChatStream(ctx context.Context, messages []Message, tools
 	}
 	mc.provider.ConfigureRequest(&req)
 	mc.applySampling(&req)
+	dropStreamOnlyFields(&req) // no-op while Stream is true
 
 	body, err := json.Marshal(req)
 	if err != nil {

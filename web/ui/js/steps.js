@@ -40,28 +40,34 @@ function stepsStrip() {            // 懒创建折叠条(一张独立卡,逐步�
    return STEPS.det;
 }
 
-function stepsPaint() {
-  if (!STEPS.det) return;
+// stepsPaint:重画折叠条的摘要行。传 det 就画那一条(停表时要把改了标注的旧条也刷新一遍),
+// 不传画当前条。挂在「正在执行」卡里的那几步只算进当前条 —— 旧条的步数与此刻在跑的东西无关。
+function stepsPaint(det) {
+  det = det || STEPS.det;
+  if (!det) return;
+  const mine = det === STEPS.det;
+  const body = mine ? STEPS.body : det.querySelector(".m-steps-body");
   /* 步数一律从 DOM 数,不用累加器。
      曾经的 bug:实时步骤住在折叠条外面的「正在执行」卡里,累加器在它还没住进来时
      就 +1;而折叠条是懒创建的,创建时 stepsStripReset() 把已经算过的数清零 —— 于是
      界面出现"执行过程 0 步",点开却躺着一堆步骤。DOM 里有几条就是几条,永远对得上。 */
-  let n = STEPS.body ? STEPS.body.children.length : 0;
-  if (LIVE.body && LIVE.body.isConnected) n += LIVE.body.children.length;
-  const th = STEPS.body ? STEPS.body.querySelectorAll(".m-think").length : 0;
-  const last = stepsLastHint();
-  STEPS.det.querySelector("summary").innerHTML =
+  let n = body ? body.children.length : 0;
+  if (mine && LIVE.body && LIVE.body.isConnected) n += LIVE.body.children.length;
+  const th = body ? body.querySelectorAll(".m-think").length : 0;
+  const last = stepsLastHint(body);
+  det.querySelector("summary").innerHTML =
     '<span class="ms-t">执行过程</span>' +
     '<span class="ms-n">' + n + ' 步</span>' +
     (th ? '<span class="ms-n">' + th + ' 次思考</span>' : '') +
     (last ? '<span class="ms-last">' + esc(last) + '</span>' : '') +
-    '<span class="ms-hint">' + (STEPS.det.open ? "收起" : "展开") + '</span>';
+    '<span class="ms-hint">' + (det.open ? "收起" : "展开") + '</span>';
 }
 // stepsLastHint:最近一步的"名字 + 回执摘要"。折叠条平时是收着的,这一行让
 // "刚跑了哪个工具、结果如何"不用点开也看得见(写文件的回执尤其想一眼看到)。
-function stepsLastHint() {
-  if (!STEPS.body) return "";
-  const kids = [].slice.call(STEPS.body.children);
+function stepsLastHint(body) {
+  body = body || STEPS.body;
+  if (!body) return "";
+  const kids = [].slice.call(body.children);
   for (let i = kids.length - 1; i >= 0; i--) {
     const name = kids[i].querySelector(".t-name");
     if (!name) continue;                       // 纯思考步骤不当"最近一步"
@@ -196,6 +202,70 @@ function stepsLivePush(html) {
   }
   return d;
 }
+/* ---- 反向搬运:把"此刻在跑"的那一步从折叠条里捞回「正在执行」卡 ----
+   历史回显是在 histRendering 下建的:没有回执的调用直接落进折叠条(标"待返回"),
+   事件账本对账随后把它改回"执行中 + 计时",却把它留在折叠条里 ——
+   于是同一轮任务里刷过页面(或切走过再切回来)就看不到「正在执行」卡,
+   折叠起来连转圈和计时都看不见;没刷过的人看到的却是另一副样子。
+   stepsUnfoldStep 把它搬回卡里,并还原成实时路径的同一个形状:
+   摊开、展开区只放参数预览/实时输出、参数全文交给 st._args ——
+   跑完仍由 stepsLiveDone 原路搬回折叠条,位置与步数都不变。 */
+
+// stepsReclaimStrip:认领这一步所在的折叠条。renderHistory 收尾时 stepsClose()
+// 把折叠条引用丢了(卡片还躺在界面里),不认领的话稍后 stepsStrip() 会在界面底下
+// 另起第二条「执行过程」,同一轮任务被拆成两条。
+function stepsReclaimStrip(st) {
+  const det = st.closest("details.m-steps");
+  if (!det || STEPS.det === det) return;
+  STEPS.det = det;
+  STEPS.body = det.querySelector(".m-steps-body");
+  // 已经并进答案卡的折叠条(ms-inline)不能当"独立外壳"认领:
+  // stepsMergeInto 收尾会 STEPS.card.remove(),那会把整张答案卡一起删掉。
+  STEPS.card = det.classList.contains("ms-inline") ? null : det.closest(".msg");
+}
+
+function stepsUnfoldStep(st, args) {
+  if (!st || st.classList.contains("ms-live-step")) return st;
+  stepsReclaimStrip(st);
+  const det = st.closest("details.m-steps");
+  const anchor = STEPS.card || (det && det.closest(".msg")); // 搬之前记位置
+  const body = st.querySelector(".ms-step-body");
+  const argsEl = body && body.querySelector(".ms-args");
+  // 参数全文交给 st._args:运行中的展开区只放实时输出/参数预览(与实时路径一致),
+  // 搬回折叠条时由 stepsFoldStep 补回全文,免得同一份参数在卡里、条里各摆一份。
+  let a = st._args || (argsEl ? String(argsEl.textContent) : "");
+  if (args != null) a = typeof args === "string" ? args : JSON.stringify(args);
+  st._args = a || null;
+  if (argsEl) argsEl.remove();
+  if (body && !body.querySelector(".ms-out"))
+    body.insertAdjacentHTML("afterbegin", '<pre class="ms-out" hidden></pre>');
+  st.classList.add("ms-live-step");
+  st._folded = false; // 万一它曾被搬回去:允许再搬一次,别让 stepsLiveDone 直接忽略它
+  st.open = true; // 正在跑的那步摊开展示
+  stepsLiveStrip().appendChild(st);
+  // 顺序永远是"过程列表在上、正在执行的在下":紧贴它所属的那条折叠条,
+  // 别让它掉到刷新时那张"任务正在执行中"状态条下面去。
+  if (anchor && LIVE.card && anchor !== LIVE.card && anchor.nextSibling !== LIVE.card)
+    anchor.after(LIVE.card);
+  const name = st.dataset.name || "";
+  const work = st.querySelector(".ms-work");
+  const hint = toolWorkHint(name, a);
+  if (!stepsLivePreview(st, name, a) && work && hint) {
+    work.textContent = hint;
+    work.title = "这次要写入的量,发起调用时就已知;真正的回执要等写完";
+  }
+  stepsPaint();
+  // 折叠条被搬空了(这一轮目前只有正在跑的这一步):整条撤掉,
+  // 别在界面上留一条"执行过程 0 步"的空条;回执到达时 stepsStrip 会懒建一条。
+  if (STEPS.body && STEPS.body.children.length === 0) {
+    if (STEPS.card) STEPS.card.remove();        // 独立的外壳:连壳一起撤
+    else if (STEPS.det) STEPS.det.remove();     // 并进了答案卡:只摘空条,绝不动卡片
+    stepsStripReset();
+  }
+  if (nearBottom()) scrollBottom(false, true);
+  return st;
+}
+
 // stepsLiveDone:这一步跑完了,搬回折叠条。折叠卡可能是这一步才懒创建的
 // (会话开头第一个动作就是工具),所以顺手把「正在执行」卡挪到它下面,
 // 顺序永远是"过程列表在上、正在执行的在下"。
@@ -532,6 +602,10 @@ function stepsAddTool(name, args, result, prep) {
   const st = live ? stepsLivePush(html) : stepsPush(html, false, "details");
   if (live) stepsPaint(); // 折叠条已在时,「正在执行」卡里这步立刻算进步数
   st.dataset.name = name || "";
+  // 占位行(刷新出来的"待返回")也留下参数全文:对账若把这一步恢复成"执行中"
+  // 并搬出折叠条,展开区的参数预览要靠它。已有结果的终态步骤不存(折叠条里
+  // 本来就有一份,再存等于两份)。
+  if (result == null || String(result) === "(历史)") st._args = a;
   if (prep) {
     // 参数还在生成:不计时(计时从发起执行算起),展开区交给 appendToolArgs 填
     st.dataset.prep = "1";
@@ -663,6 +737,7 @@ function stepsRunStop() {
 // stepsRunFreeze:任务已经终止(出了回复/失败/被中断),在跑的那些步骤不会再有
 // 结果回来。停掉计时,把"已运行 Xs"停在最后一次的数值上,别再往上加。
 function stepsRunFreeze() {
+  const repaint = []; // 改了标注的折叠条,末尾统一重抄一遍摘要
   for (const st of [].slice.call(document.querySelectorAll('.ms-step[data-live="1"]'))) {
     st.dataset.live = "0";
   }
@@ -674,9 +749,17 @@ function stepsRunFreeze() {
   // "跑了、但结果没回到界面"这个真相写在脸上(库里的真相也正是如此)。
   // 唯一的例外:参数还在生成、工具压根没发起的"预备步骤"——它没执行过。
   for (const st of [].slice.call(messagesEl().querySelectorAll('.ms-step[data-soft="1"]'))) {
+    // 等回执这件事到此为止:打个"已收尾"的记号。数据账本对账挑候选步骤时跳过它们,
+    // 否则下一轮任务里同名调用会把这条陈年旧行复活成"执行中"、还搬进「正在执行」卡。
+    st.dataset.frozen = "1";
     if (st.dataset.prep === "1") { stepsTag(st, "dim", "未执行"); continue; }
     stepsTag(st, "dim", "已执行·未收到回执");
+    const d = st.closest("details.m-steps");
+    if (d && repaint.indexOf(d) < 0) repaint.push(d);
   }
+  // 折叠条摘要上那行"最近一步"抄的是步骤的标注:标注改了就得跟着重抄,
+  // 否则条子收着的时候还写着"待返回",点开却是一条"已执行·未收到回执"。
+  for (const d of repaint) stepsPaint(d);
 }
 
 function stepsFill(st, result) {   // 真结果写进步骤内部(折起时看不到,点开才展开)

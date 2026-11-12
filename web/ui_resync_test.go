@@ -130,6 +130,64 @@ func TestResyncRestoresRunClock(t *testing.T) {
 	}
 }
 
+// TestRefreshKeepsRunningStepOutsideStrip pins the "有时候这样有时候不是"
+// report: the streaming path keeps the running tool step OUTSIDE the
+// collapsible (its own「正在执行」card, folded away only once the receipt
+// lands), but a refreshed/reopened running session renders history with
+// histRendering, which drops the unanswered call INTO the strip — and the
+// ledger resync then re-tagged it「执行中」with a running clock while leaving
+// it in there. Same task, two different views: whoever reloaded lost the
+// spinner and the clock behind a collapsed bar. resync must now hand the step
+// to stepsUnfoldStep, which moves it back into the live card in exactly the
+// shape the streaming path builds (open, args preview in the expanded body,
+// full args carried in st._args for the trip back).
+func TestRefreshKeepsRunningStepOutsideStrip(t *testing.T) {
+	js := jsModulesForTest(t)
+
+	unfold := jsFunc(t, js, "stepsUnfoldStep")
+	for _, want := range []string{"stepsLiveStrip()", "ms-live-step", "st.open = true", "stepsLivePreview("} {
+		if !strings.Contains(unfold, want) {
+			t.Errorf("stepsUnfoldStep must rebuild the live-step shape (missing %q):\n%s", want, unfold)
+		}
+	}
+	// The live card's expanded body holds only output/preview: the args block
+	// goes with it as st._args so stepsFoldStep can put it back once folded.
+	if !strings.Contains(unfold, "st._args") || !strings.Contains(unfold, "argsEl.remove()") {
+		t.Errorf("stepsUnfoldStep must carry the args out of the expanded body:\n%s", unfold)
+	}
+	// Pulling the only step out must not leave a「执行过程 0 步」bar behind.
+	if !strings.Contains(unfold, "children.length === 0") || !strings.Contains(unfold, "stepsStripReset()") {
+		t.Errorf("stepsUnfoldStep must drop an emptied strip:\n%s", unfold)
+	}
+	// Reclaiming the strip (renderHistory's stepsClose dropped the refs) must
+	// never adopt a strip merged into an answer card as the standalone shell:
+	// stepsMergeInto would then remove() the answer card itself.
+	rec := jsFunc(t, js, "stepsReclaimStrip")
+	if !strings.Contains(rec, "ms-inline") || !strings.Contains(rec, "STEPS.card = ") {
+		t.Errorf("stepsReclaimStrip must refuse an inline strip as STEPS.card:\n%s", rec)
+	}
+
+	// The resync only resurrects a step the ledger actually says is
+	// unanswered, and only among the steps that can still be waiting.
+	fn := jsFunc(t, js, "resyncRunning")
+	if !strings.Contains(fn, "stepsUnfoldStep(") {
+		t.Errorf("resyncRunning must move the recovered step out of the collapsible:\n%s", fn)
+	}
+	if !strings.Contains(fn, "details.m-steps") || !strings.Contains(fn, "st.dataset.frozen") {
+		t.Errorf("resyncRunning must scope candidates to the live pool and the newest strip:\n%s", fn)
+	}
+	if !strings.Contains(fn, "const pending = ") {
+		t.Errorf("resyncRunning must recover only calls the ledger says are unanswered:\n%s", fn)
+	}
+
+	// A frozen leftover is terminal: freezing stamps a marker so a later run
+	// cannot re-spin a years-old row inside the live card.
+	freeze := jsFunc(t, js, "stepsRunFreeze")
+	if !strings.Contains(freeze, `st.dataset.frozen = "1"`) {
+		t.Errorf("stepsRunFreeze must mark leftover steps as terminal:\n%s", freeze)
+	}
+}
+
 // TestBootRestoresCurrentSession pins the refresh restore: the worker bucket
 // must be restored BEFORE the session list is fetched (otherwise boot always
 // lists the unassigned bucket while the bar shows the last worker), and the

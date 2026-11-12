@@ -130,6 +130,19 @@ func (mc *ModelClient) applySampling(req *chatRequest) {
 	}
 }
 
+// dropStreamOnlyFields strips the fields that are only legal on a streaming
+// call. Providers add stream_options.include_usage unconditionally in
+// ConfigureRequest because their main traffic streams, but a non-streaming
+// request that carries it is a hard 400 on vLLM/SGLang ("Stream options can
+// only be defined when `stream=True`") — which silently killed every
+// non-streaming call, the continue guard's judge included. The strip runs
+// after ConfigureRequest so the providers keep their tests and their default.
+func dropStreamOnlyFields(req *chatRequest) {
+	if !req.Stream {
+		req.StreamOptions = nil
+	}
+}
+
 // WithReasoning returns a client whose provider carries an explicit thinking
 // depth (thinking switch + reasoning_effort), leaving the shared registry client
 // untouched. It backs two things: the per-session thinking override set from the
@@ -249,6 +262,7 @@ func (mc *ModelClient) Chat(ctx context.Context, messages []Message, tools []Too
 	}
 	mc.provider.ConfigureRequest(&req)
 	mc.applySampling(&req)
+	dropStreamOnlyFields(&req)
 
 	body, err := json.Marshal(req)
 	if err != nil {

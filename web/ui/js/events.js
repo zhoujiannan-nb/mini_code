@@ -197,7 +197,24 @@ async function resyncRunning() {
     else if (ev.type === "tool/call") { lastCall[nm] = { i: i, t: parseEvTime(ev.created_at), args: p.args }; }
   });
   const used = {};
-  for (const st of [].slice.call(messagesEl().querySelectorAll('.ms-step[data-soft="1"]'))) {
+  /* 候选 = 此刻真在等的步骤:「正在执行」卡里的 + 最新一条折叠条里的。
+     更早的折叠条属于上一轮任务:全文档去扫,上一轮那条同名旧行会抢走本轮的
+     结果,还会被复活成"执行中"搬进「正在执行」卡(界面凭空多一步在跑)。
+     任务已经结束时照旧全文档扫:那时只填结果 —— 结果什么时候到都是真相,
+     而且不会复活任何步骤。 */
+  const cands = [];
+  if (data.active) {
+    if (LIVE.body && LIVE.body.isConnected)
+      cands.push.apply(cands, [].slice.call(LIVE.body.querySelectorAll('.ms-step[data-soft="1"]')));
+    const strips = messagesEl().querySelectorAll("details.m-steps");
+    const newest = strips.length ? strips[strips.length - 1] : null;
+    for (const st of (newest ? [].slice.call(newest.querySelectorAll('.ms-step[data-soft="1"]')) : [])) {
+      if (st.dataset.frozen !== "1" && cands.indexOf(st) < 0) cands.push(st);
+    }
+  } else {
+    cands.push.apply(cands, [].slice.call(messagesEl().querySelectorAll('.ms-step[data-soft="1"]')));
+  }
+  for (const st of cands) {
     const name = st.dataset.name || "tool";
     let filled = false;
     for (let i = 0; i < done.length; i++) {
@@ -212,7 +229,16 @@ async function resyncRunning() {
     // 计时起点从事件账本的 tool/call 时刻来——刷新不该把已经跑了 260s
     // 的调用重置成 0s,账本里那个 created_at 就是它真正的开始。
     const c = lastCall[name];
-    const t0 = c && (lastRes[name] === undefined || c.i > lastRes[name]) ? c.t : 0;
+    // "此刻在跑" = 账本说这次调用还没有回音(最后一次 tool/call 排在同名
+    // tool/result 之后)。账本里压根没有 tool/call(老会话)时无从判断,
+    // 退回原行为:照样挂转圈。
+    const pending = !!c && (lastRes[name] === undefined || c.i > lastRes[name]);
+    if (pending || !Object.keys(lastCall).length) {
+      // 这一步此刻正在跑 → 搬出折叠条,住回「正在执行」卡:与不刷新的实时路径
+      // 同一个样子(转圈、计时、展开区都在折叠条外面),跑完再自动搬回去。
+      stepsUnfoldStep(st, c && c.args);
+    }
+    const t0 = pending ? c.t : 0;
     if (t0) {
       st.dataset.t0 = String(t0);
       if (!st.dataset.tmo) { const lim = toolTimeoutSec(c.args); if (lim) st.dataset.tmo = String(lim); }

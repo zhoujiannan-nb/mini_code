@@ -3,6 +3,7 @@
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +25,11 @@ import (
 type guardScript struct {
 	mainSSE      []string // one SSE payload per main (stream=true) request
 	judgeAnswers []string // judge (stream=false) verdicts, in order
+	// judgeRaw answers a judge call with a whole completion body, for the
+	// shapes a plain verdict word cannot express (a thinking model that
+	// leaves content empty and answers in reasoning_content). Wins over
+	// judgeAnswers when set.
+	judgeRaw []string
 }
 
 type guardRig struct {
@@ -40,19 +46,39 @@ func newGuardRig(t *testing.T, script guardScript) *guardRig {
 	rig := &guardRig{}
 	var mainN, judgeN int64
 	rig.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
 		var body struct {
-			Stream   bool `json:"stream"`
+			Stream        bool `json:"stream"`
+			StreamOptions *struct {
+				IncludeUsage bool `json:"include_usage"`
+			} `json:"stream_options"`
 			Messages []struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"messages"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.Unmarshal(raw, &body)
 		if !body.Stream {
+			// vLLM/SGLang reject stream_options on a non-streaming call, and
+			// the judge IS such a call: reproduce the 400 so a regression
+			// shows up as a failing test instead of a silently disabled guard.
+			if body.StreamOptions != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":{"message":"Stream options can only be defined when ` + "`stream=True`" + `. (parameter=stream_options)","type":"BadRequestError"}}`))
+				return
+			}
 			// Judge call: record the user payload, answer with the next verdict.
 			n := atomic.AddInt64(&judgeN, 1)
 			atomic.StoreInt64(&rig.judgeReqs, n)
 			idx := int(n - 1)
+			if len(script.judgeRaw) > 0 {
+				if idx >= len(script.judgeRaw) {
+					idx = len(script.judgeRaw) - 1
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(script.judgeRaw[idx]))
+				return
+			}
 			if idx >= len(script.judgeAnswers) {
 				idx = len(script.judgeAnswers) - 1
 			}
@@ -262,5 +288,36 @@ func TestParseJudgeVerdict(t *testing.T) {
 		if v != c.verdict || ok != c.ok {
 			t.Errorf("parseJudgeVerdict(%q) = (%v,%v), want (%v,%v)", c.in, v, ok, c.verdict, c.ok)
 		}
+	}
+}
+
+// TestContinueGuardJudgeVerdictFromReasoning: a thinking judge can answer with
+// an EMPTY content and leave the one word in reasoning_content — the field logs
+// showed this as `answer="" unfinished=false parsed=false`, i.e. every such
+// verdict read as "finished" and the turn closed on a narration-only stop. An
+// unparseable answer must fall back to the reasoning text and still steer.
+func TestContinueGuardJudgeVerdictFromReasoning(t *testing.T) {
+	rig := newGuardRig(t, guardScript{
+		mainSSE: []string{cgSSETool, cgSSENarr, cgSSETool, cgSSEFinal},
+		judgeRaw: []string{
+			`{"choices":[{"message":{"content":"","reasoning_content":"The reply promises to grep the night scripts and no tool call did that, so the verdict is true."},"finish_reason":"stop"}]}`,
+			`{"choices":[{"message":{"content":"false"},"finish_reason":"stop"}]}`,
+		},
+	})
+	res, err := rig.loop.Run(context.Background(), "system", "check the sc_ switch", nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got error: %q", res.Error)
+	}
+	if got := atomic.LoadInt64(&rig.judgeReqs); got != 2 {
+		t.Fatalf("expected 2 judge calls, got %d", got)
+	}
+	if got := atomic.LoadInt64(&rig.mainReqs); got != 4 {
+		t.Fatalf("a reasoning-only verdict must steer, got %d main requests (want 4)", got)
+	}
+	if plain, _ := rig.probe.counts(); plain != 2 {
+		t.Fatalf("expected the tool to run twice, got %d", plain)
 	}
 }

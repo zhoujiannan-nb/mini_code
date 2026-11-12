@@ -21,8 +21,9 @@ import (
 //     one-shot answers are never touched and no judge call is wasted;
 //  2. one-word judge call: a small self-contained non-streaming request
 //     (no tools, low temperature) asks whether the trailing text promises
-//     work that no tool call performed; any error or unparseable verdict
-//     means "finished" (never trap a completed task in the guard);
+//     work that no tool call performed; an empty answer falls back to the
+//     model's reasoning, and any error or still-unparseable verdict means
+//     "finished" (never trap a completed task in the guard);
 //  3. steer + stall detection: a "true" verdict appends the assistant text
 //     and a steer user message so the loop runs another step; if a steer
 //     produced no new tool call before the next stop, the model ignored it
@@ -112,10 +113,20 @@ func (l *AgentLoop) judgeUnfinished(ctx context.Context, trailing string, messag
 		slog.Warn("continue guard: judge api error, letting the turn close", "api_error", respErrText(resp))
 		return false
 	}
-	// Only the answer field votes: reasoning often meanders over "true"
-	// and "false" in prose and would make the verdict noise.
+	// The answer field votes first: reasoning often meanders over "true"
+	// and "false" in prose and would make the verdict noise. But a thinking
+	// model can answer with an EMPTY content and leave the one word in
+	// reasoning_content, and reading that as "no verdict → finished" closes
+	// the turn on a narration-only stop, so an unparseable answer falls back
+	// to the reasoning text.
 	verdict, parsed := parseJudgeVerdict(resp.Content)
-	slog.Info("continue guard: judge verdict", "answer", strings.TrimSpace(resp.Content), "unfinished", verdict, "parsed", parsed)
+	source := "content"
+	answer := resp.Content
+	if !parsed {
+		verdict, parsed = parseJudgeVerdict(resp.ReasoningContent)
+		source, answer = "reasoning", resp.ReasoningContent
+	}
+	slog.Info("continue guard: judge verdict", "source", source, "answer", clip(answer, 160), "unfinished", verdict, "parsed", parsed)
 	return verdict
 }
 
