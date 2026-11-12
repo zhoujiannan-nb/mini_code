@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/user/mini_code/job"
 	"github.com/user/mini_code/util"
 )
 
@@ -70,33 +71,44 @@ type ExecTool struct {
 	timeout    int
 	workingDir string
 
-	// Persistent shell session (Windows): one long-lived cmd.exe per session
-	// so exec calls pay no process cold start and keep cwd/env state. See
-	// persistent_shell.go. psMu guards the lazy spawn; command serialization
-	// lives on the shell itself.
+	// Shell pool (Windows): long-lived cmd.exe processes per session, so exec
+	// calls pay no process cold start and keep cwd/env state across calls. See
+	// persistent_shell.go for the protocol and shell_pool.go for who may hold a
+	// shell. psMu guards the lazy pool and the feature-off flags.
 	psMu          sync.Mutex
-	ps            *persistentShell
+	pool          *shellPool
 	psFailures    int
 	noPersistentS bool
+
+	// jobs is this session's background-work registry: the long commands exec
+	// cannot finish inside their wait are registered here rather than killed,
+	// and the job_* tools read the same registry. Built with the tool, which is
+	// built once per session.
+	jobs *job.Registry
 }
 
 func NewExecTool(timeout int, workingDir string) *ExecTool {
 	if timeout <= 0 {
 		timeout = 60
 	}
-	t := &ExecTool{timeout: timeout, workingDir: workingDir}
+	t := &ExecTool{timeout: timeout, workingDir: workingDir, jobs: job.New()}
 	// Escape hatch for A/B runs and troubleshooting: MINICODE_NO_PERSISTENT_
 	// SHELL=1 pins exec to the classic one-shot cmd.exe path.
 	t.noPersistentS = os.Getenv("MINICODE_NO_PERSISTENT_SHELL") == "1"
 	return t
 }
 
+// Jobs returns the registry this tool hands its long commands to. The session
+// takes it once, at wiring time, to install the ledger-and-notification hook and
+// to give the job_* tools the same view of the same work.
+func (t *ExecTool) Jobs() *job.Registry { return t.jobs }
+
 func (t *ExecTool) Name() string { return "exec" }
 func (t *ExecTool) Description() string {
 	if runtime.GOOS == "windows" {
-		return "Execute a shell command and return stdout/stderr plus exit code. The shell is cmd.exe (Windows): use dir/type/findstr/copy/move/ren and && to chain commands, not Unix syntax. The session is persistent: cd and set carry over to later calls, so change directory once instead of passing working_dir every time. On timeout the command's process tree is killed and the shell restarts."
+		return "Execute a shell command and return stdout/stderr plus exit code. The shell is cmd.exe (Windows): use dir/type/findstr/copy/move/ren and && to chain commands, not Unix syntax. The session is persistent: cd and set carry over to later calls, so change directory once instead of passing working_dir every time. A command that outlives its timeout is NOT killed: it keeps running as a background job, and you are notified when it finishes (read it with job_output). Pass run_in_background to start a command that way on purpose."
 	}
-	return "Execute a shell command and return stdout/stderr plus exit code. The shell is sh (POSIX). On timeout the whole process tree is killed."
+	return "Execute a shell command and return stdout/stderr plus exit code. The shell is sh (POSIX). A command that outlives its timeout keeps running as a background job, and you are notified when it finishes (read it with job_output)."
 }
 func (t *ExecTool) IsHidden() bool { return false }
 func (t *ExecTool) Parameters() map[string]interface{} {
@@ -105,8 +117,9 @@ func (t *ExecTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"command":     map[string]interface{}{"type": "string", "description": "Shell command to execute"},
 			"working_dir": map[string]interface{}{"type": "string", "description": "Working directory"},
-			"timeout":     map[string]interface{}{"type": "integer", "description": "Timeout in seconds (default 120, max 600)", "minimum": 1, "maximum": 600},
+			"timeout":     map[string]interface{}{"type": "integer", "description": "Seconds to wait for the command in the foreground (default 120, max 600). Running out of this does NOT kill the command: it keeps running as a background job you are notified about.", "minimum": 1, "maximum": 600},
 			"input":       map[string]interface{}{"type": "string", "description": "Optional text to feed to the command's standard input (stdin). Preferred over shell redirection for piping data into a command reliably."},
+			"run_in_background": map[string]interface{}{"type": "boolean", "description": "Start the command and return at once with a job id, instead of waiting for it. Use for work whose result you do not need this second (builds, installs, test suites, watchers); you will be told when it finishes."},
 		},
 		"required": []string{"command"},
 	}
@@ -129,48 +142,27 @@ func (t *ExecTool) ExecuteStreamed(ctx context.Context, params map[string]interf
 // the interface can show progress while the command is still running; the final
 // result is still built from the complete buffered output.
 func (t *ExecTool) run(ctx context.Context, params map[string]interface{}, sink func(string)) (*ToolResult, error) {
-	command, _ := params["command"].(string)
-	if command == "" {
-		return nil, fmt.Errorf("missing command")
+	spec, bad, err := t.execSpec(params)
+	if err != nil {
+		return nil, err
 	}
-
-	cwd := t.workingDir
-	cwdExplicit := ""
-	if wd, ok := params["working_dir"].(string); ok && wd != "" {
-		cwd = wd
-		cwdExplicit = wd
+	if bad != nil {
+		return bad, nil
 	}
-	timeout := t.timeout
-	if v, ok := params["timeout"].(float64); ok && int(v) > 0 {
-		timeout = int(v)
-	}
-	if timeout > 600 {
-		timeout = 600
-	}
-
-	if err := t.guardCommand(command); err != "" {
-		return NewTextResult(err), nil
-	}
-
-	// Guard against commands that exceed the shell command-line limit. On
-	// Windows, cmd.exe accepts at most 8191 characters for the whole command
-	// line; a command this long fails with a cryptic "filename or extension
-	// is too long" error that does not say what to do. Point the model at the
-	// real fix: write the command to a script file and run that file.
-	if len(command) > 8000 {
-		return NewTextResult(fmt.Sprintf("Error: command is too long (%d chars); the shell command-line limit is ~8191. Write the command to a script file (.bat/.py/.sh) with the write_file tool, then run that file instead.", len(command))), nil
-	}
+	command, cwd, cwdExplicit, timeout := spec.command, spec.cwd, spec.cwdParam, spec.timeout
 
 	// Persistent shell first (Windows): the same command over a long-lived
 	// cmd.exe, no cold start, shell state carried over. Commands that must
 	// not run that way (stdin `input`, batch for-loops, unencodable text, a
 	// repeatedly failing shell) fall through to the one-shot path below.
-	// cwdParam is the EXPLICIT working_dir only — never the tool default:
-	// one-shot pins every call to workingDir, but the persistent shell must
+	// cwdExplicit is the EXPLICIT working_dir only — never the tool default:
+	// one-shot pins every call to workingDir, but the persistent pool must
 	// let the model's `cd` stand, or its whole point (carried-over state)
 	// would be undone by the default directory on every next call.
-	if res, handled := t.tryPersistent(ctx, command, cwdExplicit, timeout, params, sink); handled {
-		return res, nil
+	if t.persistentWanted(params, command) {
+		if res := t.runOnShell(ctx, command, cwdExplicit, timeout, sink); !res.fallback {
+			return NewTextResult(res.text), nil
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
@@ -240,7 +232,7 @@ func (t *ExecTool) run(ctx context.Context, params map[string]interface{}, sink 
 	}
 	defer detachTree()
 
-	err := cmd.Wait()
+	err = cmd.Wait()
 	exitCode := 0
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {

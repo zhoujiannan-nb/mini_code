@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/user/mini_code/util"
 )
 
 // Persistent shell session for the exec tool (dsh's "persistent bash/pwsh"
@@ -91,6 +93,11 @@ type persistentShell struct {
 	errR     *os.File // our end of the stderr pipe (read)
 	killTree func()   // releases the job object (kills the whole tree)
 	waitOnce sync.Once
+
+	// applyEnv is the shell state the pool computed for this lease: `set` lines
+	// that bring a fresh or recycled cmd.exe up to the session's environment. It
+	// runs once, before the command, and is cleared whether or not it succeeded.
+	applyEnv []string
 
 	// stderr arrives asynchronously; errMu guards the per-command snapshot
 	// and the live-feed hook (set only while a command runs).
@@ -329,6 +336,23 @@ func (ps *persistentShell) exec(ctx context.Context, command, cwd string, timeou
 	defer cancel()
 	preCwd := ps.cwd
 
+	// Replay the session's shell state before anything else. A shell that was
+	// just spawned (or just restarted after a kill) has the environment the
+	// process started with, not the one the model built up call by call; and a
+	// second shell for a concurrent command has neither. Replaying the `set`
+	// diff is what lets "the session keeps its state" stay true across more than
+	// one process. Failure here means the command never ran, so the caller is
+	// still free to run it some other way.
+	if lines := ps.applyEnv; len(lines) > 0 {
+		ps.applyEnv = nil
+		envCtx, envCancel := context.WithTimeout(ctx, shellCdWait)
+		st, _ := ps.runLocked(envCtx, "", strings.Join(lines, " && "), nil)
+		envCancel()
+		if st.kind != kindOK {
+			return persistentReport{startFailed: true, preCwd: preCwd}
+		}
+	}
+
 	if cwd != "" && !sameDir(ps.cwd, cwd) {
 		cdLine := `cd /d "` + filepath.Clean(cwd) + `"`
 		cdCtx, cdCancel := context.WithTimeout(ctx, shellCdWait)
@@ -435,91 +459,178 @@ func (ps *persistentShell) runLocked(ctx context.Context, command, line string, 
 
 // ---- exec tool integration ----
 
-// Close releases the persistent shell. Even without it nothing leaks — the
-// job object kills the shell when the process exits, and the idle reaper
-// catches abandoned sessions — but Close frees the shell (and its hold on
-// the working directory) right away. Idempotent; safe before any command
-// ever ran.
+// Close releases the session's shells. Even without it nothing leaks — the job
+// object kills each shell when the process exits, and the idle reaper catches
+// abandoned sessions — but Close frees the shells (and their hold on the working
+// directory) right away. Background work is NOT canceled here: whoever owns the
+// job registry cancels it first, so a killed command gets a verdict instead of a
+// vanished process. Idempotent; safe before any command ever ran.
 func (t *ExecTool) Close() error {
-	t.psMu.Lock()
-	ps := t.ps
-	t.ps = nil
-	t.psMu.Unlock()
-	if ps == nil {
-		return nil
+	if p := t.takePool(); p != nil {
+		p.close()
 	}
-	shellTracker.mu.Lock()
-	delete(shellTracker.live, ps)
-	shellTracker.mu.Unlock()
-	ps.mu.Lock()
-	ps.teardownLocked()
-	ps.mu.Unlock()
 	return nil
 }
 
-// shellFor lazily builds the session's shell handle (spawn itself is lazy
-// inside exec). Guarded by t.psMu; per-ExecTool means per-session.
-func (t *ExecTool) shellFor() *persistentShell {
+// poolFor lazily builds the session's shell pool. Per-ExecTool means
+// per-session, and the pool — not any one shell — is what holds the session's
+// cwd and environment.
+func (t *ExecTool) poolFor() *shellPool {
 	t.psMu.Lock()
 	defer t.psMu.Unlock()
-	if t.ps == nil {
-		t.ps = &persistentShell{spawnDir: t.workingDir}
-		trackShell(t.ps)
+	if t.pool == nil {
+		t.pool = newShellPool(t.workingDir)
 	}
-	return t.ps
+	return t.pool
 }
 
-// tryPersistent runs one exec call on the persistent shell. handled=false
-// means "this call belongs to the one-shot path" (feature off, stdin
-// payload, batch for-loop, unencodable text, or a shell that failed to
-// start — a pre-start failure never ran the command, so falling back cannot
-// double-execute it).
-func (t *ExecTool) tryPersistent(ctx context.Context, command, cwd string, timeout int, params map[string]interface{}, sink func(string)) (*ToolResult, bool) {
-	if t.noPersistentS || !persistentSupported() {
-		return nil, false
+// takePool detaches the pool so Close can tear it down without racing a command
+// that is still using it.
+func (t *ExecTool) takePool() *shellPool {
+	t.psMu.Lock()
+	p := t.pool
+	t.pool = nil
+	t.psMu.Unlock()
+	return p
+}
+
+// run leases the shell and runs one command on it. The lease carries the
+// environment replay (applied by exec, before the command) and the directory the
+// session believes it is in, so a command never has to care which cmd.exe — or
+// whether a brand-new one — is carrying it.
+func (l *shellLease) run(ctx context.Context, command, cwd string, timeoutSec int, sink func(string)) persistentReport {
+	ps := l.slot.ps
+	if len(l.lines) > 0 {
+		ps.mu.Lock()
+		ps.applyEnv = l.lines
+		ps.mu.Unlock()
+		l.lines = nil
+	}
+	rep := ps.exec(ctx, command, l.targetCwd(cwd), timeoutSec, sink)
+	l.setCwd(rep.out.cwd)
+	// Read the environment back only when the command spelled `set`: that is the
+	// only way the session's state can have moved, and the read costs a round
+	// trip. Anything else leaves the pool's belief untouched, which is correct
+	// precisely because nothing could have changed it.
+	if rep.out.kind == kindOK && reSetUse.MatchString(command) {
+		l.readEnv(ctx)
+	}
+	return rep
+}
+
+// readEnv snapshots the leased shell's environment through the same protocol the
+// command itself uses. `set` with no arguments lists NAME=VALUE lines; it is a
+// cmd.exe internal, so it costs no process spawn.
+func (l *shellLease) readEnv(ctx context.Context) {
+	rep := l.slot.ps.exec(ctx, "set", "", int(shellCdWait/time.Second), nil)
+	if rep.out.kind != kindOK {
+		return
+	}
+	// The shell writes its environment in the OEM code page, like any other
+	// output: decode on the way in so the value replayed into the next shell
+	// round-trips through the encoder the same way command output does.
+	l.noteEnv([]byte(util.DecodeToUTF8(rep.out.out)))
+}
+
+// persistentWanted reports whether this call may run on the persistent shell at
+// all. Each rejection is a property of the command, not of the shell: stdin
+// payload (there the stdin IS the command channel), a batch `for %x` loop (which
+// needs the interactive spelling), text the OEM code page cannot encode.
+func (t *ExecTool) persistentWanted(params map[string]interface{}, command string) bool {
+	t.psMu.Lock()
+	off := t.noPersistentS
+	t.psMu.Unlock()
+	if off || !persistentSupported() {
+		return false
 	}
 	if in, _ := params["input"].(string); in != "" {
-		return nil, false // stdin injection stays one-shot: here stdin IS the command channel
+		return false
 	}
-	if !persistentSafeInline(command) {
-		return nil, false
+	return persistentSafeInline(command)
+}
+
+// noteShellFailure records a shell that could not be brought up. Two failures in
+// a row mean this machine will not boot the persistent shell (an AutoRun profile
+// that hangs, a locked-down cmd.exe), so stop paying for the attempt.
+func (t *ExecTool) noteShellFailure() {
+	t.psMu.Lock()
+	t.psFailures++
+	if t.psFailures >= 2 {
+		t.noPersistentS = true
 	}
+	t.psMu.Unlock()
+}
+
+// persistentOutcome is what an attempt on the persistent shell ended up with:
+// the command's model-facing text, or the decision to run the call some other
+// way instead.
+type persistentOutcome struct {
+	text     string
+	fallback bool // nothing ran on the shell; the one-shot path may take it
+	// bad marks a text that starts with "Error:" — the caller's job status
+	// follows from it, so the classification is made once, here.
+	bad bool
+	// outcome is the raw shell result, for callers that need the exit code
+	// rather than the prose (the job runtime settles on it).
+	outcome shellOutcome
+	ran     bool // the command reached the shell
+}
+
+// runOnShell runs one exec call on a leased shell and renders it the way the
+// model has always seen it. timeoutSec is the SHELL's own deadline: the
+// synchronous path passes the call's timeout and gets the classic
+// kill-and-reset text, while the job path passes the background limit and does
+// its own waiting on the outside.
+func (t *ExecTool) runOnShell(ctx context.Context, command, cwd string, timeoutSec int, sink func(string)) persistentOutcome {
 	if cwd != "" {
 		// Same up-front check as the one-shot path, same wording, so the
 		// model's recovery behavior does not depend on which engine ran.
 		if fi, err := os.Stat(cwd); err != nil || !fi.IsDir() {
-			return NewTextResult(fmt.Sprintf("Error: working_dir %q does not exist or is not a directory. Create it first (e.g. mkdir) or omit working_dir to run in the default directory.", cwd)), true
+			return persistentOutcome{bad: true, text: fmt.Sprintf("Error: working_dir %q does not exist or is not a directory. Create it first (e.g. mkdir) or omit working_dir to run in the default directory.", cwd)}
 		}
 	}
+	lease, err := t.poolFor().lease(ctx)
+	if err != nil {
+		return persistentOutcome{bad: true, text: "Error: the command was interrupted before it could start."}
+	}
+	poison := false
+	defer func() { lease.release(poison) }()
 
-	ps := t.shellFor()
-	rep := ps.exec(ctx, command, cwd, timeout, sink)
+	rep := lease.run(ctx, command, cwd, timeoutSec, sink)
 	if rep.startFailed {
-		t.psFailures++
-		if t.psFailures >= 2 {
-			t.noPersistentS = true // this machine cannot boot the shell: stop trying
-		}
-		return nil, false
+		// The command never ran: the one-shot path can still take it, and cannot
+		// double-execute anything.
+		t.noteShellFailure()
+		return persistentOutcome{fallback: true}
 	}
-	if rep.cdFailed {
-		return NewTextResult(fmt.Sprintf("Error: working_dir %q could not be entered (the shell reported exit code %d). It may have been deleted or renamed; pass a different working_dir or omit it.", cwd, rep.out.code)), true
-	}
-
-	res := rep.out
-	switch res.kind {
-	case kindTimeout:
-		return NewTextResult(fmt.Sprintf("Error: Command timed out after %ds\nNote: the command's process tree was killed and the persistent shell restarted; any cd/set that command had done are gone.", timeout)), true
-	case kindCancel:
-		return NewTextResult("Error: the command was interrupted; the persistent shell was restarted to recover (cd/set changes made by it, if any, are gone)."), true
+	out := rep.out
+	if out.kind != kindOK {
+		poison = true // whatever it was, this cmd.exe is not trustworthy again
 	}
 
+	res := persistentOutcome{outcome: out, ran: true}
+	switch {
+	case rep.cdFailed:
+		res.bad = true
+		res.text = fmt.Sprintf("Error: working_dir %q could not be entered (the shell reported exit code %d). It may have been deleted or renamed; pass a different working_dir or omit it.", cwd, out.code)
+		return res
+	case out.kind == kindTimeout:
+		res.bad = true
+		res.text = fmt.Sprintf("Error: Command timed out after %ds\nNote: the command's process tree was killed and the persistent shell restarted; any cd/set that command had done are gone.", timeoutSec)
+		return res
+	case out.kind == kindCancel:
+		res.bad = true
+		res.text = "Error: the command was interrupted; the persistent shell was restarted to recover (cd/set changes made by it, if any, are gone)."
+		return res
+	}
 	note := ""
-	if res.kind == kindGone {
+	if out.kind == kindGone {
 		note = "Note: the persistent shell process itself exited during this command (e.g. an `exit` command closed it); the exit code above is the shell's own. A fresh shell starts on the next call."
-	} else if res.cwd != "" && !sameDir(rep.preCwd, res.cwd) {
-		note = "cwd: " + res.cwd // tell the model where the cd landed; it steers blind otherwise
+	} else if out.cwd != "" && !sameDir(rep.preCwd, out.cwd) {
+		note = "cwd: " + out.cwd // tell the model where the cd landed; it steers blind otherwise
 	}
-	return NewTextResult(buildExecResult(command, res.out, res.stderr, res.code, note)), true
+	res.text = buildExecResult(command, out.out, out.stderr, out.code, note)
+	return res
 }
 
 // ---- command text munging ----
