@@ -36,28 +36,44 @@ func jobListener(mgr *SessionManager, sessionID string) func(*job.Job, string) {
 		snap := j.Snapshot()
 		switch event {
 		case job.EventStart:
-			mgr.store.AppendEvent(sessionID, EventJobRegistered, 0, map[string]any{
-				"job_id": j.ID, "kind": j.Kind, "label": j.Label,
-			})
+			// Only work somebody walked away from gets a ledger row at birth. A
+			// foreground command that finished while the model watched is already
+			// described, byte for byte, by its tool/call and tool/result rows; two
+			// more rows per command (this run had 200 of them) is noise that makes
+			// the interesting rows harder to find, not extra history.
+			if j.Background {
+				mgr.store.AppendEvent(sessionID, EventJobRegistered, 0, map[string]any{
+					"job_id": j.ID, "kind": j.Kind, "label": j.Label,
+				})
+			}
 		case job.EventPromote:
 			// The wait expired and the work stayed alive: the single most
 			// interesting number in this whole design is how long the model sat
-			// waiting before that happened.
+			// waiting before that happened. A promoted foreground job was never
+			// announced at start, so it gets its registration here — every settled
+			// row must have the job row it belongs to.
+			if !j.Background {
+				mgr.store.AppendEvent(sessionID, EventJobRegistered, 0, map[string]any{
+					"job_id": j.ID, "kind": j.Kind, "label": j.Label, "late": true,
+				})
+			}
 			mgr.store.AppendEvent(sessionID, EventJobPromoted, 0, map[string]any{
 				"job_id": j.ID, "kind": j.Kind, "label": j.Label, "waited_ms": snap.WaitedMS,
 			})
 		case job.EventSettle:
+			promoted, _ := j.Promoted()
+			if !j.Background && !promoted {
+				return // plain foreground command: the tool rows already tell it all
+			}
 			notified := !j.Awaited()
 			payload := map[string]any{
 				"job_id": j.ID, "kind": j.Kind, "status": string(snap.Status),
 				"elapsed_ms": snap.EndedAt.Sub(snap.StartedAt).Milliseconds(),
 				"bytes":      snap.Total, "notified": notified,
+				"waited_ms": snap.WaitedMS,
 			}
 			if snap.Detail != "" {
 				payload["detail"] = snap.Detail
-			}
-			if snap.Promoted {
-				payload["waited_ms"] = snap.WaitedMS
 			}
 			mgr.store.AppendEvent(sessionID, EventJobSettled, 0, payload)
 			if !notified {

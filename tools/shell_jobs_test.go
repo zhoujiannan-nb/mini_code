@@ -211,3 +211,28 @@ func filepathTail(dir string) string {
 	}
 	return d
 }
+
+// TestForegroundPatienceCap pins the one number the whole point of promotion
+// depends on: the model picks the timeout, and a picked timeout must never
+// become a long blocking wait again. What was asked for is honoured when it is
+// short; anything longer is capped.
+func TestForegroundPatienceCap(t *testing.T) {
+	for _, tc := range []struct {
+		asked int
+		want  time.Duration
+	}{
+		{5, 5 * time.Second},     // a short ask stays a short wait
+		{110, 110 * time.Second}, // exactly at the cap
+		{120, fgPatienceCap},     // the default: capped
+		{1200, fgPatienceCap},    // the shape that cost 539s before the cap
+		{0, fgPatienceCap},       // unset falls back to the cap
+		{-1, fgPatienceCap},      // nonsense likewise
+	} {
+		if got := fgPatience(tc.asked); got != tc.want {
+			t.Errorf("fgPatience(%d) = %v, want %v", tc.asked, got, tc.want)
+		}
+	}
+	if fgPatienceCap > 120*time.Second {
+		t.Errorf("the cap must stay inside one interactive wait: %v", fgPatienceCap)
+	}
+}

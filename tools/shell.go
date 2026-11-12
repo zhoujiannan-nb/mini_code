@@ -106,20 +106,20 @@ func (t *ExecTool) Jobs() *job.Registry { return t.jobs }
 func (t *ExecTool) Name() string { return "exec" }
 func (t *ExecTool) Description() string {
 	if runtime.GOOS == "windows" {
-		return "Execute a shell command and return stdout/stderr plus exit code. The shell is cmd.exe (Windows): use dir/type/findstr/copy/move/ren and && to chain commands, not Unix syntax. The session is persistent: cd and set carry over to later calls, so change directory once instead of passing working_dir every time. A command that outlives its timeout is NOT killed: it keeps running as a background job, and you are notified when it finishes (read it with job_output). Pass run_in_background to start a command that way on purpose."
+		return "Execute a shell command and return stdout/stderr plus exit code. The shell is cmd.exe (Windows): use dir/type/findstr/copy/move/ren and && to chain commands, not Unix syntax. The session is persistent: cd and set carry over to later calls, so change directory once instead of passing working_dir every time. A command still running after ~110s is NOT killed: it keeps running as a background job and you are notified when it finishes (read it with job_output). For work you know is long (test suites, builds, servers), pass run_in_background instead of waiting."
 	}
-	return "Execute a shell command and return stdout/stderr plus exit code. The shell is sh (POSIX). A command that outlives its timeout keeps running as a background job, and you are notified when it finishes (read it with job_output)."
+	return "Execute a shell command and return stdout/stderr plus exit code. The shell is sh (POSIX). A command still running after ~110s keeps running as a background job and you are notified when it finishes (read it with job_output)."
 }
 func (t *ExecTool) IsHidden() bool { return false }
 func (t *ExecTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"command":     map[string]interface{}{"type": "string", "description": "Shell command to execute"},
-			"working_dir": map[string]interface{}{"type": "string", "description": "Working directory"},
-			"timeout":     map[string]interface{}{"type": "integer", "description": "Seconds to wait for the command in the foreground (default 120, max 600). Running out of this does NOT kill the command: it keeps running as a background job you are notified about.", "minimum": 1, "maximum": 600},
-			"input":       map[string]interface{}{"type": "string", "description": "Optional text to feed to the command's standard input (stdin). Preferred over shell redirection for piping data into a command reliably."},
-			"run_in_background": map[string]interface{}{"type": "boolean", "description": "Start the command and return at once with a job id, instead of waiting for it. Use for work whose result you do not need this second (builds, installs, test suites, watchers); you will be told when it finishes."},
+			"command":           map[string]interface{}{"type": "string", "description": "Shell command to execute"},
+			"working_dir":       map[string]interface{}{"type": "string", "description": "Working directory"},
+			"timeout":           map[string]interface{}{"type": "integer", "description": "Seconds to wait for the command in the foreground (default 120). Waiting is capped at ~110s: a command still running then is NOT killed, it keeps running as a background job you are notified about. For work you expect to be long (test suites, builds, servers) pass run_in_background instead of a large timeout.", "minimum": 1, "maximum": 600},
+			"input":             map[string]interface{}{"type": "string", "description": "Optional text to feed to the command's standard input (stdin). Preferred over shell redirection for piping data into a command reliably."},
+			"run_in_background": map[string]interface{}{"type": "boolean", "description": "Start the command and return at once with a job id, instead of waiting for it. Use for work whose result you do not need this second (builds, installs, test suites, servers); you will be told when it finishes. Short commands should just be run."},
 		},
 		"required": []string{"command"},
 	}

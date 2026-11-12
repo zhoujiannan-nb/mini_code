@@ -33,13 +33,39 @@ import (
 // model has ever legitimately needed and far below "forever".
 const bgHardCap = 30 * time.Minute
 
+// fgPatienceCap is how long exec will stand and watch a foreground command
+// before handing it over, whatever timeout the call asked for.
+//
+// The timeout parameter alone did not fix the disease it was meant to fix: asked
+// for a patience number, models ask for a big one. In the run before this cap
+// existed, the longest foreground wait was 539s on a command whose caller had
+// written timeout=1200 — the wait was chosen by the same optimism that writes
+// "600" into a test-suite call, and the turn paid for all of it. A promoted job
+// costs the model one short note and a later notification; a foreground wait
+// costs the whole wall clock and buys nothing the notification would not have.
+// 110s is under the point where a turn stops being interactive and well under
+// the shortest build anyone has to wait for.
+const fgPatienceCap = 110 * time.Second
+
+// fgPatience is the foreground wait for one call: what the caller asked for,
+// never more than the cap. A short timeout stays short — a model that asked for
+// 5s wants an answer in 5s, and getting a promotion note instead of a killed
+// process is still strictly better than the old behavior.
+func fgPatience(requestedSec int) time.Duration {
+	d := time.Duration(requestedSec) * time.Second
+	if d <= 0 || d > fgPatienceCap {
+		return fgPatienceCap
+	}
+	return d
+}
+
 // execSpec is a validated exec call: everything both engines need to know, with
 // the defaults already applied.
 type execSpec struct {
 	command  string
 	cwd      string // effective directory (explicit working_dir or the tool default)
 	cwdParam string // the explicit working_dir only ("" when the model did not name one)
-	timeout  int    // foreground patience, in seconds
+	timeout  int    // foreground patience in seconds, as asked; fgPatience caps it
 	input    string
 	// background marks a call the model asked to start-and-leave, which changes
 	// nothing about how the command runs and everything about who waits.
@@ -124,7 +150,7 @@ func (t *ExecTool) StartAsync(ctx context.Context, owner string, params map[stri
 	capped, cancelCap := context.WithTimeout(context.Background(), bgHardCap)
 	jobCtx, cancelKill := context.WithCancel(capped)
 
-	j := t.jobs.Start(owner, "exec", spec.command)
+	j := t.jobs.Start(owner, "exec", spec.command, spec.background)
 	// One kill switch for both engines: the persistent shell's watchdog and the
 	// one-shot process tree both watch this context, so canceling it is the whole
 	// of "stop that command", whatever is running it.
@@ -159,7 +185,10 @@ func (t *ExecTool) StartAsync(ctx context.Context, owner string, params map[stri
 		return &AsyncCall{Job: j, Note: backgroundNote(j)}, nil
 	}
 
-	if j.Wait(ctx, time.Duration(spec.timeout)*time.Second) {
+	// The foreground gets the shorter of what was asked for and the cap; running
+	// out of it is a handover, never a kill.
+	wait := fgPatience(spec.timeout)
+	if j.Wait(ctx, wait) {
 		return &AsyncCall{Job: j, Settled: true}, nil
 	}
 	if ctx.Err() != nil {
@@ -176,7 +205,7 @@ func (t *ExecTool) StartAsync(ctx context.Context, owner string, params map[stri
 		return &AsyncCall{Job: j, Settled: true}, nil
 	}
 	gate.off()
-	return &AsyncCall{Job: j, Note: promoteNote(j, spec.timeout)}, nil
+	return &AsyncCall{Job: j, Note: promoteNote(j, int(wait/time.Second))}, nil
 }
 
 // runJobCommand runs the command to completion under the job's own context and

@@ -78,6 +78,14 @@ type Job struct {
 	Kind  string // the tool that started it, e.g. "exec"
 	// Label is a short, model-facing description (the command's first line).
 	Label string
+	// Background is fixed at birth: true when the caller is walking away from this
+	// work immediately (exec run_in_background). Listeners use it to decide what is
+	// worth a ledger row — a foreground command that finished while the model
+	// watched is already fully described by its tool call and tool result, and
+	// registering every one of those as a job buries the interesting rows. A wait
+	// that gives up announces the job through EventPromote instead, so the
+	// promotion path does not need this flag to be reported.
+	Background bool
 
 	mu         sync.Mutex
 	status     Status
@@ -88,12 +96,12 @@ type Job struct {
 	unread     int64  // bytes written but not yet read by the model
 	started    time.Time
 	ended      time.Time
-	promotedAt time.Time // when a foreground wait handed this job over
+	promotedAt time.Time     // when a foreground wait handed this job over
 	cancel     func() Status // producer-supplied kill; reports the final status
 	settled    chan struct{}
-	awhield    bool // a live wait collected this job: skip the notice
-	waiters    int  // waits currently blocked on this job (a settle while >0 is awaited)
-	promoted   bool // a wait gave up on it; the process keeps running
+	awhield    bool   // a live wait collected this job: skip the notice
+	waiters    int    // waits currently blocked on this job (a settle while >0 is awaited)
+	promoted   bool   // a wait gave up on it; the process keeps running
 	final      string // producer's model-visible final text, when it has one
 	listener   func(*Job, string)
 }
@@ -101,9 +109,9 @@ type Job struct {
 func newJob(id, owner, kind, label string, listener func(*Job, string)) *Job {
 	return &Job{
 		ID: id, Owner: owner, Kind: kind, Label: label,
-		status:  StatusRunning,
-		started: time.Now(),
-		settled: make(chan struct{}),
+		status:   StatusRunning,
+		started:  time.Now(),
+		settled:  make(chan struct{}),
 		listener: listener,
 	}
 }
@@ -373,8 +381,9 @@ func (r *Registry) SetListener(fn func(*Job, string)) {
 }
 
 // Start registers a running job. label is the model-facing one-liner; the
-// caller must SetCancel so the job can be killed.
-func (r *Registry) Start(owner, kind, label string) *Job {
+// caller must SetCancel so the job can be killed. bg says whether the caller is
+// walking away immediately (see Job.Background).
+func (r *Registry) Start(owner, kind, label string, bg bool) *Job {
 	r.mu.Lock()
 	r.seq++
 	if r.byID == nil {
@@ -382,6 +391,7 @@ func (r *Registry) Start(owner, kind, label string) *Job {
 	}
 	id := fmt.Sprintf("%s-%s", kind, randID())
 	j := newJob(id, owner, kind, truncate(label, 120), r.listen)
+	j.Background = bg
 	r.byID[id] = j
 	r.order = append(r.order, id)
 	l := r.listen

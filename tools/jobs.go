@@ -40,12 +40,9 @@ type JobTool struct {
 func NewJobTools(reg *job.Registry) []*JobTool {
 	return []*JobTool{
 		{
-			name: "job_output",
-			description: "Read the output of a background command started by exec (job id looks like \"exec-1a2b3c4d\"). " +
-				"Use it when you need the result of a command that was moved to the background, or to check partial output of one that is still running. " +
-				"wait=true blocks until the job finishes (up to timeout_ms). You will be notified when a job finishes, so do NOT poll this in a loop, do not sleep between calls, and do not re-run the same command to see whether it is done. " +
-				"Before ending your turn, collect any job whose result you still need — a finished job that was never read is work nobody checked.",
-			registry: reg,
+			name:        "job_output",
+			description: "Read a background command's output (job id like \"exec-1a2b3c4d\"), or the partial output of one still running. wait=true blocks until it finishes (up to timeout_ms). You are notified when a job ends — do not poll in a loop, do not sleep between calls, do not re-run the command to see whether it is done. Before ending your turn, collect the jobs whose results you still need.",
+			registry:    reg,
 			properties: map[string]interface{}{
 				"job_id":     map[string]interface{}{"type": "string", "description": "The job id returned by exec"},
 				"wait":       map[string]interface{}{"type": "boolean", "description": "Block until the job finishes (default false = report what it has produced so far)"},
@@ -54,15 +51,14 @@ func NewJobTools(reg *job.Registry) []*JobTool {
 			required: []string{"job_id"},
 		},
 		{
-			name: "job_list",
-			description: "List this session's background commands (started with exec run_in_background, or moved there when their timeout expired) with their state, elapsed time and unread output. " +
-				"Call it once before finishing a task that launched any background command, so nothing is left uncollected.",
-			registry: reg,
-			properties: map[string]interface{}{},
+			name:        "job_list",
+			description: "List this session's background commands (started with exec run_in_background, or moved there when the foreground wait ran out) with state, elapsed time and unread output.",
+			registry:    reg,
+			properties:  map[string]interface{}{},
 		},
 		{
 			name:        "job_kill",
-			description: "Stop a running background command and kill its process tree. The job settles as killed. Use it for a command you no longer need, one that is wedged, or one you launched by mistake — not as a way to re-run something that is merely slow.",
+			description: "Stop a running background command and kill its process tree; the job settles as killed. Use it for work you no longer need or a wedged command — not for something merely slow.",
 			registry:    reg,
 			properties: map[string]interface{}{
 				"job_id": map[string]interface{}{"type": "string", "description": "The job id to stop"},
