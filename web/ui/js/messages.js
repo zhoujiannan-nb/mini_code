@@ -64,6 +64,29 @@ function addUser(text, images) {
   const div = addCard("user", inner);
   div.insertAdjacentHTML("afterbegin", userAvatarBox("c-avatar"));
 }
+/* 注入型 user 消息:运行时只有"user"这一个角色能保证所有模板都读,所以公约广播、
+   上下文提醒、子代理回执、压缩指令/摘要、守卫轻推全都以 user 轮进上下文。后端在
+   每条上带了 notice 来源(见 session/notices.go),这里就不给头像、不贴"你",
+   渲染成居中一行小字,原文收进 details 里可展开。 */
+const NOTICE_LABELS = {
+  worker: "工作区公约",
+  context: "上下文提醒",
+  subagent: "子代理回执",
+  steer: "继续守卫轻推",
+  retry: "空回复提醒",
+  compact: "压缩指令",
+  summary: "压缩摘要",
+};
+function addNotice(kind, text) {
+  const label = NOTICE_LABELS[kind] || "系统注入";
+  const t = String(text || "");
+  const brief = t.length > 90 ? esc(t.slice(0, 90)) + "…" : esc(t);
+  return addCard("notice",
+    '<div class="notice-line"><details>' +
+    '<summary><span class="notice-tag">· ' + esc(label) + "</span>" +
+    '<span class="notice-brief">' + brief + "</span></summary>" +
+    '<pre class="notice-full">' + esc(t) + "</pre></details></div>");
+}
 // 点击聊天里的截图放大查看(简易全屏遮罩,再点关闭)
 document.addEventListener("click", (e) => {
   const img = e.target.closest(".msg-imgs img");

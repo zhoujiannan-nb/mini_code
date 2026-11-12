@@ -1250,3 +1250,43 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
 .boot-bar-label { font-size: 12px; color: var(--text2); }
 /* 群设置里的危险按钮:原 style="margin:0 auto 0" */
 .g-danger-center { margin: 0 auto; }
+
+/* ---- 注入型 user 消息(notice) ----
+   公约广播 / 上下文提醒 / 子代理回执 / 压缩指令与摘要 / 守卫轻推都以 role=user 进
+   上下文(注入只有这一个角色能保证所有模板都读),但说话人不是用户:居中灰字一行,
+   不给头像、不贴「你」,原文点在 details 里展开。 */
+.msg.notice { display: flex; justify-content: center; }
+.msg.notice .m-card {
+  max-width: min(72%, 720px);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text3);
+}
+.notice-line summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.notice-line summary::-webkit-details-marker { display: none; }
+.notice-tag { color: var(--text2); font-weight: 600; white-space: nowrap; flex: none; }
+.notice-brief {
+  color: var(--text3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.notice-full {
+  margin: 6px 0 2px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text3);
+}

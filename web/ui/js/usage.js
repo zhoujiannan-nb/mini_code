@@ -210,6 +210,7 @@ async function selectSession(id) {
     state.reasoningEffort = s.reasoning_effort || "";
     if (data.context_window) state.ctxWindow = data.context_window;
     paintModel();
+    paintStatusPill(); // 顶部胶囊:模型名跟着会话走(切会话必刷)
     // 上下文提醒开关:以服务端为准(缺省 = 开)
     state.contextReminders = s.context_reminders !== false; // 缺省 = 开(与服务端一致)
     paintContextReminders();

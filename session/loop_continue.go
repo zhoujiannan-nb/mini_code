@@ -13,30 +13,56 @@ import (
 
 // Continue guard: a "narration-only" stop — the model writes text promising
 // the next action ("先把这两个悬空项一次查完") and stops WITHOUT emitting a
-// tool call — must not close the task as completed. This mirrors the
-// dsh-loop-continue plugin design from deepseek-harness:
+// tool call — must not close the task as completed.
 //
-//  1. deterministic gate: the guard only evaluates a text-only stop that
-//     happened in a task where at least one tool call ran earlier, so plain
-//     one-shot answers are never touched and no judge call is wasted;
+// Design lineage, after the port to this file proved too eager: neither
+// deepseek-harness nor codex guesses at prose to decide whether work is left,
+// and neither lets a continuation be re-granted by the model's own labor.
+//
+//   - dsh repeat-tool-reminder (packages/guard): deterministic detection,
+//     advisory wording, the reminder is ATTRIBUTED to the plugin, and a new
+//     user message CLEARS the counter (guard/README: "a fresh instruction is
+//     never treated as a loop").
+//   - dsh goal-round-driver (packages/goal): continuation is opt-in state, and
+//     the allowance is spent only by a round that ENTERS model history — never
+//     re-armed by whatever the model did afterwards; human input arriving first
+//     makes automatic work yield.
+//   - codex Stop hooks (core/src/hook_runtime.rs:run_turn_stop_hooks): the
+//     decision belongs to an external hook, and the hook is told
+//     `stop_hook_active` — "a hook already blocked once" — so the loop can
+//     recognize its own continuation instead of paying for it again.
+//
+// So this guard holds three properties:
+//
+//  1. deterministic gates first, and they lean toward CLOSING: a tool-less
+//     task is never judged, and a reply that hands the decision back to the
+//     user (a question, an approval request, an explicit "waiting on you") is
+//     a stop the model cannot lawfully continue — steered or not, the next
+//     action needs a human answer, not a tool call;
 //  2. one-word judge call: a small self-contained non-streaming request
 //     (no tools, low temperature) asks whether the trailing text promises
 //     work that no tool call performed; an empty answer falls back to the
 //     model's reasoning, and any error or still-unparseable verdict means
 //     "finished" (never trap a completed task in the guard);
-//  3. steer + stall detection: a "true" verdict appends the assistant text
-//     and a steer user message so the loop runs another step; if a steer
-//     produced no new tool call before the next stop, the model ignored it
-//     and the turn is closed instead of burning the remaining budget.
+//  3. one steer per user turn, spent when the steer message enters the
+//     conversation, and never re-armed by the tool calls that obeyed it. The
+//     old design re-armed on exactly that: a compliant model that narrated
+//     again after working earned another nag, up to three per task, which is
+//     how the guard turned into "停不下来". Only a genuine user message
+//     re-arms it (see rearmContinueGuard).
 //
-// maxContinueSteers is the hard per-task cap on steers.
-const maxContinueSteers = 3
+// maxContinueSteers is the cap on steers per user turn.
+const maxContinueSteers = 1
 
-// continueJudgePrompt is the judge's whole decision policy (adapted from
-// dsh-loop-continue's built-in default). Keep it a single strict question.
+// continueJudgePrompt is the judge's whole decision policy. Keep it a single
+// strict question; the hand-off clause is what the 7500 session paid for —
+// "给我这四个答案我就开跑" literally promises an unperformed action, so a
+// policy that only knows "promised" vs "finished" must answer true.
 const continueJudgePrompt = "You inspect one coding-agent turn that just ended on a text-only reply (no tool call). " +
 	"Reply with exactly one word: true if the trailing text promises an action (reading, searching, running, writing, checking something) " +
-	"that no tool call in the recent steps performed; false if the reply reads as a finished answer to the user."
+	"that no tool call in the recent steps performed AND the agent could take that action on its own; " +
+	"false if the reply reads as a finished answer to the user, or if it stops for the user — asking a question, " +
+	"asking for approval or a choice, or saying it waits for the user before acting."
 
 // continueSteerText is the user message injected when the judge says the
 // stop dropped a pending action. Phrase it as an instruction to emit the
@@ -65,22 +91,22 @@ func (l *AgentLoop) SetContinueGuard(on bool) { l.continueGuardOn = on }
 // and the steer message are appended to the returned messages. Every
 // bail-out path keeps the original termination behavior.
 func (l *AgentLoop) tryContinueGuard(ctx context.Context, messages []provider.Message, content, reasoning string) ([]provider.Message, bool) {
-	// Gate: guard off, a task that never used tools (plain Q&A), or the
-	// steer budget is spent — let the task close.
+	// Gate: guard off, a task that never used tools (plain Q&A), or the steer
+	// allowance for this user turn is spent — let the task close.
 	if !l.continueGuardOn || l.toolCallsSeen == 0 || l.continueSteers >= maxContinueSteers {
 		return messages, false
 	}
-	// Stall detection: the previous steer produced no new tool call, so the
-	// model ignored it; closing is better than burning the remaining budget.
-	if l.continueSteers > 0 && l.toolCallsSeen == l.toolsSeenAtSteer {
-		slog.Info("continue guard: previous steer produced no tool call, closing turn", "steers", l.continueSteers)
+	// Hand-off gate, deterministic and ahead of the judge: the reply stopped
+	// for the user's answer. No tool call can take that step, so judging it
+	// would only buy a nag the model must ignore.
+	if awaitingUserInput(content) {
+		slog.Info("continue guard: reply hands the decision to the user, closing turn")
 		return messages, false
 	}
 	if !l.judgeUnfinished(ctx, content, messages) {
 		return messages, false
 	}
 	l.continueSteers++
-	l.toolsSeenAtSteer = l.toolCallsSeen
 	l.emitAssistantMessage(l.curTurn, content, reasoning, nil, nil)
 	l.emitEvent(EventGuardSteer, l.curTurn, map[string]any{"steer": l.continueSteers, "text": continueSteerText})
 	messages = append(messages,
@@ -88,6 +114,57 @@ func (l *AgentLoop) tryContinueGuard(ctx context.Context, messages []provider.Me
 		provider.Message{Role: "user", Content: continueSteerText},
 	)
 	return messages, true
+}
+
+// rearmContinueGuard hands the steer allowance back to the next user turn.
+// Only a genuine human message qualifies (see the drain in Run): the model
+// being given new work is the one event that legitimately makes a later
+// narration-only stop worth steering again.
+func (l *AgentLoop) rearmContinueGuard() {
+	if l.continueSteers > 0 {
+		slog.Info("continue guard: user message re-armed the steer allowance")
+		l.continueSteers = 0
+	}
+}
+
+// awaitingTailRunes is how far back the hand-off check reads; a reply always
+// leaves the "your turn now" at the end.
+const awaitingTailRunes = 600
+
+// awaitingUserPhrases are the explicit "my next step needs your answer" shapes,
+// in the two languages agents answer in. Multi-word on purpose: a bare "哪个" or
+// "给我" also shows up inside narration ("这个函数给我返回了空指针"), and a
+// false hand-off silently disables the guard, so the phrases stay unambiguous.
+// An open question mark in the tail is the catch-all for everything else.
+var awaitingUserPhrases = []string{
+	"等你", "请你", "请确认", "请拍板", "请回答", "请回复", "要不要", "是否继续", "要继续吗",
+	"要我现", "要我改", "你决定", "你拍板", "说了算", "给我答案", "给我个话", "给我答复",
+	"告诉我", "拿主意", "等一句", "确认后再", "答复后", "选哪个", "哪种好", "同意吗",
+	"可以吗", "行吗", "好吗", "还没你答复",
+	"awaiting", "your call", "your decision", "your answer", "let me know", "tell me",
+	"waiting for you", "waiting on you", "once you confirm", "please confirm", "should i",
+	"which do you", "do you want me", "need your", "go-ahead", "ok to proceed",
+}
+
+// awaitingUserInput reports that a text-only reply handed the decision back to
+// the user. Both reference designs lean this way: the guard's own contract is
+// to never hold a finished task hostage, and steering a question costs the user
+// a message that looks like their own nagging.
+func awaitingUserInput(trailing string) bool {
+	r := []rune(strings.TrimSpace(trailing))
+	if len(r) > awaitingTailRunes {
+		r = r[len(r)-awaitingTailRunes:]
+	}
+	tail := strings.ToLower(string(r))
+	if strings.ContainsAny(tail, "?？") {
+		return true
+	}
+	for _, p := range awaitingUserPhrases {
+		if strings.Contains(tail, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // judgeUnfinished asks the one-word question. Any transport error, timeout,

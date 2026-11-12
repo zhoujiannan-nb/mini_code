@@ -510,7 +510,7 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session":  sum,
-		"messages": all,
+		"messages": messageViews(all),
 		// Token estimate for the composer footer (xx/context_window). Counted
 		// over the full context, worker notices included.
 		"tokens": util.CountMessagesTokens(all),
@@ -523,6 +523,46 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		// has no recorded LLM call yet.
 		"last_usage": sess.LastUsage(),
 	})
+}
+
+// messageView is one transcript row for the browser: the provider fields the UI
+// reads, plus `notice` — the kind of runtime-injected context that arrives as a
+// role:"user" turn (worker 公约, context-usage reminder, sub-agent settlement,
+// compaction instruction or summary, continue-guard steer). Without the label
+// the page paints every one of them as the human speaking; the origin lives in
+// session.NoticeKind and the message bytes stay untouched, so both the provider
+// prefix cache and old sessions keep reading the same text.
+type messageView struct {
+	Role             string              `json:"role"`
+	Content          interface{}         `json:"content"`
+	ReasoningContent string              `json:"reasoning_content,omitempty"`
+	ToolCalls        []provider.ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string              `json:"tool_call_id,omitempty"`
+	Name             string              `json:"name,omitempty"`
+	Notice           string              `json:"notice,omitempty"`
+}
+
+func messageViews(msgs []provider.Message) []messageView {
+	out := make([]messageView, 0, len(msgs))
+	for _, m := range msgs {
+		v := messageView{
+			Role:             m.Role,
+			ReasoningContent: m.ReasoningContent,
+			ToolCalls:        m.ToolCalls,
+			ToolCallID:       m.ToolCallID,
+			Name:             m.Name,
+		}
+		if len(m.ContentParts) > 0 {
+			v.Content = m.ContentParts
+		} else {
+			v.Content = m.Content
+		}
+		if kind, ok := session.NoticeKind(m); ok {
+			v.Notice = kind
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 // handleSessionEvents serves the session event ledger (session_event):

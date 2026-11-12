@@ -131,12 +131,15 @@ const (
 	cgSSENarr  = `{"choices":[{"delta":{"content":"Let me grep the night scripts to confirm what is A/B-ed."},"finish_reason":"stop"}]}`
 	cgSSENarr2 = `{"choices":[{"delta":{"content":"Okay, I will write the script now and run it."},"finish_reason":"stop"}]}`
 	cgSSEFinal      = `{"choices":[{"delta":{"content":"all done: sc_ is the speculative-config switch."},"finish_reason":"stop"}]}`
+	cgSSEHandoff    = `{"choices":[{"delta":{"content":"四个待定项列在上面的表格里了，给我答案我就开跑。"},"finish_reason":"stop"}]}`
 )
 
 // TestContinueGuardSteersUnfinishedStop: the 7500 incident as a regression
-// test 鈥?tool use, then a narration-only stop. The judge says "unfinished",
-// the loop steers, the model resumes with a real tool call and later a true
-// final answer; the second stop is judged "finished" and closes.
+// test — tool use, then a narration-only stop. The judge says "unfinished",
+// the loop steers once, the model resumes with a real tool call and later a
+// true final answer. The second stop is NOT judged at all: the steer allowance
+// for this user turn is spent (maxContinueSteers), and re-arming on the model's
+// own obedient tool call is what used to make the guard impossible to end.
 func TestContinueGuardSteersUnfinishedStop(t *testing.T) {
 	rig := newGuardRig(t, guardScript{
 		mainSSE:      []string{cgSSETool, cgSSENarr, cgSSETool, cgSSEFinal},
@@ -155,8 +158,8 @@ func TestContinueGuardSteersUnfinishedStop(t *testing.T) {
 	if got := atomic.LoadInt64(&rig.mainReqs); got != 4 {
 		t.Fatalf("expected 4 main requests (tool, narration, steered tool, final), got %d", got)
 	}
-	if got := atomic.LoadInt64(&rig.judgeReqs); got != 2 {
-		t.Fatalf("expected 2 judge calls, got %d", got)
+	if got := atomic.LoadInt64(&rig.judgeReqs); got != maxContinueSteers {
+		t.Fatalf("expected %d judge call(s) — one per user turn, got %d", maxContinueSteers, got)
 	}
 	if plain, _ := rig.probe.counts(); plain != 2 {
 		t.Fatalf("expected the tool to run twice (once per tool-call turn), got %d", plain)
@@ -173,11 +176,11 @@ func TestContinueGuardSteersUnfinishedStop(t *testing.T) {
 	}
 }
 
-// TestContinueGuardStallClosesAfterIgnoredSteer: when the model answers a
-// steer with more narration instead of a tool call, the guard closes the
-// turn instead of spending the remaining steer budget (and without paying
-// for a second judge call).
-func TestContinueGuardStallClosesAfterIgnoredSteer(t *testing.T) {
+// TestContinueGuardOneSteerPerUserTurn: a model that answers a steer with more
+// narration instead of a tool call closes the turn without paying for a second
+// judge call — and so does one that OBEYED and then narrated again (the old
+// stall check re-armed on exactly that).
+func TestContinueGuardOneSteerPerUserTurn(t *testing.T) {
 	rig := newGuardRig(t, guardScript{
 		mainSSE:      []string{cgSSETool, cgSSENarr, cgSSENarr2},
 		judgeAnswers: []string{"true"},
@@ -190,18 +193,113 @@ func TestContinueGuardStallClosesAfterIgnoredSteer(t *testing.T) {
 		t.Fatalf("expected success, got error: %q", res.Error)
 	}
 	if res.Content != "Okay, I will write the script now and run it." {
-		t.Fatalf("expected the ignored-steer narration as final content, got %q", res.Content)
+		t.Fatalf("expected the post-steer narration as final content, got %q", res.Content)
 	}
 	if got := atomic.LoadInt64(&rig.mainReqs); got != 3 {
 		t.Fatalf("expected 3 main requests, got %d", got)
 	}
 	if got := atomic.LoadInt64(&rig.judgeReqs); got != 1 {
-		t.Fatalf("stall detection should skip the second judge call, got %d calls", got)
+		t.Fatalf("a spent allowance must not buy a second judge call, got %d calls", got)
 	}
 }
 
+// TestContinueGuardHandoffNotJudged: "给我这四个答案我就开跑" promises an
+// action no tool performed, so the judge alone would always rescue it. A reply
+// that hands the decision back to the user is closed by the deterministic gate,
+// with no judge call and no injected message.
+func TestContinueGuardHandoffNotJudged(t *testing.T) {
+	rig := newGuardRig(t, guardScript{
+		mainSSE:      []string{cgSSETool, cgSSEHandoff},
+		judgeAnswers: []string{"true"},
+	})
+	res, err := rig.loop.Run(context.Background(), "system", "check the sc_ switch", nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got error: %q", res.Error)
+	}
+	if res.Content != "四个待定项列在上面的表格里了，给我答案我就开跑。" {
+		t.Fatalf("the hand-off answer must be the final content, got %q", res.Content)
+	}
+	if got := atomic.LoadInt64(&rig.judgeReqs); got != 0 {
+		t.Fatalf("a reply that waits for the user must not be judged, got %d judge calls", got)
+	}
+	if got := atomic.LoadInt64(&rig.mainReqs); got != 2 {
+		t.Fatalf("expected the task to close on the hand-off, got %d main requests", got)
+	}
+}
+
+// TestContinueGuardHumanMessageRearms: a real user message is the only event
+// that grants a fresh steer (dsh clears its guard counter on the same signal).
+func TestContinueGuardHumanMessageRearms(t *testing.T) {
+	rig := newGuardRig(t, guardScript{
+		mainSSE:      []string{cgSSETool, cgSSENarr, cgSSETool, cgSSENarr, cgSSETool, cgSSEFinal},
+		judgeAnswers: []string{"true"},
+	})
+	// The human speaks once, at the start of turn 3 — after the first steer.
+	drained := 0
+	rig.loop.SetInjections(func() []string {
+		drained++
+		if drained == 3 {
+			return []string{"顺手把判分器的口径也核一遍"}
+		}
+		return nil
+	})
+	if _, err := rig.loop.Run(context.Background(), "system", "check the sc_ switch", nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := atomic.LoadInt64(&rig.judgeReqs); got != 2 {
+		t.Fatalf("a new user message must re-arm the guard (one steer per user turn), got %d judge calls", got)
+	}
+}
+
+// TestContinueGuardNoticeDoesNotRearm: runtime notices ride the same injection
+// channel as human messages (a sub-agent settlement, a group relay). They are
+// not new work and must not buy the model another steer.
+func TestContinueGuardNoticeDoesNotRearm(t *testing.T) {
+	rig := newGuardRig(t, guardScript{
+		mainSSE:      []string{cgSSETool, cgSSENarr, cgSSETool, cgSSENarr, cgSSEFinal},
+		judgeAnswers: []string{"true"},
+	})
+	drained := 0
+	rig.loop.SetInjections(func() []string {
+		drained++
+		if drained == 3 {
+			return []string{"<subagent id=\"abc12345\" state=\"completed\">Result: done</subagent>"}
+		}
+		return nil
+	})
+	if _, err := rig.loop.Run(context.Background(), "system", "check the sc_ switch", nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := atomic.LoadInt64(&rig.judgeReqs); got != 1 {
+		t.Fatalf("an injected notice must not re-arm the guard, got %d judge calls", got)
+	}
+}
+
+// TestContinueGuardBudgetBounded: a model that insists on being rescued gets at
+// most maxContinueSteers extra steps per user turn, however often it obeys.
+func TestContinueGuardBudgetBounded(t *testing.T) {
+	// Every stop: judge true (script repeats the last answer); every
+	// steered turn: a tool call, then narration again.
+	rig := newGuardRig(t, guardScript{
+		mainSSE:      []string{cgSSETool, cgSSENarr, cgSSETool, cgSSENarr, cgSSETool, cgSSENarr, cgSSETool, cgSSENarr, cgSSEFinal},
+		judgeAnswers: []string{"true"},
+	})
+	res, err := rig.loop.Run(context.Background(), "system", "check the sc_ switch", nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := atomic.LoadInt64(&rig.judgeReqs); got > maxContinueSteers {
+		t.Fatalf("judge calls exceeded the per-turn steer budget: %d", got)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got error: %q", res.Error)
+	}
+}
 // TestContinueGuardSkipsPlainQA: a task that never used tools is a plain
-// one-shot answer 鈥?the guard must not evaluate it at all (zero judge cost,
+// one-shot answer — the guard must not evaluate it at all (zero judge cost,
 // zero extra latency).
 func TestContinueGuardSkipsPlainQA(t *testing.T) {
 	rig := newGuardRig(t, guardScript{
@@ -243,29 +341,6 @@ func TestContinueGuardJudgeVerdictClosesTask(t *testing.T) {
 	}
 	if got := atomic.LoadInt64(&rig.judgeReqs); got != 1 {
 		t.Fatalf("expected exactly 1 judge call, got %d", got)
-	}
-}
-
-// TestContinueGuardBudgetBounded: a model that insists on being rescued
-// keeps only the bounded number of steers (maxContinueSteers), then closes.
-func TestContinueGuardBudgetBounded(t *testing.T) {
-	// Every stop: judge true (script repeats the last answer); every
-	// steered turn: narration again. Note the stall check closes after the
-	// FIRST ignored steer, so the budget bound is exercised through steers
-	// that DO produce tool calls in between.
-	rig := newGuardRig(t, guardScript{
-		mainSSE:      []string{cgSSETool, cgSSENarr, cgSSETool, cgSSENarr, cgSSETool, cgSSENarr, cgSSETool, cgSSENarr, cgSSEFinal},
-		judgeAnswers: []string{"true"},
-	})
-	res, err := rig.loop.Run(context.Background(), "system", "check the sc_ switch", nil)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if got := atomic.LoadInt64(&rig.judgeReqs); got > maxContinueSteers+2 {
-		t.Fatalf("judge calls exceeded the steer budget: %d", got)
-	}
-	if !res.Success {
-		t.Fatalf("expected success, got error: %q", res.Error)
 	}
 }
 
@@ -311,8 +386,8 @@ func TestContinueGuardJudgeVerdictFromReasoning(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("expected success, got error: %q", res.Error)
 	}
-	if got := atomic.LoadInt64(&rig.judgeReqs); got != 2 {
-		t.Fatalf("expected 2 judge calls, got %d", got)
+	if got := atomic.LoadInt64(&rig.judgeReqs); got != 1 {
+		t.Fatalf("expected 1 judge call (the allowance is one per user turn), got %d", got)
 	}
 	if got := atomic.LoadInt64(&rig.mainReqs); got != 4 {
 		t.Fatalf("a reasoning-only verdict must steer, got %d main requests (want 4)", got)

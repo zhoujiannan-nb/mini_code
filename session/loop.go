@@ -148,14 +148,13 @@ type AgentLoop struct {
 	// must not close the task as completed. A text-only stop in a task
 	// that used tools gets one judge call; "unfinished" steers the loop
 	// another step. toolCallsSeen counts tool calls executed this task
-	// (the deterministic gate), continueSteers counts steers spent, and
-	// toolsSeenAtSteer anchors the stall check (a steer that produced no
-	// new tool call is not retried).
-	continueGuardOn  bool
-	judgeClient      *provider.ModelClient
-	toolCallsSeen    int
-	continueSteers   int
-	toolsSeenAtSteer int
+	// (the deterministic gate) and continueSteers counts the steers spent on
+	// the current user turn — obeying a steer never spends a new one, only a
+	// real user message re-arms the allowance (rearmContinueGuard).
+	continueGuardOn bool
+	judgeClient     *provider.ModelClient
+	toolCallsSeen   int
+	continueSteers  int
 
 	// userImages carries image data URLs (data:image/...;base64,...) that
 	// are attached to the initial user message as multimodal content parts,
@@ -470,7 +469,7 @@ func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tool
 		compactor:        NewContextCompactor(client),
 		compactionOn:     true, // default keeps legacy behavior; callers may opt out
 		argAgingOn:       os.Getenv("MC_ARG_AGE") == "1",
-		continueGuardOn:  true, // narration-only stops get judged before closing (loop_continue.go)
+		continueGuardOn:  os.Getenv("MC_CONTINUE_GUARD") != "0", // narration-only stops get judged before closing (loop_continue.go)
 		onToolCallStart:  onToolCallStart,
 		onToolCallEnd:    onToolCallEnd,
 		onAssistantReply: onAssistantReply,
@@ -555,12 +554,16 @@ const (
 // role-agnostic, so the role can be changed freely.
 const usageNoticeRole = "user"
 
+// usageNoticeMarkerPrefix identifies any usage notice in a message. Exported to
+// notices.go so the transcript can label these rows as runtime-injected.
+const usageNoticeMarkerPrefix = "__CTX_USAGE_"
+
 // usageNoticeMarker returns the stable marker embedded in a usage notice of the
 // given stage. It is used to detect already-announced stages by scanning the
 // context, so no external state is needed and a compaction that summarizes the
 // notice naturally re-arms the reminder if usage is still high.
 func usageNoticeMarker(pct int) string {
-	return fmt.Sprintf("__CTX_USAGE_%d__", pct)
+	return fmt.Sprintf("%s%d__", usageNoticeMarkerPrefix, pct)
 }
 
 // usageNotice builds the notice for one of the two stages. pct is the share of the
@@ -732,6 +735,13 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				}
 				messages = append(messages, provider.Message{Role: "user", Content: t})
 				l.emitEvent(EventUserMessage, turn, map[string]any{"text": t, "source": "queued"})
+				// A real human message re-arms the continue guard's steer
+				// allowance. A runtime notice riding this same channel (a
+				// sub-agent settlement, a group-chat relay) is not new work and
+				// must not buy the model a fresh steer.
+				if _, notice := NoticeKind(provider.Message{Role: "user", Content: t}); !notice {
+					l.rearmContinueGuard()
+				}
 			}
 		}
 
@@ -1054,7 +1064,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			l.emptyRetries++
 			messages = append(messages, provider.Message{Role: "assistant", Content: parsed.content, ReasoningContent: resp.ReasoningContent})
 			l.emitAssistantMessage(turn, parsed.content, resp.ReasoningContent, nil, usageEvent)
-			messages = append(messages, provider.Message{Role: "user", Content: "Your previous response was empty. Continue the task: take the next concrete step (a tool call) or answer the user directly."})
+			messages = append(messages, provider.Message{Role: "user", Content: emptyRetryNotice})
 			l.persistTurn(turn, messages)
 			continue
 		}

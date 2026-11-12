@@ -901,6 +901,10 @@ function appendHistoryMsg(msg) {
     const txt = Array.isArray(msg.content)
       ? msg.content.filter(p => p.type === "text").map(p => p.text || "").join("\n")
       : contentText(msg);
+    // 注入型 user 轮:后端在消息上标了 notice(公约广播/上下文提醒/子代理回执/
+    // 压缩指令或摘要/守卫轻推/空回复提醒)。它们确实是 role=user 的一轮,但说话人
+    // 不是用户——画成"你"的气泡等于让用户看见自己"发"了系统内部消息。
+    if (msg.notice) { addNotice(msg.notice, txt); return; }
     addUser(txt, imgs);
   } else if (msg.role === "assistant") {
     addAssistant(contentText(msg), msg.reasoning_content);
