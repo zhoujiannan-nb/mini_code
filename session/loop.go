@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -1622,7 +1623,13 @@ func (l *AgentLoop) executeSingleTool(ctx context.Context, tc provider.ToolCall)
 	// retry with a different approach; the task and the server keep running.
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("tool execution panicked, contained", "name", tc.Function.Name, "panic", r)
+			// The stack goes in the log, not just the value: three runs of
+			// bench data contained recovered nil derefs in exec, and with only
+			// "panic: invalid memory address" on disk there was nothing to
+			// reproduce from. A contained panic that cannot be diagnosed is a
+			// bug that will be paid for again by whichever session hits it.
+			slog.Error("tool execution panicked, contained", "name", tc.Function.Name, "panic", r,
+				"args", tc.Function.Arguments, "stack", string(debug.Stack()))
 			result = tools.NewTextResult(fmt.Sprintf("Error: tool %q crashed (panic: %v). The task continues; analyze the cause and try a different approach.", tc.Function.Name, r))
 		}
 	}()
