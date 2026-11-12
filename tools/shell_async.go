@@ -65,8 +65,12 @@ func (t *ExecTool) execSpec(params map[string]interface{}) (*execSpec, *ToolResu
 		spec.cwdParam = wd
 	}
 	spec.timeout = t.timeout
-	if v, ok := params["timeout"].(float64); ok && int(v) > 0 {
-		spec.timeout = int(v)
+	// Accept both spellings of a number: the loop hands over JSON-decoded
+	// parameters (float64), while a Go caller writes an int. Silently ignoring a
+	// timeout the caller did supply is the worse failure — it would turn a 1s
+	// patience into the tool's default and promote nothing.
+	if v, ok := numberParam(params["timeout"]); ok && v > 0 {
+		spec.timeout = v
 	}
 	if spec.timeout > 600 {
 		spec.timeout = 600
@@ -267,6 +271,18 @@ func (t *ExecTool) runOneShotJob(ctx context.Context, spec *execSpec, j *job.Job
 		status = job.StatusFailed
 	}
 	return text, status, code
+}
+
+// numberParam reads a tool parameter that may arrive as a JSON number (float64)
+// or as a plain Go int from an in-process caller.
+func numberParam(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	}
+	return 0, false
 }
 
 // liveGate keeps a UI feed attached to the call that is waiting, and not to
