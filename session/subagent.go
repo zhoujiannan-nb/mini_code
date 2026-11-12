@@ -325,7 +325,7 @@ func (s *SubagentService) settleNotice(job *SubagentJob) string {
 func (s *SubagentService) Output(ctx context.Context, id string, wait bool, waitSeconds int) (string, error) {
 	job, ok := s.job(id)
 	if !ok {
-		return "", fmt.Errorf("unknown sub-agent job %q (use task_list to see known jobs)", id)
+		return "", fmt.Errorf("unknown sub-agent job %q%s", id, tools.UnknownIDHint(id))
 	}
 	if wait {
 		if waitSeconds <= 0 {

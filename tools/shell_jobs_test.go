@@ -236,3 +236,41 @@ func TestForegroundPatienceCap(t *testing.T) {
 		t.Errorf("the cap must stay inside one interactive wait: %v", fgPatienceCap)
 	}
 }
+
+// TestStartAsyncRefusedIsNotACrash is the regression for a panic that only the
+// bench could surface: execSpec answers a refused call with (nil spec, refusal
+// text, nil error), and StartAsync read spec.command before looking at that
+// text. Every guarded command (del /q, rmdir /s, a destructive git checkout)
+// therefore arrived as "tool exec crashed (nil pointer dereference)" instead of
+// the refusal the model is owed — eight of them in one six-task run.
+func TestStartAsyncRefusedIsNotACrash(t *testing.T) {
+	tool := NewExecTool(30, t.TempDir())
+	cases := []struct {
+		command string
+		want    string // what the model must be told
+	}{
+		{"rmdir /s /q C:\\somewhere", "blocked"},
+		{"del /q keep.this", "blocked"},
+		{strings.Repeat("echo a && ", 1200), "too long"},
+	}
+	for _, tc := range cases {
+		call, err := tool.StartAsync(context.Background(), "s", map[string]interface{}{"command": tc.command}, nil)
+		if call != nil {
+			t.Fatalf("StartAsync(%q) returned a job for a refused call", tc.command[:30])
+		}
+		if err == nil {
+			t.Fatalf("StartAsync(%q) returned no error and no job", tc.command[:30])
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("StartAsync(%q) error = %q, want it to carry %q", tc.command[:30], err.Error(), tc.want)
+		}
+		// The fall-through the loop performs on an error must reach the same text.
+		res, serr := tool.Execute(context.Background(), map[string]interface{}{"command": tc.command})
+		if serr != nil || res == nil {
+			t.Fatalf("Execute(%q): err=%v res=%v", tc.command[:30], serr, res)
+		}
+		if !strings.Contains(res.Text, tc.want) {
+			t.Errorf("Execute(%q) = %q, want it to carry %q", tc.command[:30], res.Text, tc.want)
+		}
+	}
+}

@@ -263,7 +263,7 @@ func (t *TaskControlTool) Execute(ctx context.Context, params map[string]interfa
 	case "task_status":
 		info, ok := t.dispatcher.Status(id)
 		if !ok {
-			return NewTextResult(fmt.Sprintf("Error: unknown sub-agent job %q (use task_list to see known jobs)", id)), nil
+			return NewTextResult(fmt.Sprintf("Error: unknown sub-agent job %q%s", id, UnknownIDHint(id))), nil
 		}
 		return NewTextResult(formatJobInfo(info)), nil
 

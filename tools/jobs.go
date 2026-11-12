@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -203,6 +204,25 @@ func tail(s string, n int) string {
 		return s
 	}
 	return fmt.Sprintf("(%d chars skipped)\n", len(r)-n) + string(r[len(r)-n:])
+}
+
+// reJobID matches the ids the job runtime hands out ("<kind>-<8 hex>", e.g.
+// "exec-1a2b3c4d").
+var reJobID = regexp.MustCompile(`^[a-z][a-z0-9]*-[0-9a-f]{8}$`)
+
+// IsJobID reports whether an id has the shape of a background command id.
+func IsJobID(id string) bool { return reJobID.MatchString(strings.TrimSpace(id)) }
+
+// UnknownIDHint is the tail of an "unknown job <id>" error. The confusion is
+// real and keeps happening in runs: a background command id looks exactly like a
+// sub-agent task id, and a model that launched a command in the background
+// reaches for the task tool it already knows. Saying "unknown" alone sends it
+// around that loop again; naming the right tool ends it.
+func UnknownIDHint(id string) string {
+	if IsJobID(id) {
+		return " — that is the shape of a background command id from exec; read it with job_output(job_id=...) and see job_list for the rest"
+	}
+	return " (use task_list to see known jobs)"
 }
 
 func humanBytes(n int64) string {

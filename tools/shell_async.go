@@ -135,9 +135,22 @@ func (t *ExecTool) persistentForSpec(spec *execSpec) bool {
 // teardown ends it. The foreground then waits exactly as long as the model asked
 // and hands the job over if that runs out.
 func (t *ExecTool) StartAsync(ctx context.Context, owner string, params map[string]interface{}, sink func(string)) (*AsyncCall, error) {
-	spec, _, err := t.execSpec(params)
+	spec, refused, err := t.execSpec(params)
 	if err != nil {
 		return nil, err // rejected before anything started: the caller may retry synchronously
+	}
+	if spec == nil {
+		// execSpec answered with a refusal instead of a call: the guard, or a
+		// command longer than the shell accepts. There is no job and no work, so
+		// this is the AsyncTool contract's "nothing started" case — and it must be
+		// handled before spec is touched, because dereferencing a nil spec here is
+		// how every guarded command (del /q, rmdir /s, git checkout of a
+		// destructive kind) turned into a recovered panic instead of the refusal
+		// text the model is owed.
+		if refused != nil {
+			return nil, &refusedError{text: refused.Text}
+		}
+		return nil, fmt.Errorf("exec: no call to start")
 	}
 	if spec.command == "" {
 		return nil, fmt.Errorf("missing command")
@@ -336,3 +349,14 @@ func (g *liveGate) sinkFn() func(string) {
 		}
 	}
 }
+
+// refusedError is the AsyncTool contract's "nothing was started" answer for a
+// call the tool itself declined — the dangerous-pattern guard, or a command over
+// the shell's length limit. The loop falls through to the synchronous path on an
+// error, and that path reproduces the same refusal text, so the model is never
+// told a job exists for a command that never ran. It carries the text anyway: a
+// caller that surfaces the error instead should surface the real reason, not a
+// stack-shaped surprise.
+type refusedError struct{ text string }
+
+func (e *refusedError) Error() string { return e.text }
