@@ -12,10 +12,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// 2026-11-13 duel3 之后:旧的 toolConstraints/taskProgressAnchor 两段随 persona
-// 一并替换为 dsh 全抄版（build.txt）。锚子（每 3-4 回合刷【当前进展]）是汇报腔
-// 制造机——duel3 里 mc 的话痨和磨文化一半归功于它;工具纪律 dsh 版已逐条覆盖
-// （read/glob/grep/job/并发冲突），不再单列。
 const workConstraints = `<work_requirements>
 - The "# Working Directory" block below names this session's folder — it is the same directory stored in the session's database row, and for a worker session it is the worker's shared workspace. Do all reading and writing inside it; database and prompt always mean the same folder.
 - Verify with the project's own tests or commands, not with helper scripts you write. When a scratch script really is the shortest path, put it in a '_work_{timestamp}_{theme}' directory under the working directory (theme in the user's language) and delete it before you finish; final deliverables stay exactly where the task asked for them.
