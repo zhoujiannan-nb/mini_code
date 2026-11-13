@@ -1200,3 +1200,6 @@ details.m-think[open] summary { margin-bottom: 6px; }
   line-height: 1.6;
   color: var(--text3);
 }
+ 
+/* 会话卡目录尾段行:区分同名实例 */ 
+.sess-path { font-size: 10.5px; color: var(--text3); opacity: .75; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

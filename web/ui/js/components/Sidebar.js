@@ -46,6 +46,14 @@ export function paintWorkerBar() {
   </span>`;
 }
 
+// 目录尾段:取工作目录最后两级,用来区分名字相同的实例
+// (每个 mc 实例一个 worker 时,标题雷同,目录尾两级才是身份)。
+function tailPath(p) {
+  if (!p) return "";
+  const segs = p.replace(/\\/g, "/").split("/").filter(Boolean);
+  return segs.slice(-2).join("/");
+}
+
 function SessionItem({ s }) {
   const current = useStore((x) => x.current);
   // 执行中只看服务端的实时标志:持久化的 status 在进程崩溃/重启后可能停留在
@@ -62,6 +70,7 @@ function SessionItem({ s }) {
       <${AgentAvatar} cls="sess-ava" tag="span" />
       <div class="sess-title">${s.title || "未命名会话"}</div>
     </div>
+    ${tailPath(s.work_dir) ? html`<div class="sess-path" title=${s.work_dir}>🗂 ${tailPath(s.work_dir)}</div>` : null}
     <div class="sess-meta">
       <span class=${"s " + dotClass}></span>
       ${s.mode === "cautious" ? html`<span title="谨慎模式">🛡</span>` : null}
