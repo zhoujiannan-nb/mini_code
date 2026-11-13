@@ -140,6 +140,7 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/model", s.handleSetModel)
 	mux.HandleFunc("POST /api/sessions/{id}/reasoning", s.handleSetReasoning)
 	mux.HandleFunc("GET /api/sessions/{id}/jobs", s.handleListJobs)
+	mux.HandleFunc("GET /api/sessions/{id}/jobs/output", s.handleJobOutput)
 	mux.HandleFunc("POST /api/sessions/{id}/jobs/kill", s.handleKillJob)
 	mux.HandleFunc("POST /api/sessions/{id}/jobs/clear", s.handleClearJobs)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleRenameSession)
@@ -512,6 +513,28 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		"jobs":    jobs,
 		"running": running,
 	})
+}
+
+// handleJobOutput returns the buffered output of one background command for
+// the UI's expand row. It reads without consuming (consume=false), so the
+// model's own job_output reads and the settlement notice stay unaffected.
+func (s *server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
+	sess := s.be.Mgr().Peek(r.PathValue("id"))
+	if sess == nil {
+		writeErr(w, http.StatusNotFound, "session not loaded")
+		return
+	}
+	reg := sess.Jobs()
+	if reg == nil {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	j := reg.Get(r.URL.Query().Get("job"))
+	if j == nil {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"output": j.Output(false)})
 }
 
 // handleKillJob stops one running background command on the human's behalf —

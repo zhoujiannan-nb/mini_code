@@ -191,7 +191,7 @@ async function selectSession(id) {
     const s = data.session;
     // 工作目录:聊天里的相对路径要按它解析(不是服务进程的 cwd)
     state.workDir = s.work_dir || "";
-    setChatTitle(s.title || "会话 " + id.slice(0, 8), (s.work_dir || "").slice(0, 60));
+    setChatTitle(s.title || "会话 " + id.slice(0, 8), "");
     // 侧栏跟着会话走:从 mc-session 芯片跳进来的会话可能属于另一个 worker,
     // 不切过去就像跳错了地方——左侧列表里连它自己都找不到。不 await:侧栏慢半拍
     // 不该拖住聊天区的重绘。

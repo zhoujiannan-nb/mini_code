@@ -162,7 +162,7 @@ async function renameSession(id, currentTitle) {
     });
     const s = state.sessions.find(x => x.session_id === id);
     if (s) s.title = r.title;
-    if (state.current === id) setChatTitle(r.title, s ? (s.work_dir || "").slice(0, 60) : "");
+    if (state.current === id) setChatTitle(r.title, "");
     renderSessions();
     toast("已重命名", "ok");
   } catch (err) { toast("重命名失败:" + err.message, "err"); }

@@ -20,25 +20,24 @@ function renderTasksPanel() {
   const panel = $("#tasks-panel");
   if (!panel.classList.contains("open")) return;
   if (kids.length === 0) {
-    panel.innerHTML = "<h4>子任务</h4><div class='empty-hint'>暂无子任务</div>";
+    panel.innerHTML = "<div class='empty-hint'>暂无子任务</div>";
     return;
   }
   const now = Date.now();
-  panel.innerHTML = "<h4>子任务(点击打开子会话)</h4>" + kids.map(c => {
+  panel.innerHTML = kids.map(c => {
     const dot = c.active ? "running" : (["completed", "failed", "interrupted"].includes(c.status) ? c.status : "idle");
     const st = c.active ? "执行中" : { completed: "已完成", failed: "失败", interrupted: "已中断" }[c.status] || "";
     const stop = c.active ? '<button class="task-stop">停止</button>' : "";
-    // 右栏统计:全程 token 合计 + 用时(运行中从创建起算,已结束按最后更新)。
+    // 右栏两行 = token 全程合计 + 用时(运行中从创建起算,已结束按最后更新)。
     const tok = fmtTok(c.tokens || 0);
     const dur = fmtTaskDur(c, now);
-    const meta = (tok || dur) ? '<span class="t-meta"><span>' + (tok || "—") + "</span><span>" +
-      (dur ? dur + (st ? " · " + st : "") : st) + "</span></span>" : "";
     const tip = (c.title || c.session_id) + (st ? "(" + st + ")" : "") + "\n" + c.session_id;
     return '<div class="task-item" data-id="' + c.session_id + '" title="' + esc(tip) + '">' +
       '<span class="s ' + dot + '"></span>' +
-      '<span class="t1">' + esc(c.title || c.session_id.slice(0, 8)) +
-      (c.agent_role && c.agent_role !== "build" ? " <i>" + esc(c.agent_role) + "</i>" : "") + "</span>" +
-      '<span class="t-act">' + stop + meta + "</span></div>";
+      '<span class="a-main"><span class="a-title">' + esc(c.title || c.session_id.slice(0, 8)) + "</span>" +
+      '<span class="a-kind">' + esc(c.agent_role || "build") + "</span></span>" +
+      '<span class="a-meta"><span>' + (tok || "—") + "</span><span>" + (dur || st || "—") + "</span></span>" +
+      stop + '<span class="a-arrow">›</span></div>';
   }).join("");
   panel.querySelectorAll(".task-item").forEach(el => {
     el.addEventListener("click", (e) => {

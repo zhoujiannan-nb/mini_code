@@ -32,6 +32,12 @@ func TestJobsAPIEndpoints(t *testing.T) {
 		t.Errorf("kill without a registry: code %d, want 404", code)
 	}
 
+	// Output reads are 404 (never a panic) without a registry or for an
+	// unknown job id — the panel's ⌄ button must degrade quietly.
+	if code := workerReq(t, "GET", srv.URL+"/api/sessions/"+id+"/jobs/output?job=exec-00000000", "", nil); code != 404 {
+		t.Errorf("output without a registry: code %d, want 404", code)
+	}
+
 	// Clearing is idempotent: no registry is "nothing to clear", a 200 with
 	// cleared=0, never a 404 — the panel's Clear button must converge even if
 	// the session was torn down between the render and the click.
