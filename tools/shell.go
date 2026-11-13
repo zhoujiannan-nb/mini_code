@@ -545,6 +545,9 @@ func (t *ExecTool) guardCommand(command string) string {
 	if IsHardBlocked(command) {
 		return "Error: Command blocked — dangerous pattern detected"
 	}
+	if deny := disciplineDeny(command); deny != "" {
+		return "Error: Command blocked by the tool-discipline gate — instead of " + deny + ". (MC_EXEC_GATE=0 disables this gate.)"
+	}
 	return ""
 }
 
