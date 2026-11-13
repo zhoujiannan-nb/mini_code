@@ -191,6 +191,11 @@ type SessionSummary struct {
 	CreatedAt    string
 	UpdatedAt    string
 	MessageCount int
+	// TotalPrompt/TotalCompletion are the session-wide token totals summed
+	// over every provider call (metadata.usage_total, written by
+	// recordLastUsage). Zero for sessions predating the counter.
+	TotalPrompt     int
+	TotalCompletion int
 }
 
 // sessionListQuery is the shared lightweight list query for root sessions.
@@ -213,7 +218,9 @@ func sessionListQuery(bucket string) string {
 	return `SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key,
 	        COALESCE(worker_id, '') AS worker_id,
 	        created_at, updated_at,
-	        COALESCE(json_array_length(messages), 0) AS message_count
+	        COALESCE(json_array_length(messages), 0) AS message_count,
+	        COALESCE(json_extract(metadata, '$.usage_total.prompt'), 0) AS total_prompt,
+	        COALESCE(json_extract(metadata, '$.usage_total.completion'), 0) AS total_completion
 	 FROM sessions
 	 WHERE (parent_id IS NULL OR parent_id = '') AND ` + predicate +
 		` ORDER BY updated_at DESC LIMIT ? OFFSET ?`
@@ -254,7 +261,9 @@ func (s *SessionStore) ListChildren(parentID string) ([]SessionSummary, error) {
 	rows, err := s.db.FetchAll(
 		`SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key,
 		        created_at, updated_at,
-		        COALESCE(json_array_length(messages), 0) AS message_count
+		        COALESCE(json_array_length(messages), 0) AS message_count,
+		        COALESCE(json_extract(metadata, '$.usage_total.prompt'), 0) AS total_prompt,
+		        COALESCE(json_extract(metadata, '$.usage_total.completion'), 0) AS total_completion
 		 FROM sessions
 		 WHERE parent_id = ?
 		 ORDER BY created_at ASC`,
@@ -306,9 +315,11 @@ func summaryFromRow(row map[string]interface{}) SessionSummary {
 		ModelKey:     fmt.Sprint(row["model_key"]),
 		ChannelKey:   fmt.Sprint(row["channel_key"]),
 		WorkerID:     asString(row["worker_id"]),
-		CreatedAt:    fmt.Sprint(row["created_at"]),
-		UpdatedAt:    fmt.Sprint(row["updated_at"]),
-		MessageCount: asInt(row["message_count"]),
+		CreatedAt:       fmt.Sprint(row["created_at"]),
+		UpdatedAt:       fmt.Sprint(row["updated_at"]),
+		MessageCount:    asInt(row["message_count"]),
+		TotalPrompt:     asInt(row["total_prompt"]),
+		TotalCompletion: asInt(row["total_completion"]),
 	}
 }
 

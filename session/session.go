@@ -162,8 +162,40 @@ func (s *Session) recordLastUsage(prompt, cached, completion int, reported bool,
 		"speed":      speed, // tokens/second, average of the last LLM call; 0 = not reported
 		"at":         time.Now().Format(time.RFC3339),
 	}
+	// usage_total accumulates tokens across the whole session lifetime (every
+	// provider call, not just the last). The sub-agent list needs per-task
+	// token totals, which last_usage alone cannot answer (it only holds the
+	// final turn). Same metadata map, same Update — no extra write.
+	s.addUsageTotal(prompt, completion)
 	s.store.Update(s.record)
 	s.mu.Unlock()
+}
+
+// usageTotalMetadataKey holds the session-wide token totals
+// ({"prompt": N, "completion": M}) accumulated by recordLastUsage.
+const usageTotalMetadataKey = "usage_total"
+
+// addUsageTotal adds one call's tokens to the session-wide totals. The caller
+// holds s.mu; the write rides the caller's store.Update.
+func (s *Session) addUsageTotal(prompt, completion int) {
+	tot, _ := s.record.Metadata[usageTotalMetadataKey].(map[string]interface{})
+	if tot == nil {
+		tot = map[string]interface{}{}
+	}
+	as64 := func(v interface{}) int64 {
+		switch n := v.(type) {
+		case float64: // after a JSON round-trip through the store
+			return int64(n)
+		case int64:
+			return n
+		case int:
+			return int64(n)
+		}
+		return 0
+	}
+	tot["prompt"] = as64(tot["prompt"]) + int64(prompt)
+	tot["completion"] = as64(tot["completion"]) + int64(completion)
+	s.record.Metadata[usageTotalMetadataKey] = tot
 }
 
 // LastUsage returns the persisted last-call usage report (see

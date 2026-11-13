@@ -385,7 +385,10 @@ type SessionSummary struct {
 	WorkerID         string `json:"worker_id,omitempty"`
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
-	MessageCount     int    `json:"message_count"`
+ 	MessageCount     int    `json:"message_count"`
+	// Tokens is the session-wide total (prompt+completion over every provider
+	// call); 0 for sessions predating the usage counter.
+	Tokens int64 `json:"tokens"`
 	ContextReminders bool   `json:"context_reminders"` // experimental context-usage notices (session-level, default on)
 	// Thinking / ReasoningEffort are the per-session thinking-depth override
 	// (composer control); empty = the model's configured default.
@@ -423,7 +426,24 @@ func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 		ReasoningEffort:  effort,
 	}
 	sum.JobsRunning, sum.JobsTotal = s.jobCounts(r.SessionID)
+	sum.Tokens = tokensOf(r.Metadata)
 	return sum
+}
+
+// tokensOf sums metadata.usage_total (written by recordLastUsage) from a
+// loaded record; 0 when the session has no usage counter yet.
+func tokensOf(metadata map[string]interface{}) int64 {
+	tot, _ := metadata["usage_total"].(map[string]interface{})
+	var n int64
+	for _, k := range []string{"prompt", "completion"} {
+		switch v := tot[k].(type) {
+		case float64:
+			n += int64(v)
+		case int64:
+			n += v
+		}
+	}
+	return n
 }
 
 // summarizeSummary builds the same API entry from a lightweight store row
@@ -443,6 +463,7 @@ func (s *server) summarizeSummary(r session.SessionSummary) SessionSummary {
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 		MessageCount: r.MessageCount,
+		Tokens:       int64(r.TotalPrompt) + int64(r.TotalCompletion),
 	}
 	sum.JobsRunning, sum.JobsTotal = s.jobCounts(r.SessionID)
 	return sum

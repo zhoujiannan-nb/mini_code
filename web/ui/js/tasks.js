@@ -23,15 +23,22 @@ function renderTasksPanel() {
     panel.innerHTML = "<h4>子任务</h4><div class='empty-hint'>暂无子任务</div>";
     return;
   }
+  const now = Date.now();
   panel.innerHTML = "<h4>子任务(点击打开子会话)</h4>" + kids.map(c => {
     const dot = c.active ? "running" : (["completed", "failed", "interrupted"].includes(c.status) ? c.status : "idle");
     const st = c.active ? "执行中" : { completed: "已完成", failed: "失败", interrupted: "已中断" }[c.status] || "";
     const stop = c.active ? '<button class="task-stop">停止</button>' : "";
-    return '<div class="task-item" data-id="' + c.session_id + '">' +
-      '<div class="t1"><span class="s ' + dot + '"></span>' + esc(c.title || c.session_id.slice(0, 8)) +
-      (st ? " <span style='color:var(--text3);font-weight:400'>" + st + "</span>" : "") +
-      '<span class="t-act">' + stop + "</span></div>" +
-      '<div class="t2">' + esc(c.session_id.slice(0, 12)) + " · " + relTime(c.updated_at) + "</div></div>";
+    // 右栏统计:全程 token 合计 + 用时(运行中从创建起算,已结束按最后更新)。
+    const tok = fmtTok(c.tokens || 0);
+    const dur = fmtTaskDur(c, now);
+    const meta = (tok || dur) ? '<span class="t-meta"><span>' + (tok || "—") + "</span><span>" +
+      (dur ? dur + (st ? " · " + st : "") : st) + "</span></span>" : "";
+    const tip = (c.title || c.session_id) + (st ? "(" + st + ")" : "") + "\n" + c.session_id;
+    return '<div class="task-item" data-id="' + c.session_id + '" title="' + esc(tip) + '">' +
+      '<span class="s ' + dot + '"></span>' +
+      '<span class="t1">' + esc(c.title || c.session_id.slice(0, 8)) +
+      (c.agent_role && c.agent_role !== "build" ? " <i>" + esc(c.agent_role) + "</i>" : "") + "</span>" +
+      '<span class="t-act">' + stop + meta + "</span></div>";
   }).join("");
   panel.querySelectorAll(".task-item").forEach(el => {
     el.addEventListener("click", (e) => {
@@ -44,6 +51,25 @@ function renderTasksPanel() {
       selectSession(el.dataset.id);
     });
   });
+}
+// fmtTok: token 合计的紧凑写法(4.4M / 128k);0 返空串。
+function fmtTok(n) {
+  if (!n || n < 1) return "";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M tok";
+  if (n >= 1e3) return Math.round(n / 1e3) + "k tok";
+  return n + " tok";
+}
+// fmtTaskDur: 子任务用时。运行中 = now - 创建;已结束 = 最后更新 - 创建。
+// created_at/updated_at 是带时区的 RFC3339,Date.parse 直接可吃。
+function fmtTaskDur(c, now) {
+  const t0 = Date.parse(c.created_at);
+  if (isNaN(t0)) return "";
+  const t1 = c.active ? now : (Date.parse(c.updated_at) || now);
+  const sec = Math.max(0, Math.round((t1 - t0) / 1000));
+  if (sec < 60) return sec + "秒";
+  const m = Math.floor(sec / 60);
+  if (m < 60) return m + "分" + (sec % 60) + "秒";
+  return Math.floor(m / 60) + "小时" + (m % 60) + "分";
 }
 function toggleTasksPanel() {
   const p = $("#tasks-panel");
@@ -64,4 +90,3 @@ function paintBackBtn(parentId) {
   b.classList.toggle("show", !!parentId);
   b.onclick = () => { if (parentId) selectSession(parentId); };
 }
-

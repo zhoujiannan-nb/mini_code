@@ -1034,11 +1034,13 @@ details.m-think[open] summary { margin-bottom: 6px; }
 }
 .tasks-panel.open { display: block; }
 .tasks-panel h4 { font-size: 12px; color: var(--text2); padding: 10px 14px 6px; margin: 0; }
-.task-item { padding: 9px 14px; border-top: 1px solid var(--border); cursor: pointer; }
+/* 子任务行:单行 = 状态点 + 标题(role) + 右栏(token/用时) + 停止 */
+.task-item { display: flex; align-items: center; gap: 7px; padding: 8px 14px; border-top: 1px solid var(--border); cursor: pointer; font-size: 12.5px; }
 .task-item:hover { background: var(--hover); }
-.task-item .t1 { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; }
-.task-item .t2 { font-size: 11px; color: var(--text3); margin-top: 3px; word-break: break-all; }
-.task-item .t-act { margin-left: auto; flex: 0 0 auto; }
+.task-item .t1 { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.task-item .t1 i { font-style: normal; font-weight: 400; color: var(--text3); font-size: 11px; }
+.task-item .t-act { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+.task-item .t-meta { display: flex; flex-direction: column; align-items: flex-end; font-size: 11px; color: var(--text3); line-height: 1.35; font-variant-numeric: tabular-nums; }
 .task-stop {
   border: 1px solid var(--red); background: var(--surface); color: var(--red-t);
   border-radius: var(--r-xs); font-size: 11px; padding: 1px 7px; cursor: pointer;
