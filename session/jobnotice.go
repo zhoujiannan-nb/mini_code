@@ -88,6 +88,30 @@ func jobListener(mgr *SessionManager, sessionID string) func(*job.Job, string) {
 	}
 }
 
+// Jobs returns the session's background-command registry, or nil when the exec
+// tool has not been built yet (no task has run in this session) or the session
+// has been torn down. The registry is per-session, so List("")/Running on it
+// already report exactly this session's work. Callers must handle nil.
+func (s *Session) Jobs() *job.Registry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.execTool == nil {
+		return nil
+	}
+	return s.execTool.Jobs()
+}
+
+// Peek returns an already-loaded session without rebuilding it from the store.
+// A background command's registry lives with the loaded session's exec tool, so
+// a session that is not loaded here has nothing running: for the "does this
+// session have live jobs" indicator Peek is both the cheap and the correct
+// lookup (Get would rebuild a record from disk for every row the UI polls).
+func (m *SessionManager) Peek(sessionID string) *Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.sessions[sessionID]
+}
+
 // jobNoticeBudgetRunes bounds how much output the announcement carries. The
 // settlement of a long build can be megabytes; the model needs to learn that the
 // command ended, with what result, and enough of the tail to know whether that

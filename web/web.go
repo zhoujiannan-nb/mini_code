@@ -23,6 +23,7 @@ import (
 	"github.com/user/mini_code/approval"
 	"github.com/user/mini_code/channels"
 	"github.com/user/mini_code/config"
+	"github.com/user/mini_code/job"
 	"github.com/user/mini_code/plugin"
 	"github.com/user/mini_code/provider"
 	"github.com/user/mini_code/session"
@@ -138,6 +139,8 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/context-reminders", s.handleSetContextReminders)
 	mux.HandleFunc("POST /api/sessions/{id}/model", s.handleSetModel)
 	mux.HandleFunc("POST /api/sessions/{id}/reasoning", s.handleSetReasoning)
+	mux.HandleFunc("GET /api/sessions/{id}/jobs", s.handleListJobs)
+	mux.HandleFunc("POST /api/sessions/{id}/jobs/kill", s.handleKillJob)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleRenameSession)
 	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handleSetArchived)
 	// Workers (工作大类): the sidebar switcher and the shared 公约 editor.
@@ -387,11 +390,19 @@ type SessionSummary struct {
 	// (composer control); empty = the model's configured default.
 	Thinking        string `json:"thinking,omitempty"`
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	// JobsRunning / JobsTotal describe this session's background commands in
+	// THIS process (the live exec registry): JobsRunning counts the live ones,
+	// JobsTotal is everything not yet pruned. JobsRunning>0 is the sidebar's
+	// "后台运行中" flag; JobsTotal>0 is what makes the jobs trigger appear.
+	// Like Active they are live-only by design: a session not loaded here has
+	// no tracked work at all, which is correctly 0/0.
+	JobsRunning int `json:"jobs_running,omitempty"`
+	JobsTotal   int `json:"jobs_total,omitempty"`
 }
 
 func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 	thinking, effort := reasoningOf(r)
-	return SessionSummary{
+	sum := SessionSummary{
 		SessionID:        r.SessionID,
 		ParentID:         r.ParentID,
 		Title:            r.Title,
@@ -410,11 +421,13 @@ func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 		Thinking:         thinking,
 		ReasoningEffort:  effort,
 	}
+	sum.JobsRunning, sum.JobsTotal = s.jobCounts(r.SessionID)
+	return sum
 }
 
 // summarizeSummary builds the same API entry from a lightweight store row
 func (s *server) summarizeSummary(r session.SessionSummary) SessionSummary {
-	return SessionSummary{
+	sum := SessionSummary{
 		SessionID:    r.SessionID,
 		ParentID:     r.ParentID,
 		Title:        r.Title,
@@ -430,6 +443,96 @@ func (s *server) summarizeSummary(r session.SessionSummary) SessionSummary {
 		UpdatedAt:    r.UpdatedAt,
 		MessageCount: r.MessageCount,
 	}
+	sum.JobsRunning, sum.JobsTotal = s.jobCounts(r.SessionID)
+	return sum
+}
+
+// jobCounts reports how many of the session's background commands are running
+// and how many are visible at all, read from the live registry of the loaded
+// session. An unloaded session has no registry (its work is not tracked by this
+// process), so it reports 0/0 — which is the true answer, not a missing one.
+func (s *server) jobCounts(id string) (running, total int) {
+	sess := s.be.Mgr().Peek(id)
+	if sess == nil {
+		return 0, 0
+	}
+	reg := sess.Jobs()
+	if reg == nil {
+		return 0, 0
+	}
+	for _, sn := range reg.List("") {
+		total++
+		if sn.Status == job.StatusRunning {
+			running++
+		}
+	}
+	return running, total
+}
+
+// handleListJobs returns the session's background commands (live snapshot of
+// the exec job registry). The UI polls this while the jobs popover is open, so
+// the roster is fetched only while somebody is actually watching.
+func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	jobs := []job.Snapshot{}
+	running := 0
+	if sess := s.be.Mgr().Peek(id); sess != nil {
+		if reg := sess.Jobs(); reg != nil {
+			jobs = reg.List("")
+			for _, sn := range jobs {
+				if sn.Status == job.StatusRunning {
+					running++
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"jobs":    jobs,
+		"running": running,
+	})
+}
+
+// handleKillJob stops one running background command on the human's behalf —
+// the UI twin of the model's job_kill tool. It reports whether the registry
+// accepted the request; the job settles to killed asynchronously (the process
+// tree is being torn down), so the UI converges the row by polling instead of
+// trusting this immediate answer.
+func (s *server) handleKillJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		JobID  string `json:"job_id"`
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if strings.TrimSpace(req.JobID) == "" {
+		writeErr(w, http.StatusBadRequest, "job_id is required")
+		return
+	}
+	sess := s.be.Mgr().Peek(id)
+	if sess == nil {
+		writeErr(w, http.StatusNotFound, "session not loaded or not found: "+id)
+		return
+	}
+	reg := sess.Jobs()
+	if reg == nil {
+		writeErr(w, http.StatusNotFound, "no background commands in this session")
+		return
+	}
+	j := reg.Get(req.JobID)
+	if j == nil {
+		writeErr(w, http.StatusNotFound, "no job with id: "+req.JobID)
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "stopped from the UI"
+	}
+	killed := j.Cancel(reason)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"killed": killed,
+		"job_id": req.JobID,
+		"status": string(j.Status()),
+	})
 }
 
 func (s *server) handleListSessions(w http.ResponseWriter, r *http.Request) {

@@ -263,9 +263,11 @@ window.__mcBoot = __mcBoot;
       <span class="pill" id="status-pill" title="当前模型 / 本地服务端口">状态加载中…</span><span class="chat-ava" id="chat-ava"></span><span class="title" id="chat-title" title="双击重命名">新会话</span><span id="chat-sub"></span>
       <span class="spacer"></span>
       <button class="tasks-btn" id="btn-tasks" title="查看该会话派遣的子代理任务">🧵 子任务 <span class="tasks-count" id="tasks-count">0</span></button>
+      <button class="tasks-btn" id="btn-jobs" title="该会话的后台命令(运行中/已完成,可停止)">⚙ 后台 <span class="tasks-count" id="jobs-count">0</span></button>
       <button class="tasks-btn" id="btn-group-members" title="群成员(状态/改名/移出)">👥 成员 <span class="tasks-count" id="group-members-count">0</span></button>
       <button class="tasks-btn" id="btn-group-settings" title="群设置(改名/群背景/删除)">⚙ 群设置</button>
       <div class="tasks-panel" id="tasks-panel"></div>
+      <div class="tasks-panel" id="jobs-panel"></div>
       <div class="tasks-panel" id="group-panel"></div>
     </div>
     <div class="messages-wrap">
@@ -581,6 +583,7 @@ window.__mcBoot = __mcBoot;
 <script src="/js/controls.js"></script>
 <script src="/js/approval.js"></script>
 <script src="/js/tasks.js"></script>
+<script src="/js/jobs.js"></script>
 <script src="/js/status.js"></script>
 <script src="/js/settings.js"></script>
 <script src="/js/plugevents.js"></script>

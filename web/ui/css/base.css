@@ -1044,6 +1044,17 @@ details.m-think[open] summary { margin-bottom: 6px; }
   border-radius: var(--r-xs); font-size: 11px; padding: 1px 7px; cursor: pointer;
 }
 .task-stop:hover { background: var(--red-l); }
+/* 后台命令面板(jobs):行 = 状态点 + kind + 命令行 + 状态/详情 + 用时 + 停止 */
+.job-item { display: flex; align-items: center; gap: 7px; padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12.5px; }
+.job-item .j-kind { flex: 0 0 auto; font-size: 10.5px; color: var(--text3); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+.job-item .j-label { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text2); }
+.job-item .j-st { flex: 0 0 auto; color: var(--text3); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-item .j-el { flex: 0 0 auto; color: var(--text3); font-variant-numeric: tabular-nums; }
+.job-item .j-act { flex: 0 0 auto; }
+.j-sec { display: flex; align-items: center; gap: 8px; padding: 7px 14px 3px; font-size: 11px; color: var(--text3); }
+.j-sec .j-clear { margin-left: auto; border: 0; background: none; color: var(--text3); font-size: 11px; cursor: pointer; padding: 0; }
+.j-sec .j-clear:hover { color: var(--accent-t); }
+.job-stop.armed { background: var(--red-l); color: var(--red, #d33); }
 .back-btn {
   background: none; border: none; color: var(--text3); font-size: 12px;
   cursor: pointer; display: none;
@@ -1216,7 +1227,8 @@ details.m-think[open] summary { margin-bottom: 6px; }
 /* 群模式:隐藏会话级控制,显示群按钮 */
 main.group-mode #token-usage, main.group-mode #cache-hit, main.group-mode #output-speed, main.group-mode #ctx-toggle,
 main.group-mode #btn-mode, main.group-mode #btn-compact, main.group-mode .model-menu-wrap,
-main.group-mode #foot-hint, main.group-mode #btn-tasks, main.group-mode #btn-back-parent,
+ main.group-mode #foot-hint, main.group-mode #btn-tasks, main.group-mode #btn-back-parent,
+ main.group-mode #btn-jobs,
 main.group-mode #btn-stop { display: none !important; }
 #btn-group-members, #btn-group-settings { display: none; }
 main.group-mode #btn-group-members, main.group-mode #btn-group-settings { display: inline-block; }

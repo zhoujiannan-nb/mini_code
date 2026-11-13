@@ -165,9 +165,12 @@
     renameSession(state.current, s ? s.title : "");
   });
   $("#btn-tasks").addEventListener("click", toggleTasksPanel);
+  $("#btn-jobs").addEventListener("click", toggleJobsPanel);
   document.addEventListener("click", (e) => {
     const p = $("#tasks-panel");
     if (p.classList.contains("open") && !p.contains(e.target) && e.target.id !== "btn-tasks") closeTasksPanel();
+    const jp = $("#jobs-panel");
+    if (jp.classList.contains("open") && !jp.contains(e.target) && !e.target.closest("#btn-jobs")) closeJobsPanel();
     // 点模型按钮/菜单之外时收起模型下拉和思考浮层
     const wrap = $("#model-menu").closest(".model-menu-wrap");
     if (wrap && !wrap.contains(e.target)) {

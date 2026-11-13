@@ -82,6 +82,8 @@ function syncRunning() {
   if (!s.active && !state.sending && !state.live) pendingRemove();
 }
 function renderSessions() {
+  // 后台命令入口徽标跟着列表刷新收敛(它只依赖当前会话的摘要字段)。
+  if (typeof paintJobsBtn === "function") paintJobsBtn();
   const list = $("#sess-list");
   list.innerHTML = "";
   if (sessionsLoading) { list.innerHTML = sessSkeleton(); return; }
@@ -108,10 +110,11 @@ function renderSessions() {
     // 执行中只看服务端的实时标志(本进程是否有活动任务):
     // 持久化的 status 在进程崩溃/重启后可能停留在 "running",不可信。
     // 后台子 agent 在跑也算执行中(侧边栏是"这个会话有没有活在干"的口径;
-    // 输入框是否上锁另说,由 active 决定)。
-    const busy = s.active || !!s.children_active;
+    // 输入框是否上锁另说,由 active 决定)。会话自己的后台命令(exec 后台化)
+    // 还活着时按"后台运行中"显示:agent 空闲等通知,但活确实还在干。
+    const busy = s.active || !!s.children_active || (s.jobs_running > 0);
     const dotClass = busy ? "running" : (["completed", "failed", "interrupted"].includes(s.status) ? s.status : "idle");
-    const statusText = s.active ? "执行中" : (s.children_active ? "子任务中" : { completed: "已完成", failed: "失败", interrupted: "已中断" }[s.status] || "");
+    const statusText = s.active ? "执行中" : (s.children_active ? "子任务中" : (s.jobs_running > 0 ? "后台运行中" : { completed: "已完成", failed: "失败", interrupted: "已中断" }[s.status] || ""));
     el.innerHTML =
       '<div class="sess-title-row">' +
       agentAvatarBox("sess-ava", "span") +
