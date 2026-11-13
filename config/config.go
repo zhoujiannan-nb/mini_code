@@ -133,12 +133,15 @@ func (c *AppConfig) Validate() error {
 			// Valid reasoning_effort values differ per provider:
 			//   deepseek: off / low / high / max
 			//   sglang (Qwen3-style): xhigh / medium / low
-			// Other providers ignore the field, so no restriction there.
+			//   vllm (Qwen3-style deployments): same scale as sglang — the
+			//     server itself rejects anything else (measured on the
+			//     qwen3.8-flash-next vllm deployment: "Supported types are
+			//     xhigh (default), medium, and low").
 			var ok bool
 			switch m.Provider {
 			case "deepseek":
 				ok = m.ReasoningEffort == "off" || m.ReasoningEffort == "low" || m.ReasoningEffort == "high" || m.ReasoningEffort == "max"
-			case "sglang":
+			case "sglang", "vllm":
 				ok = m.ReasoningEffort == "xhigh" || m.ReasoningEffort == "medium" || m.ReasoningEffort == "low"
 			default:
 				ok = true
@@ -175,11 +178,11 @@ type ModelConfig struct {
 	TopK          int     `json:"top_k,omitempty"`
 	ReserveTokens int     `json:"reserve_tokens"`
 
-	// Thinking and ReasoningEffort control the model's thinking depth. DeepSeek
-	// and SGLang (Qwen3-style) both honor them; other providers ignore them.
+	// Thinking and ReasoningEffort control the model's thinking depth. DeepSeek,
+	// SGLang and vLLM (Qwen3-style) all honor them; other providers ignore them.
 	// Empty = provider default (DeepSeek: thinking on, effort high).
 	Thinking        string `json:"thinking,omitempty"`         // "" | "enabled" | "disabled"
-	ReasoningEffort string `json:"reasoning_effort,omitempty"` // deepseek: off/low/high/max; sglang: xhigh/medium/low
+	ReasoningEffort string `json:"reasoning_effort,omitempty"` // deepseek: off/low/high/max; sglang/vllm: xhigh/medium/low
 
 	// CompactionEnabled is the legacy per-model compaction toggle. It is
 	// migrated to the global AppConfig.CompactionEnabled on load and no

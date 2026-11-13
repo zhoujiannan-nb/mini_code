@@ -11,10 +11,11 @@ function modelTemplate() {
 // DeepSeek 官方地址固定,UI 里选了 deepseek 就不用填 base_url。
 const DS_BASE_URL = "https://api.deepseek.com";
 // 支持思考强度的 provider。
-const THINKING_PROVIDERS = new Set(["deepseek", "sglang"]);
+const THINKING_PROVIDERS = new Set(["deepseek", "sglang", "vllm"]);
 // 统一的思考强度刻度:最左「默认」,之后 off / 低 / 中 / 高;滑到 off 即关闭思考。
 // 各 provider 底层取值不同:deepseek 用 reasoning_effort(off/low/high/max);
-// sglang(Qwen3 系)关闭思考靠 thinking=disabled,低/中/高对应 low/medium/xhigh。
+// sglang 与 vllm(Qwen3 系)关闭思考靠 thinking=disabled,低/中/高对应 low/medium/xhigh
+// (vllm 端点实测:reasoning_effort 仅接受这三个值,默认 xhigh;enable_thinking=false 可关思考)。
 const THINK_SCALE = {
   deepseek: [
     { label: "默认", thinking: "",         effort: "" },
@@ -24,6 +25,13 @@ const THINK_SCALE = {
     { label: "高",   thinking: "",         effort: "max" },
   ],
   sglang: [
+    { label: "默认", thinking: "",         effort: "" },
+    { label: "off",  thinking: "disabled", effort: "" },
+    { label: "低",   thinking: "",         effort: "low" },
+    { label: "中",   thinking: "",         effort: "medium" },
+    { label: "高",   thinking: "",         effort: "xhigh" },
+  ],
+  vllm: [
     { label: "默认", thinking: "",         effort: "" },
     { label: "off",  thinking: "disabled", effort: "" },
     { label: "低",   thinking: "",         effort: "low" },

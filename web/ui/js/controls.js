@@ -68,7 +68,7 @@ function currentProvider() {
   const m = state.models.find(x => x.name === state.model);
   return m ? m.provider : "";
 }
-// 当前模型是否支持思考强度(仅 deepseek / sglang)。
+// 当前模型是否支持思考强度(deepseek / sglang / vllm)。
 function thinkingSupported() { return THINKING_PROVIDERS.has(currentProvider()); }
 // 当前 provider 的思考强度刻度(不支持则 null)。
 function thinkScale() { return THINK_SCALE[currentProvider()] || null; }
@@ -111,7 +111,7 @@ function openThinkingPop() {
   const scale = thinkScale();
   if (!scale) {
     $("#tp-body").style.display = "none";
-    $("#tp-note").textContent = "当前模型(" + (prov || "未知 provider") + ")不支持思考强度调整,仅 deepseek / sglang 支持。";
+    $("#tp-note").textContent = "当前模型(" + (prov || "未知 provider") + ")不支持思考强度调整,仅 deepseek / sglang / vllm 支持。";
     pop.classList.add("open");
     return;
   }
