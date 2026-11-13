@@ -154,7 +154,7 @@ func TestSubagentDispatchBgSettle(t *testing.T) {
 	// the settlement notice landed in the parent's conversation
 	found := false
 	for _, m := range parent.Record().Messages {
-		if m.Role == "user" && strings.Contains(m.GetText(), "<subagent ") && strings.Contains(m.GetText(), "bg result") {
+		if m.Role == "user" && strings.Contains(m.GetText(), "<agent ") && strings.Contains(m.GetText(), "bg result") {
 			found = true
 			break
 		}

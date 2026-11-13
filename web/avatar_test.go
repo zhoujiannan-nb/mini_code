@@ -14,49 +14,17 @@ import (
 	"github.com/user/mini_code/session"
 )
 
-// TestHandleAvatar verifies the embedded group avatar endpoint serves the
-// SVG with the right content type and rejects non-avatar file names.
-func TestHandleAvatar(t *testing.T) {
-	s := &server{}
-
-	req := httptest.NewRequest("GET", "/avatars/a001.svg", nil)
-	req.SetPathValue("name", "a001.svg")
-	rec := httptest.NewRecorder()
-	s.handleAvatar(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "image/svg+xml" {
-		t.Fatalf("content-type = %q, want image/svg+xml", ct)
-	}
-	body, _ := io.ReadAll(rec.Body)
-	if !strings.Contains(string(body), "<svg") {
-		t.Fatalf("body does not look like svg: %.60q", body)
-	}
-
-	for _, name := range []string{"../index.html", "index.html", "a1.svg", "a1000.svg", "a001.ico"} {
-		req := httptest.NewRequest("GET", "/avatars/"+name, nil)
-		req.SetPathValue("name", name)
-		rec := httptest.NewRecorder()
-		s.handleAvatar(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("name %q: status = %d, want 404", name, rec.Code)
-		}
-	}
-}
-
 // avatarFakeBE is a minimal Backend for the user-avatar endpoints: it only
 // backs the config get/save pair, keeping the persisted pointer alive.
 type avatarFakeBE struct {
 	cfg *config.AppConfig
 }
 
-func (f *avatarFakeBE) Hub() *channels.Hub            { return nil }
-func (f *avatarFakeBE) Mgr() *session.SessionManager  { return nil }
-func (f *avatarFakeBE) Groups() *session.GroupService { return nil }
-func (f *avatarFakeBE) Approvals() *approval.Service  { return nil }
-func (f *avatarFakeBE) Status() StatusInfo            { return StatusInfo{} }
-func (f *avatarFakeBE) GetConfig() *config.AppConfig  { return f.cfg }
+func (f *avatarFakeBE) Hub() *channels.Hub           { return nil }
+func (f *avatarFakeBE) Mgr() *session.SessionManager { return nil }
+func (f *avatarFakeBE) Approvals() *approval.Service { return nil }
+func (f *avatarFakeBE) Status() StatusInfo           { return StatusInfo{} }
+func (f *avatarFakeBE) GetConfig() *config.AppConfig { return f.cfg }
 func (f *avatarFakeBE) SaveConfig(cfg *config.AppConfig) (*SaveResult, error) {
 	f.cfg = cfg
 	return &SaveResult{Message: "saved"}, nil

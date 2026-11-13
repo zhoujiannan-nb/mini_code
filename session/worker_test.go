@@ -38,7 +38,7 @@ func newTestWorkerEnv(t *testing.T) (*SessionManager, *WorkerService) {
 // assertions below are about the bytes the provider would actually see.
 func buildPrompt(t *testing.T, s *Session) string {
 	t.Helper()
-	cfg, pb, _, extra, err := s.preparePromptTools()
+	cfg, pb, _, err := s.preparePromptTools()
 	if err != nil {
 		t.Fatalf("preparePromptTools: %v", err)
 	}
@@ -46,14 +46,14 @@ func buildPrompt(t *testing.T, s *Session) string {
 	wd := s.record.WorkDir
 	s.mu.Unlock()
 	_ = cfg
-	return pb.BuildSystemPrompt(wd, extra)
+	return pb.BuildSystemPrompt(wd, "")
 }
 
 // toolJSON renders the tool schemas of a session (the other half of the request
 // prefix).
 func toolJSON(t *testing.T, s *Session) string {
 	t.Helper()
-	cfg, pb, _, _, err := s.preparePromptTools()
+	cfg, pb, _, err := s.preparePromptTools()
 	if err != nil {
 		t.Fatalf("preparePromptTools: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestWorkerConventionReadOnlyForModel(t *testing.T) {
 	}
 	// Nothing about the workers tool asks the user anything any more (mode is the
 	// default full; the old always-confirm hook is gone with the write path).
-	cfg, _, _, _, err := s.preparePromptTools()
+	cfg, _, _, err := s.preparePromptTools()
 	if err != nil {
 		t.Fatalf("preparePromptTools: %v", err)
 	}

@@ -46,7 +46,6 @@ const workConstraints = `<work_requirements>
 type PromptBuilder struct {
 	agentConfig *agent.AgentConfig
 	Tools       *tools.ToolRegistry
-	taskTool    *tools.TaskTool
 	workDir     string
 	// modelName feeds the {{model}} placeholder in the persona file, dsh-style
 	// ("a coding agent powered by the {{model}} model"). Empty renders as
@@ -104,7 +103,7 @@ func (pb *PromptBuilder) registerDefaultTools() {
 // The registry is not created here: exec owns it, because exec is what hands work
 // to it. Taking it from the tool instead of injecting it keeps the wiring honest
 // — the job tools can only ever see the commands this session's exec actually
-// started. Called once per session, like EnableTaskTool.
+// started. Called once per session, like EnableAgentTools.
 func (pb *PromptBuilder) EnableJobTools(mgr *SessionManager, sessionID string) {
 	host, ok := pb.Tools.Get("exec").(tools.JobHost)
 	if !ok || host.Jobs() == nil {
@@ -190,20 +189,24 @@ func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string 
 	return strings.Join(parts, "\n")
 }
 
-// EnableTaskTool registers the task tool and the sub-agent control tools
-// (task_output / task_status / task_cancel / task_list) for a primary,
-// root session. Sub-agent sessions never get them (a sub-agent cannot
-// dispatch further sub-agents).
-func (pb *PromptBuilder) EnableTaskTool(mgr *SessionManager, sessionID, workDir string) {
+// EnableAgentTools registers the agent orchestration tools (subagent /
+// send_message / list_agents / agent_output / cancel_agent) for a primary, root
+// session. Sub-agent sessions never get them, which is what keeps the tree one
+// level deep: a child cannot start children of its own.
+//
+// One constant tool list, registered whether or not the session has agents yet:
+// the schema array is the head of the request prefix the provider's cache
+// matches, so it must not appear or disappear mid-conversation.
+func (pb *PromptBuilder) EnableAgentTools(mgr *SessionManager, sessionID string) {
 	dispatcher := mgr.Subagents()
-	pb.taskTool = tools.NewTaskTool()
-	pb.taskTool.SetSessionContext(sessionID, dispatcher)
-	pb.Tools.Register(pb.taskTool)
-	pb.Tools.Register(tools.NewTaskOutputTool(sessionID, dispatcher))
-	pb.Tools.Register(tools.NewTaskStatusTool(sessionID, dispatcher))
-	pb.Tools.Register(tools.NewTaskCancelTool(sessionID, dispatcher))
-	pb.Tools.Register(tools.NewTaskListTool(sessionID, dispatcher))
-	slog.Debug("TaskTool enabled", "session", sessionID)
+	agentTool := tools.NewAgentTool()
+	agentTool.SetSessionContext(sessionID, dispatcher)
+	pb.Tools.Register(agentTool)
+	pb.Tools.Register(tools.NewSendMessageTool(sessionID, dispatcher))
+	pb.Tools.Register(tools.NewListAgentsTool(sessionID, dispatcher))
+	pb.Tools.Register(tools.NewAgentOutputTool(sessionID, dispatcher))
+	pb.Tools.Register(tools.NewCancelAgentTool(sessionID, dispatcher))
+	slog.Debug("agent tools enabled", "session", sessionID)
 }
 
 // EnableContextTools registers the context-management tools (context_usage /
@@ -230,16 +233,6 @@ func (pb *PromptBuilder) EnableWorkerTools(sessionID string, api tools.WorkerDis
 	}
 	pb.Tools.Register(tools.NewWorkersTool(api))
 	slog.Debug("WorkersTool enabled", "session", sessionID)
-}
-
-// EnableGroupTool registers the group_chat tool for a group-member session.
-// api is the per-session backend (group info/log + delivery); it is read
-// live on every call, so mid-task membership changes are reflected.
-func (pb *PromptBuilder) EnableGroupTool(sessionID string, api tools.GroupChatDispatcher) {
-	t := tools.NewGroupChatTool()
-	t.SetContext(api)
-	pb.Tools.Register(t)
-	slog.Debug("GroupChatTool enabled", "session", sessionID)
 }
 
 // GetFilteredDefinitions returns the tool schemas the agent role may use.

@@ -21,7 +21,6 @@ type desktopRT struct {
 func (d desktopRT) CloseAll() {
 	d.rt.closeClients()
 	d.rt.mgr.Close()
-	d.rt.groups.Close()
 }
 
 func (d desktopRT) Handler() http.Handler { return web.NewServer(d.rt) }

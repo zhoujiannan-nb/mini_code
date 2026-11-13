@@ -222,7 +222,7 @@ func UnknownIDHint(id string) string {
 	if IsJobID(id) {
 		return " — that is the shape of a background command id from exec; read it with job_output(job_id=...) and see job_list for the rest"
 	}
-	return " (use task_list to see known jobs)"
+	return " (use list_agents to see the agents of this conversation)"
 }
 
 func humanBytes(n int64) string {

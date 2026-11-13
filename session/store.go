@@ -1,8 +1,10 @@
 package session
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"time"
@@ -21,7 +23,7 @@ func NewDefaultSessionStore() (*SessionStore, error) {
 	// live in the "spill" folder next to the database file.
 	s := &SessionStore{db: db, spillDir: filepath.Join(filepath.Dir(db.Path()), "spill")}
 	s.initDB()
-	go cleanupSpillDir(s.spillDir) // dsh-style boot sweep of stale spill files
+	s.startJanitor()
 	return s, nil
 }
 
@@ -73,6 +75,56 @@ type SessionStore struct {
 	evLocks [64]sync.Mutex
 	// spillDir holds full tool outputs behind pruned ledger rows (see prune.go).
 	spillDir string
+	// janitor bookkeeping (F5): one background ticker prunes the ledger and the
+	// spill folder, instead of the old one-shot sweep at boot — a process that
+	// runs for a month never swept again.
+	janitorStop chan struct{}
+	janitorOnce sync.Once
+}
+
+// janitorInterval is how often the background retention pass runs.
+const janitorInterval = 6 * time.Hour
+
+// eventRetention is how long ledger rows (which carry whole tool results) are
+// kept. Ninety days is longer than any conversation is resumed in practice and
+// short enough that a long-lived install does not grow without bound.
+const eventRetention = 90 * 24 * time.Hour
+
+// startJanitor launches the retention pass and the boot sweep.
+func (s *SessionStore) startJanitor() {
+	s.janitorStop = make(chan struct{})
+	go s.runJanitor() // boot sweep: stale spill files + anything already past retention
+	go func() {
+		t := time.NewTicker(janitorInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-s.janitorStop:
+				return
+			case <-t.C:
+				s.runJanitor()
+			}
+		}
+	}()
+}
+
+// runJanitor prunes the ledger past retention and sweeps the spill folder.
+func (s *SessionStore) runJanitor() {
+	if n, err := s.PruneEvents(time.Now().Add(-eventRetention)); err != nil {
+		slog.Warn("ledger retention pass failed", "err", err)
+	} else if n > 0 {
+		slog.Info("ledger retention pass removed events", "rows", n, "retention_days", int(eventRetention.Hours()/24))
+	}
+	cleanupSpillDir(s.spillDir)
+}
+
+// stopJanitor ends the retention goroutine (idempotent).
+func (s *SessionStore) stopJanitor() {
+	s.janitorOnce.Do(func() {
+		if s.janitorStop != nil {
+			close(s.janitorStop)
+		}
+	})
 }
 
 func NewSessionStore(dbPath string) (*SessionStore, error) {
@@ -82,7 +134,7 @@ func NewSessionStore(dbPath string) (*SessionStore, error) {
 	}
 	s := &SessionStore{db: db, spillDir: filepath.Join(filepath.Dir(dbPath), "spill")}
 	s.initDB()
-	go cleanupSpillDir(s.spillDir) // dsh-style boot sweep of stale spill files
+	s.startJanitor()
 	return s, nil
 }
 
@@ -123,8 +175,50 @@ func (s *SessionStore) initDB() {
 	s.migrateChannelKey()
 	s.migrateMode()
 	s.migrateModelKey()
+	s.migrateMessageCount()
+	s.initMessages()
 	s.initEvents()
 	s.initWorkers()
+}
+
+// initMessages creates the append-only message table (F2).
+//
+// Why messages moved out of the sessions row: the whole conversation used to be
+// one JSON column, re-marshaled and rewritten 3-5 times per turn (and every
+// base64 image with it). Two processes sharing the database then overwrote each
+// other's turns silently. One row per message makes the turn path an INSERT of
+// the messages that are new, keeps the write proportional to the turn, and
+// gives the conversation a stable position (seq) that a concurrent writer cannot
+// clobber.
+//
+// The sessions.messages column is kept as a legacy projection (written by Update,
+// which is the infrequent path) so an older binary still reads something, and so
+// a database written before this change keeps working: Load prefers the rows and
+// falls back to the column.
+func (s *SessionStore) initMessages() {
+	s.db.InitTable(`CREATE TABLE IF NOT EXISTS session_message (
+		session_id TEXT NOT NULL,
+		seq        INTEGER NOT NULL,
+		payload    TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		PRIMARY KEY (session_id, seq)
+	)`)
+}
+
+// migrateMessageCount adds the cheap-count column to databases created before
+// it existed. Lists read it instead of json_array_length(messages), which meant
+// parsing the whole conversation payload on every poll.
+func (s *SessionStore) migrateMessageCount() {
+	rows, err := s.db.FetchAll("PRAGMA table_info(sessions)")
+	if err != nil {
+		return
+	}
+	for _, row := range rows {
+		if fmt.Sprint(row["name"]) == "message_count" {
+			return
+		}
+	}
+	s.db.Execute("ALTER TABLE sessions ADD COLUMN message_count INTEGER DEFAULT 0")
 }
 
 // migrateChannelKey adds the channel_key column to databases created before
@@ -218,7 +312,8 @@ func sessionListQuery(bucket string) string {
 	return `SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key,
 	        COALESCE(worker_id, '') AS worker_id,
 	        created_at, updated_at,
-	        COALESCE(json_array_length(messages), 0) AS message_count,
+	        CASE WHEN COALESCE(message_count, 0) > 0 THEN message_count
+	             ELSE COALESCE(json_array_length(messages), 0) END AS message_count,
 	        COALESCE(json_extract(metadata, '$.usage_total.prompt'), 0) AS total_prompt,
 	        COALESCE(json_extract(metadata, '$.usage_total.completion'), 0) AS total_completion
 	 FROM sessions
@@ -261,7 +356,8 @@ func (s *SessionStore) ListChildren(parentID string) ([]SessionSummary, error) {
 	rows, err := s.db.FetchAll(
 		`SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key,
 		        created_at, updated_at,
-		        COALESCE(json_array_length(messages), 0) AS message_count,
+		        CASE WHEN COALESCE(message_count, 0) > 0 THEN message_count
+	             ELSE COALESCE(json_array_length(messages), 0) END AS message_count,
 		        COALESCE(json_extract(metadata, '$.usage_total.prompt'), 0) AS total_prompt,
 		        COALESCE(json_extract(metadata, '$.usage_total.completion'), 0) AS total_completion
 		 FROM sessions
@@ -275,6 +371,57 @@ func (s *SessionStore) ListChildren(parentID string) ([]SessionSummary, error) {
 	out := make([]SessionSummary, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, summaryFromRow(row))
+	}
+	return out, nil
+}
+
+// ChildAgentRow is one sub-agent session plus the identity the dispatcher
+// stored in its metadata. The identity lives in the session row (not in a
+// process-local table) so that after a restart the agents of a conversation are
+// still listed by name, and send_message can wake one by name.
+type ChildAgentRow struct {
+	SessionID   string
+	Name        string
+	Description string
+	Goal        string
+	Role        string
+	Status      string // the persisted status of its last run
+	CreatedAt   string
+}
+
+// ListChildAgents returns the sub-agent sessions of one parent, oldest first,
+// with their agent names. Rows whose name is missing (sessions created before
+// names existed) fall back to the session id.
+func (s *SessionStore) ListChildAgents(parentID string) ([]ChildAgentRow, error) {
+	rows, err := s.db.FetchAll(
+		`SELECT session_id, title, agent_role, status, metadata, created_at
+		 FROM sessions
+		 WHERE parent_id = ?
+		 ORDER BY created_at ASC`,
+		parentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ChildAgentRow, 0, len(rows))
+	for _, row := range rows {
+		r := ChildAgentRow{
+			SessionID: fmt.Sprint(row["session_id"]),
+			Role:      fmt.Sprint(row["agent_role"]),
+			Status:    fmt.Sprint(row["status"]),
+			CreatedAt: asString(row["created_at"]),
+		}
+		meta := map[string]interface{}{}
+		if raw, ok := row["metadata"].(string); ok && raw != "" {
+			_ = json.Unmarshal([]byte(raw), &meta)
+		}
+		r.Name = metadataString(&SessionRecord{Metadata: meta}, "agent_name")
+		r.Description = metadataString(&SessionRecord{Metadata: meta}, "agent_description")
+		r.Goal = metadataString(&SessionRecord{Metadata: meta}, "agent_goal")
+		if r.Name == "" {
+			r.Name = r.SessionID
+		}
+		out = append(out, r)
 	}
 	return out, nil
 }
@@ -323,6 +470,13 @@ func summaryFromRow(row map[string]interface{}) SessionSummary {
 	}
 }
 
+// asString converts a SQLite scalar to string, tolerating a NULL (which the
+// driver hands back as nil).
+func asString(v interface{}) string {
+	s, _ := v.(string)
+	return s
+}
+
 // asInt converts a SQLite scalar (int64 via database/sql) to int, tolerating
 // the float64 encoding some drivers use for INTEGER columns.
 func asInt(v interface{}) int {
@@ -357,20 +511,118 @@ func (s *SessionStore) Get(sessionID string) (*SessionRecord, error) {
 	if err != nil || row == nil {
 		return nil, err
 	}
-	return s.rowToRecord(row)
+	rec, err := s.rowToRecord(row)
+	if err != nil || rec == nil {
+		return rec, err
+	}
+	// Rows are the truth when they exist; the JSON column is the legacy
+	// projection kept for databases (and binaries) that predate the row table.
+	if msgs, err := s.loadMessages(sessionID); err != nil {
+		return nil, err
+	} else if len(msgs) > 0 {
+		rec.Messages = msgs
+	}
+	return rec, nil
+}
+
+// loadMessages reads one conversation's rows, oldest first.
+func (s *SessionStore) loadMessages(sessionID string) ([]provider.Message, error) {
+	rows, err := s.db.FetchAll(
+		"SELECT payload FROM session_message WHERE session_id = ? ORDER BY seq ASC", sessionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.Message, 0, len(rows))
+	for _, row := range rows {
+		raw, _ := row["payload"].(string)
+		var m provider.Message
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			slog.Warn("skipping unreadable message row", "session", sessionID, "err", err)
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// replaceMessagesTx rewrites a conversation's rows inside an existing
+// transaction (the full-rewrite path: compaction, fork, a metadata write).
+func (s *SessionStore) replaceMessagesTx(tx *sql.Tx, sessionID string, msgs []provider.Message) error {
+	if _, err := tx.Exec("DELETE FROM session_message WHERE session_id = ?", sessionID); err != nil {
+		return err
+	}
+	now := time.Now().Format(time.RFC3339Nano)
+	for i, m := range msgs {
+		payload, err := json.Marshal(m)
+		if err != nil {
+			return fmt.Errorf("marshal message %d: %w", i, err)
+		}
+		if _, err := tx.Exec(
+			"INSERT INTO session_message(session_id, seq, payload, created_at) VALUES (?, ?, ?, ?)",
+			sessionID, i+1, string(payload), now); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec("UPDATE sessions SET message_count = ? WHERE session_id = ?", len(msgs), sessionID)
+	return err
+}
+
+// AppendMessages adds the messages a turn produced. total is the conversation's
+// length after the append (the caller already holds the full slice, so it needs
+// no COUNT query).
+//
+// This is the hot path: one INSERT per new message, no conversation rewrite.
+func (s *SessionStore) AppendMessages(sessionID string, msgs []provider.Message, total int) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	return s.db.ExecTx(func(tx *sql.Tx) error {
+		var maxSeq int
+		if err := tx.QueryRow(
+			"SELECT COALESCE(MAX(seq), 0) FROM session_message WHERE session_id = ?", sessionID,
+		).Scan(&maxSeq); err != nil {
+			return err
+		}
+		now := time.Now().Format(time.RFC3339Nano)
+		stmt, err := tx.Prepare("INSERT INTO session_message(session_id, seq, payload, created_at) VALUES (?, ?, ?, ?)")
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		for i, m := range msgs {
+			payload, err := json.Marshal(m)
+			if err != nil {
+				return fmt.Errorf("marshal message %d: %w", i, err)
+			}
+			if _, err := stmt.Exec(sessionID, maxSeq+i+1, string(payload), now); err != nil {
+				return err
+			}
+		}
+		_, err = tx.Exec("UPDATE sessions SET message_count = ?, updated_at = ? WHERE session_id = ?",
+			total, time.Now().Format(time.RFC3339), sessionID)
+		return err
+	})
 }
 
 func (s *SessionStore) Update(record *SessionRecord) error {
 	record.UpdatedAt = time.Now().Format(time.RFC3339)
+	// The JSON column stays as the legacy projection; the rows are what Load
+	// reads. Keeping both in one transaction means a reader never sees a
+	// conversation that exists in one and not the other.
 	msgsJSON, _ := json.Marshal(record.Messages)
 	metaJSON, _ := json.Marshal(record.Metadata)
-	_, err := s.db.Execute(
-		`UPDATE sessions SET parent_id=?, title=?, agent_role=?, work_dir=?, status=?, mode=?, model_key=?, channel_key=?, worker_id=?, messages=?, metadata=?, updated_at=?
-		 WHERE session_id=?`,
-		record.ParentID, record.Title, record.AgentRole, record.WorkDir, record.Status, record.Mode, record.ModelKey, record.ChannelKey, record.WorkerID,
-		string(msgsJSON), string(metaJSON), record.UpdatedAt, record.SessionID,
-	)
-	return err
+	return s.db.ExecTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(
+			`UPDATE sessions SET parent_id=?, title=?, agent_role=?, work_dir=?, status=?, mode=?, model_key=?, channel_key=?, worker_id=?, messages=?, message_count=?, metadata=?, updated_at=?
+			 WHERE session_id=?`,
+			record.ParentID, record.Title, record.AgentRole, record.WorkDir, record.Status, record.Mode, record.ModelKey, record.ChannelKey, record.WorkerID,
+			string(msgsJSON), len(record.Messages), string(metaJSON), record.UpdatedAt, record.SessionID,
+		)
+		if err != nil {
+			return err
+		}
+		return s.replaceMessagesTx(tx, record.SessionID, record.Messages)
+	})
 }
 
 // GetByChannelKey returns the most recently updated session bound to the
@@ -453,14 +705,38 @@ func (s *SessionStore) SetModelKey(sessionID, key string) error {
 func (s *SessionStore) Delete(sessionID string) error {
 	// 连带删掉被删会话的事件账本:append-only 的流水留着只会是永远查不到的
 	// 垃圾行(会话都删了,没人再按 id 去查它)。子会话整排删,账本也整排删。
-	kids, _ := s.db.FetchAll("SELECT session_id FROM sessions WHERE parent_id = ?", sessionID)
-	s.db.Execute("DELETE FROM sessions WHERE parent_id = ?", sessionID)
-	_, err := s.db.Execute("DELETE FROM sessions WHERE session_id = ?", sessionID)
-	s.db.Execute("DELETE FROM session_event WHERE session_id = ?", sessionID)
-	for _, k := range kids {
-		s.db.Execute("DELETE FROM session_event WHERE session_id = ?", fmt.Sprint(k["session_id"]))
-	}
-	return err
+	//
+	// 全部放进一个事务:以前是五条独立语句,中途崩溃会留下"父会话已删、子会话
+	// 或账本行还在"的孤儿数据(F5)。
+	return s.db.ExecTx(func(tx *sql.Tx) error {
+		rows, err := tx.Query("SELECT session_id FROM sessions WHERE parent_id = ?", sessionID)
+		if err != nil {
+			return err
+		}
+		var kidIDs []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err == nil {
+				kidIDs = append(kidIDs, id)
+			}
+		}
+		rows.Close()
+		if _, err := tx.Exec("DELETE FROM sessions WHERE parent_id = ?", sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM sessions WHERE session_id = ?", sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM session_event WHERE session_id = ?", sessionID); err != nil {
+			return err
+		}
+		for _, k := range kidIDs {
+			if _, err := tx.Exec("DELETE FROM session_event WHERE session_id = ?", k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *SessionStore) rowToRecord(row map[string]interface{}) (*SessionRecord, error) {
@@ -494,5 +770,6 @@ func (s *SessionStore) rowToRecord(row map[string]interface{}) (*SessionRecord, 
 }
 
 func (s *SessionStore) Close() error {
+	s.stopJanitor()
 	return s.db.Close()
 }

@@ -14,7 +14,12 @@ import (
 	"sync"
 )
 
-//go:embed all:ui
+// The embed set is explicit rather than "all:ui": web/ui/ is a front-end
+// development tree that carries node_modules and test files, and embedding the
+// whole directory put ~23 MB of toolchain files into every binary (and exposed
+// them over /node_modules/...). Only what the page actually serves is shipped.
+//
+//go:embed ui/index.html ui/css ui/js ui/favicon.ico
 var uiFS embed.FS
 
 // embeddedPage returns the built-in web UI page.

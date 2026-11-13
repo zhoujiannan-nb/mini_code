@@ -105,6 +105,11 @@ func (t *GlobTool) Execute(ctx context.Context, params map[string]interface{}) (
 		if err != nil {
 			return nil
 		}
+		// A cancelled call must stop walking: on a large tree this loop is the
+		// difference between "stop" taking effect now and taking seconds.
+		if ctx.Err() != nil {
+			return filepath.SkipAll
+		}
 		if p == root {
 			return nil
 		}

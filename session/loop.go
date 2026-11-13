@@ -84,7 +84,10 @@ type AgentLoop struct {
 	// runtime, which leaves every async-capable tool on its synchronous path.
 	jobOwner string
 	// obs is the session's file-observation memory (policy.go). Nil = inert.
-	obs *tools.Observation
+	// obsDir is the directory relative tool paths resolve against, so the memory
+	// and the tools key the same file the same way.
+	obs    *tools.Observation
+	obsDir string
 	// curTurn tags events raised outside the turn-loop body (tool callbacks,
 	// the continue guard) with the turn they happened in.
 	curTurn int
@@ -216,6 +219,43 @@ func (l *AgentLoop) calibratedCount(messages []provider.Message) int {
 	l.estBefore = util.CountMessagesTokens(messages)
 	return l.calibrator().apply(l.estBefore)
 }
+
+// unknownInputBudget is the input budget assumed when the model's context window
+// is not configured.
+//
+// Without it, every threshold in the loop silently evaluated to "never":
+// InputBudgetFraction(0, x) is 0, so no 80/85% reminders and no automatic
+// compaction ever fired, and the first sign of trouble was the provider
+// rejecting a request. A conservative assumed budget at least keeps compaction
+// alive; the warning below makes the misconfiguration visible instead of silent.
+const unknownInputBudget = 65536
+
+var unknownWindowWarned sync.Map // model key -> struct{}
+
+// warnUnknownWindowOnce logs the unconfigured-window warning once per model.
+func warnUnknownWindowOnce(model string) {
+	if _, loaded := unknownWindowWarned.LoadOrStore(model, struct{}{}); !loaded {
+		slog.Warn("model context window is not configured: context budgeting assumes a conservative budget, "+
+			"so the session will compact earlier than it has to. Set context_window in the model config (or run the probe).",
+			"model", model, "assumed_input_budget", unknownInputBudget)
+	}
+}
+
+// inputBudgetFor is the usable input budget for compaction and reminder
+// decisions, falling back to unknownInputBudget when the window is unknown.
+func inputBudgetFor(client *provider.ModelClient) int {
+	if client == nil {
+		return unknownInputBudget
+	}
+	if b := client.GetMaxInput(); b > 0 {
+		return b
+	}
+	warnUnknownWindowOnce(client.ModelName())
+	return unknownInputBudget
+}
+
+// inputBudget is inputBudgetFor for this loop's client.
+func (l *AgentLoop) inputBudget() int { return inputBudgetFor(l.client) }
 
 // countMessages is calibratedCount without the estBefore side effect: budget
 // math outside the request path must not pollute the sample pair that the next
@@ -608,7 +648,7 @@ func scanUsageNoticeMarkers(messages []provider.Message) (hasStage1, hasStage2 b
 // is preserved. tokens is the calibrated (provider-scale) estimate the caller
 // already computed.
 func (l *AgentLoop) maybeInjectUsageReminder(messages []provider.Message, tokens int) []provider.Message {
-	budget := l.client.GetMaxInput()
+	budget := l.inputBudget()
 	limit1 := InputBudgetFraction(budget, usageNoticeStage1)
 	limit2 := InputBudgetFraction(budget, usageNoticeStage2)
 	if limit2 <= 0 {
@@ -647,7 +687,7 @@ func (l *AgentLoop) maybeInjectUsageReminder(messages []provider.Message, tokens
 // autoCompactLimit is the token count at which the loop compacts on its own: 90% of
 // the model's usable input budget, the same denominator the notices quote.
 func (l *AgentLoop) autoCompactLimit() int {
-	return InputBudgetFraction(l.client.GetMaxInput(), compactInputFraction)
+	return InputBudgetFraction(l.inputBudget(), compactInputFraction)
 }
 
 // applyWorkerNotice appends the worker notice when there is one: the join reminder,
@@ -771,7 +811,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			// context has grown by at least recompactGrowTokens since the last
 			// compaction (see lastCompactionTokens).
 			if !need && l.compactionOn {
-				maxInput := l.client.GetMaxInput()
+				maxInput := l.inputBudget()
 				// 90% of the usable input budget (autoCompactLimit), not a fraction of
 				// the raw context window: how much output was reserved must not move
 				// the point where the session compacts.
@@ -801,7 +841,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 		// sent to the model) to the context tools and to the UI token bar.
 		if l.ctxState != nil || l.onContextUsage != nil {
 			if l.ctxState != nil {
-				l.ctxState.SetUsage(tokens, l.client.GetMaxInput(), l.autoCompactLimit())
+				l.ctxState.SetUsage(tokens, l.inputBudget(), l.autoCompactLimit())
 			}
 			if l.onContextUsage != nil {
 				l.onContextUsage(tokens)
@@ -926,7 +966,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			// really does land below the threshold.
 			est := l.countMessages
 			overhead := RebuildOverhead(messages, summary, l.toolDefinitions, est)
-			rebuildBudget := CompactKeepBudget(l.client.GetMaxInput(), overhead)
+			rebuildBudget := CompactKeepBudget(l.inputBudget(), overhead)
 			newMsgs, ok := RebuildContextEst(messages, summary, CompactKeepMessages, rebuildBudget, est)
 			if !ok {
 				slog.Warn("compaction turn produced no usable summary; continuing uncompacted",
@@ -955,7 +995,7 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			})
 			messages = newMsgs
 			if l.ctxState != nil {
-				l.ctxState.SetUsage(after, l.client.GetMaxInput(), l.autoCompactLimit())
+				l.ctxState.SetUsage(after, l.inputBudget(), l.autoCompactLimit())
 			}
 			if l.onContextUsage != nil {
 				l.onContextUsage(after)
@@ -1639,6 +1679,10 @@ func (l *AgentLoop) executeSingleTool(ctx context.Context, tc provider.ToolCall)
 			slog.Warn("invalid tool call arguments", "name", tc.Function.Name, "error", err, "params", tc.Function.Arguments)
 		}
 	}
+	// Fold the call's outcome back into the session's file memory once it has
+	// run: a successful read authorises the next edit, a successful write makes
+	// its own result the new truth (see noteToolOutcome).
+	defer func() { l.noteToolOutcome(tc.Function.Name, params, result) }()
 	// Runtime permission gate: role permissions + cautious-mode approval.
 	// A denied call never reaches the tool; the model gets the deny message
 	// as the tool result.
@@ -1647,8 +1691,14 @@ func (l *AgentLoop) executeSingleTool(ctx context.Context, tc provider.ToolCall)
 			return tools.NewTextResult(denyMsg)
 		}
 	}
+	// Write-before-read gate: an existing file this session never read (or read
+	// before something else changed it) is not overwritten. The model gets an
+	// instruction, not a bare refusal: the fix is one read_file call away.
+	if denyMsg := l.checkWriteBeforeRead(tc.Function.Name, params); denyMsg != "" {
+		return tools.NewTextResult(denyMsg)
+	}
 	// What the ledger learns about file mutations relative to what the session
-	// read. Observation only: this has never blocked a call and does not now.
+	// read. Observation only: the gate above is what can refuse a call.
 	l.observePolicy(tc.ID, tc.Function.Name, params)
 	// A tool whose work can outlive the call goes to the job runtime: the work is
 	// started under a context this turn does not own, and the call either returns

@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"strings"
 	"testing"
 )
 
@@ -90,40 +89,9 @@ func TestBgSubagentLeavesParentActiveFalse(t *testing.T) {
 	}
 }
 
-// TestComposerIgnoresBackgroundSubagents pins the front-end half of the same
-// rule: the send button and the input lock follow state.running (the session's
-// own task) only. state.childrenActive may light the stop button, it must never
-// take the composer away.
-func TestComposerIgnoresBackgroundSubagents(t *testing.T) {
-	js := jsModulesForTest(t)
-
-	paint := jsFunc(t, js, "paintRunButtons")
-	if !strings.Contains(paint, `$("#btn-send").style.display = state.running ?`) {
-		t.Errorf("send must hide on state.running alone (not on sub-agent state):\n%s", paint)
-	}
-	if !strings.Contains(paint, "state.childrenActive") {
-		t.Errorf("the stop button must also show while background sub-agents run:\n%s", paint)
-	}
-	if strings.Contains(paint, `btn-send").style.display = (state.running || state.childrenActive`) {
-		t.Error("send must not be hidden by childrenActive")
-	}
-
-	sync := jsFunc(t, js, "syncRunning")
-	if !strings.Contains(sync, "setRunning(!!s.active)") {
-		t.Errorf("syncRunning must calibrate running from the session's own active flag:\n%s", sync)
-	}
-	if !strings.Contains(sync, "setChildrenActive(!!s.children_active)") {
-		t.Errorf("syncRunning must feed the sub-agent flag through setChildrenActive:\n%s", sync)
-	}
-	if strings.Contains(sync, "setRunning(!!s.children_active") {
-		t.Error("syncRunning must not lock the composer on children_active")
-	}
-
-	send := jsFunc(t, js, "send")
-	if !strings.Contains(send, "|| state.running) return") {
-		t.Errorf("send() must still refuse while the session's own task runs:\n%s", send)
-	}
-	if strings.Contains(send, "state.childrenActive") {
-		t.Error("send() must not gate on background sub-agents")
-	}
-}
+// The front-end half of this rule ("a background sub-agent lights the stop
+// button but must never take the composer away") used to be asserted here by
+// grepping the old paintRunButtons/syncRunning source. The UI is a Preact app
+// now, so that assertion lives where the behaviour does:
+// web/ui/test/render.test.mjs → "background sub-agent shows stop but does not
+// lock the composer" (jsdom, real click, real fetch).

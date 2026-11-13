@@ -48,10 +48,10 @@ func TestToSchemaNormalizesNilRequired(t *testing.T) {
 	}
 }
 
-func TestTaskListSchemaRequiredIsArray(t *testing.T) {
-	out := marshalSchema(t, NewTaskListTool("sess", nil))
+func TestListAgentsSchemaRequiredIsArray(t *testing.T) {
+	out := marshalSchema(t, NewListAgentsTool("sess", nil))
 	if bytes.Contains(out, []byte(`"required":null`)) {
-		t.Fatalf("task_list schema must not send required:null, got: %s", out)
+		t.Fatalf("list_agents schema must not send required:null, got: %s", out)
 	}
 	if !bytes.Contains(out, []byte(`"required":[]`)) {
 		t.Fatalf("expected empty required array, got: %s", out)

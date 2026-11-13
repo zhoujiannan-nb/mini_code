@@ -89,6 +89,26 @@ func (d *Database) FetchOne(sqlStmt string, params ...interface{}) (map[string]i
 	return result, nil
 }
 
+// ExecTx runs fn inside one transaction: every statement fn issues through the
+// tx commits together, or none of them do.
+//
+// It exists for the operations that touch more than one table and must not be
+// observed half-done by another process — deleting a session and its ledger
+// rows, and appending the message rows a turn produced (F5/F2).
+func (d *Database) ExecTx(fn func(tx *sql.Tx) error) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return fmt.Errorf("%w (rollback failed: %v)", err, rbErr)
+		}
+		return err
+	}
+	return tx.Commit()
+}
+
 func (d *Database) FetchAll(sqlStmt string, params ...interface{}) ([]map[string]interface{}, error) {
 	rows, err := d.db.Query(sqlStmt, params...)
 	if err != nil {

@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -36,7 +35,6 @@ import (
 type Backend interface {
 	Hub() *channels.Hub
 	Mgr() *session.SessionManager
-	Groups() *session.GroupService
 	Approvals() *approval.Service
 	Status() StatusInfo
 	GetConfig() *config.AppConfig
@@ -93,7 +91,6 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /index.html", s.handleIndex)
 	mux.HandleFunc("GET /favicon.ico", s.handleFavicon)
-	mux.HandleFunc("GET /avatars/{name}", s.handleAvatar)
 
 	// --- plugins (file-based drop-ins under ~/.mini_code/plugins) ---
 	mux.HandleFunc("GET /plugins/", s.handlePluginAsset)
@@ -158,18 +155,6 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/children", s.handleListChildren)
 	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
-	mux.HandleFunc("GET /api/groups", s.handleGroupsList)
-	mux.HandleFunc("POST /api/groups", s.handleGroupsCreate)
-	mux.HandleFunc("GET /api/groups/{id}", s.handleGroupsDetail)
-	mux.HandleFunc("POST /api/groups/{id}/background", s.handleGroupsSetBackground)
-	mux.HandleFunc("POST /api/groups/{id}/rename", s.handleGroupsRename)
-	mux.HandleFunc("DELETE /api/groups/{id}", s.handleGroupsDelete)
-	mux.HandleFunc("DELETE /api/groups/{id}/messages", s.handleGroupsClearMessages)
-	mux.HandleFunc("POST /api/groups/{id}/join", s.handleGroupsJoin)
-	mux.HandleFunc("DELETE /api/groups/{id}/members/{sid}", s.handleGroupsLeave)
-	mux.HandleFunc("POST /api/groups/{id}/members/{sid}/rename", s.handleGroupsMemberRename)
-	mux.HandleFunc("POST /api/groups/{id}/members/{sid}/avatar", s.handleGroupsMemberAvatar)
-	mux.HandleFunc("POST /api/groups/{id}/messages", s.handleGroupsSend)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)
@@ -235,26 +220,6 @@ func (s *server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "image/x-icon")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	w.Write(b)
-}
-
-// avatarNameRe whitelists the built-in group avatar file names.
-var avatarNameRe = regexp.MustCompile(`^a[0-9]{3}\.svg$`)
-
-// handleAvatar serves one embedded group avatar (web/ui/avatars/aNNN.svg).
-func (s *server) handleAvatar(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if !avatarNameRe.MatchString(name) {
-		http.NotFound(w, r)
-		return
-	}
-	b, err := uiFS.ReadFile("ui/avatars/" + name)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.Write(b)
 }
@@ -332,7 +297,7 @@ func (s *server) handleUserAvatarSet(w http.ResponseWriter, r *http.Request) {
 	s.saveAvatarConfig(w, avatar, func(c *config.AppConfig, v string) { c.UserAvatar = v })
 }
 
-// The agent has a single avatar for all sessions (see ui/js/groups.js:
+// The agent has a single avatar for all sessions (see ui/js/avatars.js:
 // agentAvatarBox): empty config value = the built-in ink tile with "M".
 func (s *server) handleAgentAvatarGet(w http.ResponseWriter, r *http.Request) {
 	cfg := s.be.GetConfig()
@@ -681,6 +646,7 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 			sum.ChildrenActive = childrenRunning(s.be.Hub(), rec.SessionID, children)
 		}
 	}
+	persistFailures, persistErr := sess.PersistHealth()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session":  sum,
 		"messages": messageViews(all),
@@ -695,6 +661,11 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		// from it on session open / page refresh. null when the session
 		// has no recorded LLM call yet.
 		"last_usage": sess.LastUsage(),
+		// Persistence health (F1): non-zero means the conversation on disk is
+		// behind what the model has seen. The UI shows it rather than letting a
+		// degraded session look normal.
+		"persist_failures": persistFailures,
+		"persist_error":    persistErr,
 	})
 }
 
@@ -1122,7 +1093,14 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	msg.Thinking = strings.TrimSpace(req.Thinking)
 	msg.ReasoningEffort = strings.TrimSpace(req.ReasoningEffort)
 	msg.WorkerID = strings.TrimSpace(req.WorkerID)
-	s.be.Hub().Submit(msg)
+	// The hub refuses rather than silently drops when its queue is full (F4), so
+	// the caller has to hear about it: 429 tells the UI "not accepted, retry"
+	// instead of leaving a message in the transcript that never reached the agent.
+	if err := s.be.Hub().Submit(msg); err != nil {
+		w.Header().Set("Retry-After", "2")
+		writeErr(w, http.StatusTooManyRequests, err.Error())
+		return
+	}
 
 	resp := map[string]string{"task_id": msg.ID}
 	if req.SessionID != "" {

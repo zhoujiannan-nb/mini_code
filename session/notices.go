@@ -47,6 +47,9 @@ const (
 	NoticeCompact = "compact"
 	// NoticeSummary is a compaction summary standing in for the compacted past.
 	NoticeSummary = "summary"
+	// NoticePersist is the one-shot warning that the conversation could not be
+	// saved to disk (session.persistFailureNotice, F1).
+	NoticePersist = "persist"
 )
 
 // emptyRetryNotice is the nudge appended when the model answers with nothing.
@@ -80,7 +83,12 @@ func NoticeKind(m provider.Message) (kind string, ok bool) {
 		return NoticeCompact, true
 	case strings.Contains(t, "<previous-summary>"):
 		return NoticeSummary, true
-	case strings.HasPrefix(trimmed, "<subagent "):
+	case strings.HasPrefix(trimmed, "__MC_PERSIST_FAILED__"):
+		return NoticePersist, true
+	case strings.HasPrefix(trimmed, "<agent "), strings.HasPrefix(trimmed, "<subagent "):
+		// "<agent " is current (subagent.go, named agents); "<subagent " is the
+		// marker written by earlier builds — old transcripts must keep rendering
+		// as runtime notices rather than as the user speaking.
 		return NoticeSubagent, true
 	case strings.HasPrefix(trimmed, "<job "):
 		return NoticeJob, true

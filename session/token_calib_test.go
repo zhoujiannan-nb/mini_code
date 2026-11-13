@@ -358,9 +358,11 @@ func TestUsageReminderStagesFollowTheInputBudget(t *testing.T) {
 	}
 }
 
-// A model with no configured context window has no known budget: the loop then
-// stays quiet instead of inventing a denominator to measure against.
-func TestUsageReminderSilentWithoutAKnownBudget(t *testing.T) {
+// A model with no configured context window used to have no budget at all: every
+// threshold evaluated to "never", so reminders and automatic compaction were
+// silently dead until the provider rejected a request. The loop now assumes a
+// conservative budget instead, which keeps both alive (and warns once).
+func TestUnknownWindowFallsBackToConservativeBudget(t *testing.T) {
 	client, err := provider.NewModelClient(config.ModelConfig{
 		Provider: "vllm", BaseURL: "http://127.0.0.1:1", APIKey: "t",
 		ModelName: "test-model",
@@ -371,14 +373,21 @@ func TestUsageReminderSilentWithoutAKnownBudget(t *testing.T) {
 	defer client.Close()
 	loop := NewAgentLoop(client, 5, nil, nil, nil, nil, nil, nil)
 	if client.GetMaxInput() != 0 {
-		t.Fatalf("an unknown window should mean an unknown budget, got %d", client.GetMaxInput())
+		t.Fatalf("an unknown window should still report an unknown provider budget, got %d", client.GetMaxInput())
 	}
+	if got := loop.inputBudget(); got != unknownInputBudget {
+		t.Fatalf("loop budget = %d, want the fallback %d", got, unknownInputBudget)
+	}
+	// The fallback must be expressed as a real compaction threshold, not zero.
+	if limit := loop.autoCompactLimit(); limit <= 0 {
+		t.Fatalf("auto-compaction limit = %d with an unknown window, want > 0", limit)
+	}
+	// And the reminder stages must be reachable.
 	base := []provider.Message{{Role: "system", Content: "SYSTEM"}}
-	if got := loop.maybeInjectUsageReminder(base, 10_000_000); len(got) != len(base) {
-		t.Fatalf("a notice was injected without a known budget: %d messages", len(got))
-	}
-	if loop.autoCompactLimit() != 0 {
-		t.Fatal("an unknown budget must not produce a compaction threshold")
+	limit := InputBudgetFraction(loop.inputBudget(), usageNoticeStage1)
+	got := loop.maybeInjectUsageReminder(base, limit+1)
+	if len(got) != len(base)+1 {
+		t.Fatalf("no reminder above the first stage with a fallback budget: %d messages", len(got))
 	}
 }
 

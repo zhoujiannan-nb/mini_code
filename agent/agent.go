@@ -24,7 +24,6 @@ var basePermissions = map[string]interface{}{
 	"exec":         "allow",
 	"skills":       "allow",
 	"readimg":      "allow",
-	"group_chat":   "allow", // read/send on the group channel (only registered for group members)
 	"workers":      "allow", // 工作大类: discover/create/join + the shared 公约 (only registered for root sessions)
 }
 
@@ -54,11 +53,12 @@ func BuildAgentConfig() *AgentConfig {
 			"delete_file": "allow",
 			// move_file / copy_file dropped from the default toolset (see
 			// session.registerDefaultTools) — no permission entry to grant.
-			"task":            "allow",
-			"task_output":     "allow",
-			"task_status":     "allow",
-			"task_cancel":     "allow",
-			"task_list":       "allow",
+			// Agent orchestration (one level deep: only root sessions get these).
+			"subagent":      "allow",
+			"send_message":  "allow",
+			"list_agents":   "allow",
+			"agent_output":  "allow",
+			"cancel_agent":  "allow",
 			"context_usage":   "allow", // read context token usage (paired with compact_context)
 			"compact_context": "allow", // actively request context compaction
 		}),
@@ -66,7 +66,7 @@ func BuildAgentConfig() *AgentConfig {
 }
 
 // WorkAgentConfig is the full-permission worker sub-agent. It inherits the
-// parent agent's toolset (everything except the task tool, so sub-agents can
+// parent agent's toolset (everything except the agent tools, so sub-agents can
 // never dispatch further sub-agents) and, at dispatch time, the parent
 // session's permission mode (full / cautious — see session package).
 func WorkAgentConfig() *AgentConfig {

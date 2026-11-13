@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+
+	"github.com/user/mini_code/util"
 )
 
 // SearchTool is a grep-like tool: it locates matching lines across the
@@ -150,17 +154,36 @@ func (t *SearchTool) Execute(ctx context.Context, params map[string]interface{})
 		}
 	}
 
-	type fileMatch struct {
-		file     string
-		lines    []string
-		matchIdx []int // 0-based line indices of matching lines
+	// Files are scanned by a small worker pool: search is the tool the model
+	// reaches for on every unfamiliar tree, and a serial filepath.Walk on a
+	// warm repo (~50k files) spends most of its time waiting on page cache and
+	// antivirus, not on the regex. Results are collected per file and sorted
+	// afterwards, so parallelism never changes the output order.
+	type fileHit struct {
+		abs   string
+		rel   string
+		idxs  []int    // 0-based matched line indices
+		texts []string // matched line text, parallel to idxs
 	}
-	var files []fileMatch
-	total := 0
-	filesScanned := 0
-	truncatedFiles := false
-
-	visitFile := func(fp string) {
+	var (
+		hits          []fileHit
+		mu            sync.Mutex
+		wg            sync.WaitGroup
+		total         int
+		filesScanned  int
+		truncatedFile bool
+	)
+	noteScan := func(scanned, truncated bool) {
+		mu.Lock()
+		if scanned {
+			filesScanned++
+		}
+		if truncated {
+			truncatedFile = true
+		}
+		mu.Unlock()
+	}
+	scanOne := func(fp string) {
 		if ctx.Err() != nil {
 			return
 		}
@@ -185,45 +208,68 @@ func (t *SearchTool) Execute(ctx context.Context, params map[string]interface{})
 		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			return
 		}
-		filesScanned++
 
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-		var lines []string
-		var matchIdx []int
+		var idxs []int
+		var texts []string
 		lineNo := 0
+		truncated := false
 		for scanner.Scan() {
 			lineNo++
 			if lineNo > searchFileCap {
-				truncatedFiles = true
+				truncated = true
 				break
 			}
-			line := scanner.Text()
+			// Per-line decode: a GBK lead byte never spans the 0x0A that
+			// split the line, so decoding line by line is exact (the same
+			// reasoning as read_file's streaming path). Without this a GBK
+			// file's matches reach the model as U+FFFD noise.
+			line := util.DecodeToUTF8(scanner.Bytes())
 			// Strip the trailing \r of CRLF files (the Windows default):
 			// without this every displayed line ends with a "\r" escape,
 			// which wastes tokens and distorts the model's view. Display
 			// only; the file on disk is untouched.
 			line = strings.TrimSuffix(line, "\r")
-			lines = append(lines, line)
 			if re.MatchString(line) {
-				total++
-				matchIdx = append(matchIdx, lineNo-1)
+				idxs = append(idxs, lineNo-1)
+				texts = append(texts, line)
 			}
 		}
-		if len(matchIdx) == 0 {
+		noteScan(true, truncated)
+		if len(idxs) == 0 {
 			return
 		}
 		rel := fp
 		if r, err := filepath.Rel(t.workspace, fp); err == nil && !strings.HasPrefix(r, "..") {
 			rel = r
 		}
-		files = append(files, fileMatch{file: rel, lines: lines, matchIdx: matchIdx})
+		mu.Lock()
+		total += len(idxs)
+		hits = append(hits, fileHit{abs: fp, rel: rel, idxs: idxs, texts: texts})
+		mu.Unlock()
 	}
 
 	if info.IsDir() {
-		filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
+		paths := make(chan string, 256)
+		workers := searchWorkers
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for p := range paths {
+					scanOne(p)
+				}
+			}()
+		}
+		// Walk on the caller goroutine: it only reads directory entries, and
+		// doing it here keeps cancellation immediate (SkipAll on ctx).
+		walkErr := filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
 			if err != nil {
 				return nil
+			}
+			if ctx.Err() != nil {
+				return filepath.SkipAll
 			}
 			if fi.IsDir() {
 				if p != root && ignoreDirs[fi.Name()] {
@@ -231,30 +277,37 @@ func (t *SearchTool) Execute(ctx context.Context, params map[string]interface{})
 				}
 				return nil
 			}
-			visitFile(p)
+			paths <- p
 			return nil
 		})
+		close(paths)
+		wg.Wait()
+		if walkErr != nil && !errors.Is(walkErr, filepath.SkipAll) {
+			return NewTextResult(fmt.Sprintf("Error: %s", walkErr)), nil
+		}
 	} else {
-		visitFile(root)
+		scanOne(root)
 	}
 
 	if total == 0 {
 		return NewTextResult(fmt.Sprintf("No matches for %q in %s (%d files scanned).", pattern, root, filesScanned)), nil
 	}
 
-	// Deterministic ordering: by file, then line number.
-	sort.Slice(files, func(i, j int) bool { return files[i].file < files[j].file })
+	// Deterministic ordering: by file, then line number. The scan itself is
+	// concurrent, so this sort is what keeps the output identical to the
+	// serial version regardless of which worker finished first.
+	sort.Slice(hits, func(i, j int) bool { return hits[i].rel < hits[j].rel })
 
 	var b strings.Builder
 	shown := 0
 	if contextLines == 0 {
 		// Match lines only (legacy output, no context, no separators).
-		for _, fm := range files {
-			for _, mi := range fm.matchIdx {
+		for _, fm := range hits {
+			for k, mi := range fm.idxs {
 				if shown >= maxResults {
 					break
 				}
-				b.WriteString(formatMatchLine(fm.file, mi, fm.lines[mi]))
+				b.WriteString(formatMatchLine(fm.rel, mi, fm.texts[k]))
 				shown++
 			}
 			if shown >= maxResults {
@@ -263,24 +316,31 @@ func (t *SearchTool) Execute(ctx context.Context, params map[string]interface{})
 		}
 	} else {
 		// Match lines plus N context lines each side; groups separated by "--".
-		for _, fm := range files {
+		// Context needs the surrounding lines, which the scan no longer keeps
+		// for every file (that was O(all lines of every matching file) memory);
+		// only the few files that actually matched are re-read here.
+		for _, fm := range hits {
 			if shown >= maxResults {
 				break
 			}
-			matchSet := make(map[int]bool, len(fm.matchIdx))
-			for _, mi := range fm.matchIdx {
+			lines := readLinesForContext(fm.abs)
+			if len(lines) == 0 {
+				continue
+			}
+			matchSet := make(map[int]bool, len(fm.idxs))
+			for _, mi := range fm.idxs {
 				matchSet[mi] = true
 			}
-			for _, rng := range mergeContextRanges(fm.matchIdx, contextLines, len(fm.lines), maxResults-shown) {
+			for _, rng := range mergeContextRanges(fm.idxs, contextLines, len(lines), maxResults-shown) {
 				if b.Len() > 0 {
 					b.WriteString("--\n")
 				}
 				for i := rng.start; i < rng.end; i++ {
 					if matchSet[i] {
-						b.WriteString(formatMatchLine(fm.file, i, fm.lines[i]))
+						b.WriteString(formatMatchLine(fm.rel, i, lines[i]))
 						shown++
 					} else {
-						b.WriteString(formatContextLine(fm.file, i, fm.lines[i]))
+						b.WriteString(formatContextLine(fm.rel, i, lines[i]))
 					}
 				}
 			}
@@ -295,11 +355,40 @@ func (t *SearchTool) Execute(ctx context.Context, params map[string]interface{})
 	if total > shown {
 		fmt.Fprintf(&b, "; showing first %d", shown)
 	}
-	if truncatedFiles {
+	if truncatedFile {
 		b.WriteString("; some very long files were truncated")
 	}
 	b.WriteString(")")
 	return NewTextResult(b.String()), nil
+}
+
+// searchWorkers bounds the file-scan pool. Reading a file is dominated by I/O
+// and page-cache waits, so the pool can be a little wider than the CPU count
+// without hurting anything; it must stay bounded so a search over a huge tree
+// does not open thousands of descriptors at once.
+const searchWorkers = 8
+
+// readLinesForContext re-reads one matching file to supply the lines around a
+// match. Only files that actually matched are re-read (the scan keeps just the
+// matching lines), which is why the whole scan no longer holds every line of
+// every file in memory.
+func readLinesForContext(fp string) []string {
+	f, err := os.Open(fp)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	var lines []string
+	for scanner.Scan() {
+		if len(lines) >= searchFileCap {
+			break
+		}
+		line := util.DecodeToUTF8(scanner.Bytes())
+		lines = append(lines, strings.TrimSuffix(line, "\r"))
+	}
+	return lines
 }
 
 // formatMatchLine renders a matching line as "path:lineNo: text".

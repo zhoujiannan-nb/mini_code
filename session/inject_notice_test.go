@@ -8,11 +8,12 @@ import (
 )
 
 // countNotices returns how many settlement notices (user role, tagged
-// "<subagent …") the session's persisted history carries.
+// "<agent …" by current builds or "<subagent …" by earlier ones) the session's
+// persisted history carries.
 func countNotices(s *Session) int {
 	n := 0
 	for _, m := range s.Record().Messages {
-		if m.Role == "user" && strings.Contains(m.GetText(), "<subagent ") {
+		if m.Role == "user" && (strings.Contains(m.GetText(), "<agent ") || strings.Contains(m.GetText(), "<subagent ")) {
 			n++
 		}
 	}

@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -55,7 +56,7 @@ type Session struct {
 	mu sync.Mutex
 
 	// pendingInjects holds user messages queued while a task is running
-	// (e.g. group-chat messages for a busy member); the agent loop drains
+	// (e.g. messages queued for a busy session); the agent loop drains
 	// them at the start of each turn (AgentLoop.SetInjections). Guarded by mu.
 	pendingInjects []string
 
@@ -68,6 +69,141 @@ type Session struct {
 	// Guarded by mu.
 	execTool *tools.ExecTool
 	execDir  string
+
+	// obs is the session's file memory: which files this conversation has read
+	// (the write-before-read gate) and which it mutated blind (the ledger). It
+	// hangs off the session rather than the loop because a loop is built per
+	// task: a per-task memory would demand a fresh read of everything at the
+	// start of every task, which is exactly the tax the gate must not add.
+	// Guarded by mu.
+	obs *tools.Observation
+
+	// Persistence health (F1). A failed write used to be invisible: the task went
+	// on believing its turn was stored, and a crash resumed from an older history
+	// than the user had seen, so the transcript and the file on disk silently
+	// diverged. Every write now goes through persistLocked, which counts failures,
+	// raises a ledger row, and tells the model once per task that the ground under
+	// it is no longer durable. Guarded by mu.
+	persistFailures int
+	persistErr      string
+	persistNoticed  bool
+
+	// Append fast path bookkeeping (F2): how many messages are known to be in
+	// session_message, and the JSON of the last one. A turn that only appended
+	// can write just its new messages; anything else (compaction shrank the
+	// conversation, a fork replaced it) falls back to the full rewrite.
+	// Guarded by mu.
+	msgRows     int
+	msgLastJSON string
+}
+
+// lastMessageJSON renders the trailing message for the append guard; "" for an
+// empty conversation.
+func lastMessageJSON(msgs []provider.Message) string {
+	if len(msgs) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(msgs[len(msgs)-1])
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// persistFailureNotice is the runtime message injected once per task when the
+// conversation cannot be written to disk. It is a user-role message because that
+// is the only role every chat template honours mid-conversation (see notices.go),
+// and it is marked so the transcript shows it as runtime text, not as the user
+// speaking.
+const persistFailureNotice = "__MC_PERSIST_FAILED__ The conversation could not be saved to disk; see the app log for the underlying error. " +
+	"Your work is still in memory and you can keep going, but if the app crashes now that work is lost. " +
+	"Finish the current step, tell the user that persistence is failing, and stop unless they ask you to continue."
+
+// persistLocked writes the session record and records the outcome. Callers must
+// hold s.mu (it touches record.Messages and the health counters).
+//
+// It reports whether the write succeeded. Callers that can surface an error
+// (the metadata setters) may ignore it; the task path must not, because that is
+// the one an interrupted run depends on.
+func (s *Session) persistLocked() bool {
+	if err := s.store.Update(s.record); err != nil {
+		s.notePersistFailure(err)
+		return false
+	}
+	s.persistErr = ""
+	s.msgRows = len(s.record.Messages)
+	s.msgLastJSON = lastMessageJSON(s.record.Messages)
+	return true
+}
+
+// notePersistFailure records a failed write and tells the model about it once
+// per task. Caller holds s.mu.
+func (s *Session) notePersistFailure(err error) {
+	s.persistFailures++
+	s.persistErr = err.Error()
+	slog.Error("session persist failed",
+		"session", s.ID(), "failures", s.persistFailures, "err", err)
+	// The ledger is best-effort by contract: if the database is the thing that
+	// is broken, this append fails too and only the log line survives.
+	if _, e := s.store.AppendEvent(s.ID(), EventPersistFailed, 0, map[string]any{
+		"error": err.Error(), "failures": s.persistFailures,
+	}); e != nil {
+		slog.Error("persist-failure ledger row failed", "session", s.ID(), "err", e)
+	}
+	if !s.persistNoticed {
+		s.persistNoticed = true
+		// Queued on the session, so the loop feeds it to the model at its next
+		// turn (and an idle session still shows it in the transcript).
+		s.pendingInjects = append(s.pendingInjects, persistFailureNotice)
+		s.record.Messages = append(s.record.Messages, provider.Message{Role: "user", Content: persistFailureNotice})
+	}
+}
+
+// persistTurnLocked writes the conversation after a turn.
+//
+// The normal case is append-only: the loop hands over the conversation with new
+// messages at the tail, so only those are written (F2 — the previous version
+// re-marshaled and rewrote the whole conversation, images included, several times
+// per turn). Anything else — compaction shrank it, a fork replaced it, an
+// external write invalidated the prefix — falls back to the full rewrite, which
+// is correct by construction.
+func (s *Session) persistTurnLocked() {
+	msgs := s.record.Messages
+	n := len(msgs)
+	if n == s.msgRows && lastMessageJSON(msgs) == s.msgLastJSON {
+		return // nothing new to write
+	}
+	prefixUnchanged := s.msgRows == 0 || (n > s.msgRows && lastMessageJSON(msgs[:s.msgRows]) == s.msgLastJSON)
+	if prefixUnchanged && n > s.msgRows {
+		if err := s.store.AppendMessages(s.ID(), msgs[s.msgRows:], n); err != nil {
+			s.notePersistFailure(err)
+			return
+		}
+		s.persistErr = ""
+		s.msgRows = n
+		s.msgLastJSON = lastMessageJSON(msgs)
+		return
+	}
+	s.persistLocked()
+}
+
+// PersistHealth reports persistence failures for this conversation: how many
+// writes have failed and the last error. The web layer exposes it so a
+// degraded conversation is visible instead of silently losing history.
+func (s *Session) PersistHealth() (failures int, lastErr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persistFailures, s.persistErr
+}
+
+// observation returns the session's file memory, creating it on first use.
+func (s *Session) observation() *tools.Observation {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.obs == nil {
+		s.obs = tools.NewObservation()
+	}
+	return s.obs
 }
 
 func (s *Session) ID() string             { return s.record.SessionID }
@@ -99,7 +235,7 @@ func (s *Session) ContextRemindersEnabled() bool {
 func (s *Session) SetContextRemindersEnabled(on bool) {
 	s.mu.Lock()
 	s.record.Metadata["context_reminders"] = on
-	s.store.Update(s.record)
+	s.persistLocked()
 	s.mu.Unlock()
 }
 
@@ -132,7 +268,7 @@ func (s *Session) SetReasoningOverride(thinking, effort string) {
 	}
 	setOrClear("thinking", thinking)
 	setOrClear("reasoning_effort", effort)
-	s.store.Update(s.record)
+	s.persistLocked()
 	s.mu.Unlock()
 }
 
@@ -167,7 +303,7 @@ func (s *Session) recordLastUsage(prompt, cached, completion int, reported bool,
 	// token totals, which last_usage alone cannot answer (it only holds the
 	// final turn). Same metadata map, same Update — no extra write.
 	s.addUsageTotal(prompt, completion)
-	s.store.Update(s.record)
+	s.persistLocked()
 	s.mu.Unlock()
 }
 
@@ -208,9 +344,9 @@ func (s *Session) LastUsage() map[string]interface{} {
 }
 
 // QueueUserMessage appends a user message to be injected into the running
-// agent loop at its next turn (e.g. a group-chat message arriving while the
-// session is busy). For an idle session use SessionManager.DeliverToSession,
-// which starts a task instead.
+// agent loop at its next turn (a message arriving while the session is busy).
+// For an idle session use SessionManager.DeliverToSession, which starts a task
+// instead.
 //
 // The message is ALSO persisted immediately (write-ahead): a web refresh
 // re-renders only persisted history (SnapshotMessages), so without this a
@@ -224,7 +360,7 @@ func (s *Session) QueueUserMessage(text string) {
 	defer s.mu.Unlock()
 	s.pendingInjects = append(s.pendingInjects, text)
 	s.record.Messages = append(s.record.Messages, provider.Message{Role: "user", Content: text})
-	s.store.Update(s.record)
+	s.persistLocked()
 }
 
 // DrainUserMessages returns and clears all queued user messages (called by
@@ -236,27 +372,6 @@ func (s *Session) DrainUserMessages() []string {
 	out := s.pendingInjects
 	s.pendingInjects = nil
 	return out
-}
-
-// SetGroupMembership records (or clears, when groupID == "") the group this
-// session belongs to in its metadata. The group_chat tool registration and
-// the shared group background are derived from that metadata on each task.
-// The session's parent_id is intentionally left untouched — group
-// membership is metadata, not the session tree.
-func (s *Session) SetGroupMembership(groupID, name string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.record.Metadata == nil {
-		s.record.Metadata = map[string]interface{}{}
-	}
-	if groupID == "" {
-		delete(s.record.Metadata, "group_id")
-		delete(s.record.Metadata, "group_name")
-	} else {
-		s.record.Metadata["group_id"] = groupID
-		s.record.Metadata["group_name"] = name
-	}
-	s.store.Update(s.record)
 }
 
 // metadataString reads one string field of a session record's metadata blob.
@@ -281,7 +396,7 @@ const (
 // session's own working directory.
 //
 // workDir == "" leaves the session's directory alone — that is the detach case,
-// where the files it wrote stay put. Like SetGroupMembership this is a whole-row
+// where the files it wrote stay put. It is a whole-row
 // write under the session lock, and it is only ever called while the session is
 // between tasks (join/leave happen at the start of a task or from the UI).
 func (s *Session) SetWorkerMembership(workerID, name, workDir string) {
@@ -301,7 +416,7 @@ func (s *Session) SetWorkerMembership(workerID, name, workDir string) {
 	} else {
 		s.record.Metadata[workerNameMetaKey] = name
 	}
-	s.store.Update(s.record)
+	s.persistLocked()
 }
 
 // setWorkerNameLabel refreshes only the worker NAME this session carries in its
@@ -315,7 +430,7 @@ func (s *Session) setWorkerNameLabel(name string) {
 		s.record.Metadata = map[string]interface{}{}
 	}
 	s.record.Metadata[workerNameMetaKey] = name
-	s.store.Update(s.record)
+	s.persistLocked()
 }
 
 // WorkerSnapshot returns what this session carries for its worker (id, display
@@ -376,13 +491,13 @@ func (s *Session) stopBackground(reason string) {
 // the session's normal turns. Any difference makes the request stop being a
 // prefix of the previous one, the provider recomputes the whole conversation,
 // and the user pays for it — hence one single source of truth.
-func (s *Session) preparePromptTools() (*agent.AgentConfig, *PromptBuilder, *tools.ContextState, string, error) {
+func (s *Session) preparePromptTools() (*agent.AgentConfig, *PromptBuilder, *tools.ContextState, error) {
 	cfg := s.agentCfg
 	if cfg == nil {
 		var err error
 		cfg, err = agent.GetAgentConfig(s.record.AgentRole)
 		if err != nil {
-			return nil, nil, nil, "", fmt.Errorf("get agent config: %w", err)
+			return nil, nil, nil, fmt.Errorf("get agent config: %w", err)
 		}
 	}
 
@@ -395,7 +510,7 @@ func (s *Session) preparePromptTools() (*agent.AgentConfig, *PromptBuilder, *too
 	pb.Tools.Register(s.sharedExec(s.record.WorkDir))
 	isRootSession := s.record.ParentID == ""
 	if cfg.Mode == "primary" && s.manager != nil && isRootSession {
-		pb.EnableTaskTool(s.manager, s.ID(), s.record.WorkDir)
+		pb.EnableAgentTools(s.manager, s.ID())
 	}
 	// Background commands (exec jobs), the tools that read and stop them, and the
 	// notice a command gets when it ends after its wait was given up on. Every
@@ -409,37 +524,20 @@ func (s *Session) preparePromptTools() (*agent.AgentConfig, *PromptBuilder, *too
 	ctxState := tools.NewContextState()
 	pb.EnableContextTools(ctxState)
 
-	// Group member: register the group_chat tool and append the shared
-	// group background to the system prompt. Non-group sessions are
-	// completely unchanged. The background is stable per group (it changes
-	// only when the user edits it), so the per-session prompt prefix stays
-	// cache-friendly.
-	var groupBackground string
+	// Worker (工作大类): nothing goes into the system prompt. The join reminder
+	// and the 公约 travel as one user message the loop appends once per task
+	// (Session.WorkerNotice), which keeps the request an exact extension of the
+	// cached prefix. The tool is registered for every root session, attached or
+	// not, so joining never changes the tool list either. When the service is
+	// not wired at all, nothing is registered and the prompt stays as it was.
 	if s.manager != nil {
-		if gsvc := s.manager.Groups(); gsvc != nil {
-			s.mu.Lock()
-			gid, _ := s.record.Metadata["group_id"].(string)
-			s.mu.Unlock()
-			if gid != "" {
-				pb.EnableGroupTool(s.ID(), gsvc.ToolAPIFor(s.ID()))
-				if rec, err := gsvc.Get(gid); err == nil && rec != nil {
-					groupBackground = rec.Background
-				}
-			}
-		}
-		// Worker (工作大类): nothing goes into the system prompt. The join reminder
-		// and the 公约 travel as one user message the loop appends once per task
-		// (Session.WorkerNotice), which keeps the request an exact extension of the
-		// cached prefix. The tool is registered for every root session, attached or
-		// not, so joining never changes the tool list either. When the service is
-		// not wired at all, nothing is registered and the prompt stays as it was.
 		if wsvc := s.manager.Workers(); wsvc != nil {
 			if isRootSession {
 				pb.EnableWorkerTools(s.ID(), wsvc.ToolAPIFor(s.ID()))
 			}
 		}
 	}
-	return cfg, pb, ctxState, groupBackground, nil
+	return cfg, pb, ctxState, nil
 }
 
 // Prompt runs one agent task and returns the final reply text together with
@@ -467,8 +565,14 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		}
 	}()
 	s.updateStatus("running")
+	// One persistence warning per task, not one per session: a task that keeps
+	// piling work onto an unpersisted history should hear it once, and the next
+	// task gets its own chance to say so again.
+	s.mu.Lock()
+	s.persistNoticed = false
+	s.mu.Unlock()
 
-	cfg, pb, ctxState, groupBackground, err := s.preparePromptTools()
+	cfg, pb, ctxState, err := s.preparePromptTools()
 	if err != nil {
 		s.updateStatus("failed")
 		return "", "", err
@@ -482,7 +586,7 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	if mdl != nil {
 		pb.SetModelName(mdl.ModelName())
 	}
-	systemPrompt := pb.BuildSystemPrompt(s.record.WorkDir, groupBackground)
+	systemPrompt := pb.BuildSystemPrompt(s.record.WorkDir, "")
 	defs := pb.GetFilteredDefinitions(cfg)
 
 	// Persist the accumulated conversation to the database after every
@@ -502,7 +606,7 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		}
 		s.mu.Lock()
 		s.record.Messages = append([]provider.Message(nil), messages...)
-		s.store.Update(s.record)
+		s.persistTurnLocked()
 		s.mu.Unlock()
 	}
 
@@ -536,9 +640,10 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	// means no job runtime, which is the correct fallback for a loop built without
 	// a session (tests, the one-shot CLI).
 	loop.SetJobOwner(s.ID())
-	// What this session has looked at, so a mutation of a file it never read can
-	// be recorded (measured, never blocked — see policy.go).
-	loop.SetObservation(tools.NewObservation())
+	// What this session has read (the write-before-read gate) and which files it
+	// mutated blind (the ledger). Session-scoped, not task-scoped: see the obs
+	// field comment.
+	loop.SetObservation(s.observation(), s.record.WorkDir)
 	// Live tool output (UI only) rides the same callback set; tools that cannot
 	// stream simply never call it.
 	loop.SetOnToolOutput(s.onToolOutput)
@@ -553,7 +658,7 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	if len(images) > 0 {
 		loop.SetUserImages(images)
 	}
-	// Mid-task user messages (group-chat messages for a running session) are
+	// Mid-task user messages (queued for a running session) are
 	// drained from the session at the start of every turn.
 	loop.SetInjections(s.DrainUserMessages)
 	// Worker notice (special user message): rendered once per task, at the start of
@@ -608,7 +713,7 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	if len(result.Messages) > 0 {
 		s.mu.Lock()
 		s.record.Messages = append([]provider.Message(nil), result.Messages...)
-		s.store.Update(s.record)
+		s.persistLocked()
 		s.mu.Unlock()
 	}
 
@@ -645,7 +750,7 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 
 func (s *Session) updateStatus(status string) {
 	s.record.Status = status
-	s.store.Update(s.record)
+	s.persistLocked()
 }
 
 // CompactSession manually compresses a session's persisted conversation with
@@ -688,7 +793,7 @@ func (m *SessionManager) CompactSession(ctx context.Context, sessionID string) (
 	}
 	// The tool schemas must match a normal turn exactly — they are part of the
 	// cached prompt prefix (see preparePromptTools).
-	cfg, pb, _, _, err := s.preparePromptTools()
+	cfg, pb, _, err := s.preparePromptTools()
 	if err != nil {
 		return before, before, fmt.Errorf("准备压缩上下文失败: %w", err)
 	}
@@ -708,8 +813,11 @@ func (m *SessionManager) CompactSession(ctx context.Context, sessionID string) (
 	}
 	s.mu.Lock()
 	s.Record().Messages = newMsgs
-	m.store.Update(s.Record())
+	ok := s.persistLocked()
 	s.mu.Unlock()
+	if !ok {
+		return before, after, fmt.Errorf("压缩完成但未能保存到磁盘(详见日志),下次压缩生效")
+	}
 	m.store.AppendEvent(sessionID, EventCompaction, 0, map[string]any{
 		"kind": "manual", "phase": "done", "before_tokens": before, "after_tokens": after,
 	})
@@ -770,9 +878,6 @@ type SessionManager struct {
 	subagentsMu sync.RWMutex
 	subagents   *SubagentService
 
-	// groups is the group-chat service (wired at startup; nil = groups off).
-	groupsMu sync.RWMutex
-	groups   *GroupService
 	// workers is the 工作大类 service (wired at startup; nil = workers off).
 	workersMu sync.RWMutex
 	workers   *WorkerService
@@ -1034,7 +1139,7 @@ func (m *SessionManager) approverRef() Approver {
 
 // --- sub-agent service ---
 
-// SetSubagents wires the background sub-agent service (task tool).
+// SetSubagents wires the sub-agent service (the subagent tool).
 func (m *SessionManager) SetSubagents(s *SubagentService) {
 	m.subagentsMu.Lock()
 	m.subagents = s
@@ -1046,22 +1151,6 @@ func (m *SessionManager) Subagents() *SubagentService {
 	m.subagentsMu.RLock()
 	defer m.subagentsMu.RUnlock()
 	return m.subagents
-}
-
-// --- group chat ---
-
-// SetGroups wires the group-chat service.
-func (m *SessionManager) SetGroups(g *GroupService) {
-	m.groupsMu.Lock()
-	m.groups = g
-	m.groupsMu.Unlock()
-}
-
-// Groups returns the wired group-chat service (nil before wiring).
-func (m *SessionManager) Groups() *GroupService {
-	m.groupsMu.RLock()
-	defer m.groupsMu.RUnlock()
-	return m.groups
 }
 
 // --- worker (工作大类) ---
@@ -1200,8 +1289,11 @@ func (m *SessionManager) appendMessage(sessionID, text string) error {
 	}
 	s.mu.Lock()
 	s.record.Messages = append(s.record.Messages, provider.Message{Role: "user", Content: text})
-	m.store.Update(s.record)
+	saved := s.persistLocked()
 	s.mu.Unlock()
+	if !saved {
+		return fmt.Errorf("message not persisted for session %s", sessionID)
+	}
 	return nil
 }
 
@@ -1274,6 +1366,11 @@ func (m *SessionManager) newSession(record *SessionRecord) *Session {
 		agentCfg: cfg,
 		manager:  m,
 	}
+	// Baseline for the append fast path (F2): the rows that already exist are
+	// exactly the messages in the loaded record, and the last one is what a
+	// later append must extend.
+	s.msgRows = len(record.Messages)
+	s.msgLastJSON = lastMessageJSON(record.Messages)
 	if cbs != nil {
 		s.onToolCallStart = cbs.OnToolStart
 		s.onToolCallEnd = cbs.OnToolEnd

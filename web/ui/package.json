@@ -1,0 +1,22 @@
+{
+  "name": "mini-code-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Mini Code web UI: zero-build ES modules, Preact + htm, no bundler.",
+  "scripts": {
+    "test": "node --import ./test/helpers/register.mjs --test \"test/**/*.test.mjs\""
+  },
+  "imports": {
+    "#preact": "./js/vendor/preact.js",
+    "#hooks": "./js/vendor/hooks.js",
+    "#htm": "./js/vendor/htm.js"
+  },
+  "dependencies": {
+    "htm": "3.1.1",
+    "preact": "11.2.0"
+  },
+  "devDependencies": {
+    "jsdom": "29.1.1"
+  }
+}

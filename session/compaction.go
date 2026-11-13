@@ -564,7 +564,7 @@ func (c *ContextCompactor) SummarizeAndRebuild(ctx context.Context, messages []p
 		return messages, fmt.Errorf("模型未返回摘要")
 	}
 	out, ok := RebuildContextEst(messages, summary, CompactKeepMessages,
-		CompactKeepBudget(c.client.GetMaxInput(), RebuildOverhead(messages, summary, tools, compEst)), compEst)
+		CompactKeepBudget(inputBudgetFor(c.client), RebuildOverhead(messages, summary, tools, compEst)), compEst)
 	if !ok {
 		return messages, fmt.Errorf("没有可压缩的历史(内容太短或没有安全的切分点)")
 	}

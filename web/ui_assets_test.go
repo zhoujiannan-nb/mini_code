@@ -29,9 +29,11 @@ func TestUIAssetsEmbedded(t *testing.T) {
 	if refs == 0 {
 		t.Fatal("index.html references no local assets; the CSS/JS split is gone")
 	}
-	// Spot-check the two stylesheets and a couple of modules by name, so a
-	// refactor that silently re-inlines everything into index.html fails here.
-	for _, want := range []string{"/css/base.css", "/css/layers.css", "/js/app.js", "/js/core.js"} {
+	// Spot-check the stylesheets and the module entry by name, so a refactor that
+	// silently re-inlines everything into index.html fails here. The front end is
+	// a Preact app now (js/main.js + js/lib + js/components); the assertion is
+	// about the split still existing, not about a particular file layout.
+	for _, want := range []string{"/css/base.css", "/css/layers.css", "/js/main.js"} {
 		if assets[want] == nil {
 			t.Errorf("expected embedded asset %q", want)
 		}
@@ -55,10 +57,10 @@ func TestUIAssetRouteServes(t *testing.T) {
 	// /favicon.ico has its own dedicated route (handleFavicon) registered ahead
 	// of "/", so it is checked separately below.
 	for ref, wantCT := range map[string]string{
-		"/css/base.css":   "text/css",
+		"/css/base.css":  "text/css",
 		"/css/layers.css": "text/css",
-		"/js/app.js":      "javascript",
-		"/js/core.js":     "javascript",
+		"/js/main.js":    "javascript",
+		"/js/lib/api.js": "javascript",
 	} {
 		resp, err := http.Get(srv.URL + ref)
 		if err != nil {

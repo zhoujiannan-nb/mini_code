@@ -22,11 +22,11 @@
    --edge: #e7e7e3;        /* 窗口四周:暖灰边 */
    --bg: #fbfbfa;          /* 聊天区/输入区底(Qoder 暖白) */
    --surface: #ffffff;     /* 面板:弹窗/输入框/下拉 */
-   --surface2: #f3f4f1;    /* 次级面板:工具卡/@ 选择器头部/群系统消息 */
+   --surface2: #f3f4f1;    /* 次级面板:工具卡/@ 选择器头部 */
    /* 半透明面板:顶栏/侧边栏浮在内容上,backdrop-filter 出层次(强度比 v1 收敛) */
     --surface-a: rgba(255,255,255,.80);
     --card-a: rgba(255,255,255,.72);   /* 会话列表卡片:比 --surface-a 更透一档,让侧栏那道绿渐变透上来 */
-    --side-inset: 10px;   /* 侧栏里新建按钮/worker 条/会话卡片/群区共用的左右内缩,四处必须同一个值 */
+    --side-inset: 10px;   /* 侧栏里新建按钮/worker 条/会话卡片共用的左右内缩,必须同一个值 */
    --side: #f4f5f2;        /* 侧边栏不透明回退值 */
    --side-a: rgba(244,245,242,.84);
    --glow1: rgba(106,190,124,.05);  /* 背景光晕压到若有若无:Qoder 基本不用光晕 */
@@ -106,7 +106,6 @@
    --msg-gap: 10px;
    --msg-radius: 18px;   /* 扁空气泡:DSH radius-xl(20) 略收 */
    --msg-text: 14px;
-   --msg-time: 11px;
    --pad-x: 22px;
    --gap-msg: 12px;
    --lh-text: 1.7;
@@ -253,13 +252,12 @@ aside {
   transition: background .15s ease;
 }
 .new-btn:hover { background: var(--accent-btn-h); }
-/* 侧边栏分区头:会话/群聊两区统一小标题,视觉分层 */
+/* 侧边栏分区头(保留给未来的分区标题,当前未使用) */
 .sec-head {
   display: flex; align-items: center; gap: 6px;
   font-size: 11px; color: var(--text3); padding: 8px 10px 4px;
   letter-spacing: .05em; user-select: none;
 }
-.sec-count { font-weight: 400; }
 .sess-list { flex: 0 1 auto; min-height: 0; max-height: 50%; overflow-y: auto; padding: 0 8px 8px; }
 .sess-item {
   padding: 7px 10px; border-radius: var(--r-sm); cursor: pointer; margin-bottom: 2px;
@@ -269,7 +267,7 @@ aside {
 .sess-item:hover { background: var(--hover); }
 .sess-item.active { background: var(--hover-2); border-color: var(--border2); }
 /* 选中项这块底比侧栏亮,里面的次级小字升一级才保住 ≥7:1 */
-.sess-item.active .sess-meta, .group-item.active .g-count { color: var(--text2); }
+.sess-item.active .sess-meta { color: var(--text2); }
 .sess-title {
   font-size: 13px; font-weight: 600; color: var(--title); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; padding-right: 44px;
@@ -407,7 +405,7 @@ aside {
 .load-older { height: 0; margin: 0; }
 
 /* 消息:agent 正文平铺在近黑底上(参考图风格),只有需要强调的消息保留底色:
-   用户气泡 / 工具卡 / 群系统消息 / 错误 / 等待首 token */
+   用户气泡 / 工具卡 / 错误 / 等待首 token */
 .msg { margin-bottom: var(--gap-msg); }
 .m-card {
   background: transparent; border: 1px solid transparent; border-radius: var(--msg-radius);
@@ -698,14 +696,14 @@ details.m-think[open] summary { margin-bottom: 6px; }
 
 /* ---------- 配置弹窗 ---------- */
 /* 弹窗分层:同 z-index 时按 DOM 顺序叠,所以"能从别的弹窗里再点开"的必须显式抬高一层。
-   100 基础层(群/加成员/配置) → 110 二级弹窗(头像选择,由配置页或聊天区点开)
+   100 基础层(配置) → 110 二级弹窗(用户头像,由配置页或聊天区点开)
    → 120 打断层(危险操作审批,任何界面下都必须能点)。 */
 .modal-mask {
   position: fixed; inset: 0; background: var(--mask);
   backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
   display: none; align-items: center; justify-content: center; z-index: 100;
 }
-#avatar-mask, #user-avatar-mask { z-index: 110; }
+#user-avatar-mask { z-index: 110; }
 #approval-mask { z-index: 120; }
 .modal-mask.open { display: flex; }
 .modal {
@@ -1088,70 +1086,12 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .back-btn.show { display: inline-block; }
 .back-btn:hover { color: var(--accent-t); }
 
-/* ===== 群聊 ===== */
-/* 侧边栏群区:常驻分区(无群也显示),紧跟会话列表下方(不被顶到侧边栏底部),独立滚动、可折叠 */
-.group-sec {
-  flex: 0 1 auto; max-height: 45%; min-height: 0;
-  display: flex; flex-direction: column;
-  border-top: 1px solid var(--border); background: transparent;
-}
-.group-sec.collapsed { max-height: none; }
-.group-sec.collapsed .group-list { display: none; }
-.gh-toggle { width: 14px; text-align: center; cursor: pointer; }
-.gh-toggle:hover { color: var(--accent-t); }
-.gh-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.gh-add {
-  width: 20px; height: 20px; flex: 0 0 20px; border: none; border-radius: var(--r-xs);
-  background: transparent; color: var(--text3); font-size: 14px; line-height: 18px; cursor: pointer;
-}
-.gh-add:hover { background: var(--accent-btn); color: #fff; }
-.group-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 8px 12px; }
-.group-item {
-  position: relative; padding: 8px 10px; margin-bottom: 2px;
-  border-radius: var(--r-sm); cursor: pointer; border: 1px solid transparent;
-}
-.group-item:hover { background: var(--hover); }
-.group-item.active { background: var(--hover-2); border-color: var(--border2); }
-.group-item .g-title { font-size: 13px; display: flex; align-items: center; gap: 6px; }
-.group-item .g-count { color: var(--text2); font-size: 11px; }
-.group-item.drop-hint { border-color: var(--accent); background: var(--accent-l); }
-/* 群视图消息 */
-.msg.group-msg .m-card { border-left: 3px solid var(--border2); padding: 2px 12px; }
-.msg.group-msg.group-user .m-card { border-left-color: var(--accent); }
-.msg.group-msg.group-system .m-card { background: var(--surface2); border-color: var(--border); padding: 10px 12px; }
-.msg.group-msg.group-system .m-text { color: var(--text3); font-size: 12px; }
-.m-tag.member { background: var(--blue-l); color: var(--blue-t); }
-.m-tag.sys { background: var(--bg); color: var(--text3); }
-.g-target { font-size: 12px; color: var(--accent-t); }
-.g-time { font-size: var(--msg-time); color: var(--text3); margin-left: auto; }
-/* 群消息头像:成员/用户消息左侧,点头像进私聊(成员)或改头像(用户),点正文不跳 */
-.msg.group-msg.group-member { display: flex; gap: var(--msg-gap); align-items: flex-start; }
-.msg.group-msg.group-member .m-card { flex: 1; min-width: 0; }
-.msg.group-msg.group-user { display: flex; gap: var(--msg-gap); align-items: flex-start; }
-.msg.group-msg.group-user .m-card { flex: 1; min-width: 0; }
-.g-avatar {
-  width: var(--msg-avatar); height: var(--msg-avatar); flex: 0 0 var(--msg-avatar);
-  border-radius: var(--r-sm); overflow: hidden;
-  cursor: pointer; border: 1px solid var(--border); background: var(--surface); padding: 3px;
-}
-.g-avatar:hover { border-color: var(--accent); }
-.g-avatar img { width: 100%; height: 100%; display: block; }
-.g-avatar-fallback {
-  width: var(--msg-avatar); height: var(--msg-avatar); flex: 0 0 var(--msg-avatar);
-  border-radius: var(--r-sm); cursor: pointer;
-  background: var(--accent-l); color: var(--accent-t); font-size: 15px; font-weight: 700;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid var(--accent-b);
-}
-.g-avatar-fallback:hover { border-color: var(--accent); }
 /* 用户头像(点头像改头像):hover 高亮 */
-.g-avatar-fallback[data-uav] { border-color: var(--accent-b); }
-.g-avatar-fallback[data-uav]:hover { border-color: var(--accent); }
 .c-avatar.clickable { cursor: pointer; }
 .c-avatar.clickable:hover { border-color: var(--accent); }
 
-/* ===== 单聊 ↔ 群聊风格统一:单聊消息行套用群聊同一套设计变量 ===== */
-/* 单聊消息行:agent 在左、用户在右(头像尺寸/气泡/间距与群聊一致) */
+/* ===== 单聊消息行 ==== */
+/* 单聊消息行:agent 在左、用户在右(头像尺寸/气泡/间距统一) */
 .msg.ai { display: flex; gap: var(--msg-gap); align-items: flex-start; }
 .msg.ai .m-card { flex: 1; min-width: 0; }
 .msg.user { display: flex; gap: var(--msg-gap); align-items: flex-start; flex-direction: row-reverse; }
@@ -1202,69 +1142,6 @@ details.m-think[open] summary { margin-bottom: 6px; }
 }
 .ua-ava:hover, .ua-ava-fallback:hover { border-color: var(--accent); }
 .ua-acts { display: flex; gap: 10px; }
-/* @成员高亮 */
-.mention { background: var(--accent-l); color: var(--accent-t); border-radius: 4px; padding: 0 3px; font-weight: 600; }
-/* 成员面板(复用 tasks-panel 位置样式) */
-.gp-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px; border-bottom: 1px solid var(--border);
-}
-.gp-item:last-of-type { border-bottom: none; }
-.gp-main { flex: 1; min-width: 0; cursor: pointer; }
-.gp-main:hover .gp-name { color: var(--accent-t); }
-.gp-avatar {
-  width: 32px; height: 32px; flex: 0 0 32px; border-radius: var(--r-sm); overflow: hidden;
-  border: 1px solid var(--border); background: var(--surface); padding: 3px;
-}
-.gp-avatar img { width: 100%; height: 100%; display: block; }
-.gp-avatar-fallback {
-  width: 32px; height: 32px; flex: 0 0 32px; border-radius: var(--r-sm);
-  background: var(--accent-l); color: var(--accent-t); font-size: 15px; font-weight: 700;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid var(--accent-b);
-}
-.gp-name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
-.gp-sub { font-size: 11px; color: var(--text3); margin-top: 2px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gp-acts button {
-  border: none; background: none; cursor: pointer; font-size: 13px;
-  color: var(--text3); padding: 2px 4px; border-radius: 4px;
-}
-.gp-acts button:hover { background: var(--accent-l); color: var(--accent-t); }
-.gp-add { padding: 8px 10px; border-top: 1px solid var(--border); }
-.gp-add button {
-  width: 100%; border: 1px dashed var(--border2); background: none;
-  border-radius: var(--r-sm); padding: 7px; font-size: 12px; color: var(--text3);
-  cursor: pointer;
-}
-.gp-add button:hover { color: var(--accent-t); border-color: var(--accent); }
-/* 换头像选择器 */
-.avatar-grid {
-  display: grid; grid-template-columns: repeat(10, 1fr); gap: 6px;
-  max-height: 280px; overflow-y: auto; padding: 4px 2px;
-}
-.avatar-opt {
-  aspect-ratio: 1; border: 2px solid transparent; border-radius: var(--r-sm);
-  background: none; cursor: pointer; padding: 2px;
-}
-.avatar-opt img { width: 100%; height: 100%; display: block; }
-.avatar-opt:hover { border-color: var(--accent-b); }
-.avatar-opt.sel { border-color: var(--accent); background: var(--accent-l); }
-/* 群模式:隐藏会话级控制,显示群按钮 */
-main.group-mode #token-usage, main.group-mode #cache-hit, main.group-mode #output-speed, main.group-mode #ctx-toggle,
-main.group-mode #btn-mode, main.group-mode #btn-compact, main.group-mode .model-menu-wrap,
- main.group-mode #foot-hint, main.group-mode #btn-tasks, main.group-mode #btn-back-parent,
- main.group-mode #btn-jobs,
-main.group-mode #btn-stop { display: none !important; }
-#btn-group-members, #btn-group-settings { display: none; }
-main.group-mode #btn-group-members, main.group-mode #btn-group-settings { display: inline-block; }
-.g-bg-input {
-  width: 100%; box-sizing: border-box; min-height: 120px; resize: vertical;
-  border: 1px solid var(--border2); border-radius: var(--r-sm); padding: 8px;
-  font-size: 13px; font-family: inherit; line-height: 1.5;
-}
-.g-danger { color: var(--red-t); font-size: 12px; cursor: pointer; border: none; background: none; margin-top: 10px; }
-.g-danger:hover { text-decoration: underline; }
 @media (max-width: 760px) {
   /* 窄窗口再窄一截,跟着 --aside-w 走,别改一处漏一处 */
   aside { width: calc(var(--aside-w) - 40px); flex-basis: calc(var(--aside-w) - 40px); }
@@ -1278,16 +1155,11 @@ main.group-mode #btn-group-members, main.group-mode #btn-group-settings { displa
 .u-mt14 { margin-top: 14px; }
 .u-mt16 { margin-top: 16px; }
 .u-mt20 { margin-top: 20px; }
-.u-w100 { width: 100%; }
 .u-center { text-align: center; }
 /* 弹窗宽度(原 style="width:Npx") */
 .modal-400 { width: 400px; }
-.modal-420 { width: 420px; }
-.modal-480 { width: 480px; }
 /* 原 style="font-size:12px;color:var(--text2)" 的小标题 */
 .boot-bar-label { font-size: 12px; color: var(--text2); }
-/* 群设置里的危险按钮:原 style="margin:0 auto 0" */
-.g-danger-center { margin: 0 auto; }
 
 /* ---- 注入型 user 消息(notice) ----
    公约广播 / 上下文提醒 / 子代理回执 / 压缩指令与摘要 / 守卫轻推都以 role=user 进

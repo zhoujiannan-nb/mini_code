@@ -48,9 +48,14 @@ const (
 	EventJobPromoted   = "job/promoted"   // {job_id, kind, label, waited_ms} — the wait expired; the work continues
 	EventJobSettled    = "job/settled"    // {job_id, kind, status, detail, waited_ms?, elapsed_ms, bytes, notified}
 	// EventPolicyObserve records what a mutation was done to a file the session
-	// had or had not looked at (see tools/policy.go). It is an observation, not a
-	// gate: nothing here has ever blocked a call.
+	// had or had not looked at (see tools/policy.go).
 	EventPolicyObserve = "policy/observe" // {call_id, tool, path, blind}
+
+	// EventPersistFailed records that the conversation could not be written to
+	// disk (F1). This is the one ledger row that may itself fail to be written
+	// (the database is what broke), which is why the failure is also logged and
+	// surfaced as a runtime notice to the model.
+	EventPersistFailed = "persist/failed" // {error, failures}
 )
 
 // EventRecord is one row of the ledger as returned to readers.
@@ -75,13 +80,18 @@ func (s *SessionStore) initEvents() {
 	)`)
 }
 
-// AppendEvent adds one fact to the ledger and returns its seq. The seq is
-// assigned by the INSERT itself (MAX+1 in the same statement), so one
-// statement is one atomic append; the per-session shard lock keeps a single
-// process strictly ordered while DIFFERENT sessions append concurrently, and
-// the PK guard plus one retry covers a second writer process. Best-effort
-// callers (the loop) log failures and carry on — a ledger write must never
-// break a task.
+// AppendEvent adds one fact to the ledger and returns its seq.
+//
+// The seq is assigned and returned by the SAME statement (`INSERT … SELECT
+// MAX(seq)+1 … RETURNING seq`), which is what fixes the cross-process race the
+// earlier version had: it inserted with MAX+1 and then ran a separate
+// `SELECT MAX(seq)`, so a second writer process could slip a row in between and
+// the value returned to the caller belonged to somebody else's event. The
+// per-session shard lock keeps one process strictly ordered; a second writer can
+// still collide on the primary key, which the bounded retry below absorbs.
+//
+// Best-effort callers (the loop) log failures and carry on — a ledger write must
+// never break a task.
 func (s *SessionStore) AppendEvent(sessionID, typ string, turn int, payload any) (int64, error) {
 	data := []byte("{}")
 	if payload != nil {
@@ -95,26 +105,40 @@ func (s *SessionStore) AppendEvent(sessionID, typ string, turn int, payload any)
 	mu.Lock()
 	defer mu.Unlock()
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		_, err := s.db.Execute(
+	for attempt := 0; attempt < 3; attempt++ {
+		row, err := s.db.FetchOne(
 			`INSERT INTO session_event(session_id, seq, type, turn, payload, created_at)
-			 SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ? FROM session_event WHERE session_id = ?`,
+			 SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ? FROM session_event WHERE session_id = ?
+			 RETURNING seq`,
 			sessionID, typ, turn, string(data), time.Now().Format(time.RFC3339Nano), sessionID)
-		if err == nil {
-			row, err := s.db.FetchOne("SELECT MAX(seq) AS seq FROM session_event WHERE session_id = ?", sessionID)
-			if err != nil || row == nil {
-				return 0, err
-			}
+		if err == nil && row != nil {
 			return toInt64(row["seq"]), nil
 		}
+		if err == nil {
+			err = fmt.Errorf("event insert returned no seq")
+		}
 		lastErr = err
-		// Only a seq collision (another writer process appended first) is
-		// worth retrying; anything else fails fast.
+		// Only a seq collision (another writer process appended first) is worth
+		// retrying; anything else fails fast.
 		if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return 0, err
 		}
+		time.Sleep(time.Duration(attempt+1) * 5 * time.Millisecond)
 	}
 	return 0, lastErr
+}
+
+// PruneEvents deletes ledger rows older than the cutoff and reports how many
+// rows went. The ledger keeps whole tool results, so without a retention policy
+// a long-lived install grows without bound (spill files had a 30-day sweep;
+// the table itself had none).
+func (s *SessionStore) PruneEvents(before time.Time) (int64, error) {
+	res, err := s.db.Execute("DELETE FROM session_event WHERE created_at < ?", before.Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // ListEvents returns up to limit events with seq > after, oldest first.

@@ -407,17 +407,34 @@ func (h *Hub) Run(ctx context.Context) {
 	}
 }
 
-// Submit produces an inbound message on the hub (non-blocking; a full input
-// queue drops the message with a warning).
-func (h *Hub) Submit(m Message) {
+// hubSubmitWait bounds how long Submit waits for a slot in the input queue.
+// Long enough to ride out a burst (a group of messages arriving while the hub is
+// busy starting a session), short enough that an HTTP caller can still answer.
+const hubSubmitWait = 2 * time.Second
+
+// Submit delivers an inbound message and reports whether it was accepted.
+//
+// The earlier version was non-blocking and dropped the message when the queue
+// was full with a log line: a burst, or one slow session, silently lost what the
+// user typed while the UI showed it as sent. A producer now waits (bounded) for
+// a slot and gets an error it can surface — the HTTP layer turns it into 429 and
+// the client retries instead of believing a message that never entered the hub.
+func (h *Hub) Submit(m Message) error {
 	m.ensureID()
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = time.Now()
 	}
 	select {
 	case h.in <- m:
+		return nil
 	default:
-		slog.Error("hub input queue full, message dropped", "id", m.ID, "kind", m.Kind)
+	}
+	select {
+	case h.in <- m:
+		return nil
+	case <-time.After(hubSubmitWait):
+		slog.Error("hub input queue full, message rejected", "id", m.ID, "kind", m.Kind, "waited", hubSubmitWait)
+		return fmt.Errorf("the agent is busy and did not accept the message within %s; retry shortly", hubSubmitWait)
 	}
 }
 
@@ -508,7 +525,9 @@ func (h *Hub) RunOnce(ctx context.Context, m Message) (string, string, error) {
 	name := "await-" + m.ID
 	out := h.Subscribe(name)
 	defer h.Unsubscribe(name)
-	h.Submit(m)
+	if err := h.Submit(m); err != nil {
+		return "", m.SessionID, err
+	}
 
 	sessionID := m.SessionID
 	for {
@@ -517,7 +536,10 @@ func (h *Hub) RunOnce(ctx context.Context, m Message) (string, string, error) {
 			return "", sessionID, ctx.Err()
 		case msg, ok := <-out:
 			if !ok {
-				return "", sessionID, fmt.Errorf("hub closed")
+				// The subscriber was evicted for falling behind (see emit). The task
+				// itself is still running: saying "hub closed" made a live task look
+				// like a crash to the one caller that waits synchronously.
+				return "", sessionID, fmt.Errorf("stopped waiting: this call fell behind and its stream was dropped; the task is still running")
 			}
 			if msg.TaskID != m.ID {
 				continue // belongs to another task

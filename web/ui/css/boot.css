@@ -1,0 +1,27 @@
+/* ---------- 开机动画(播放器) ----------
+   黑幕写在最早加载的一张表里:第一帧就把整个视口铺黑,不会先白一下再盖住。
+   与配置注入配套,见服务端 web/bootanim.go 的 injectBootAnim。
+   主题本身是不可信的第三方 HTML,放进 sandbox="allow-scripts" 的 iframe 里跑,
+   只能往父窗口 postMessage。播放器逻辑见 js/bootanim-player.js。 */
+html.mc-boot::after {
+  content: ""; position: fixed; inset: 0; z-index: 2147483000;
+  background: #05070a; pointer-events: auto;
+  opacity: 1; transition: opacity .7s ease;
+}
+html.mc-boot-out::after { opacity: 0; }
+#mc-boot {
+  position: fixed; inset: 0; z-index: 2147483001; margin: 0;
+  background: #05070a; border: 0; opacity: 1;
+  transition: opacity .7s ease;
+}
+#mc-boot.out { opacity: 0; pointer-events: none; }
+#mc-boot iframe { display: block; width: 100%; height: 100%; border: 0; background: #05070a; }
+#mc-boot-skip {
+  position: fixed; right: 18px; bottom: 16px; z-index: 2147483002;
+  font: 12px/1 system-ui, "Microsoft YaHei", sans-serif; color: #9aa4b2;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px; padding: 7px 12px; cursor: pointer;
+  opacity: 0; transition: opacity .5s ease .6s, color .15s, border-color .15s;
+}
+html.mc-boot #mc-boot-skip.show { opacity: .75; }
+#mc-boot-skip:hover { opacity: 1 !important; color: #e6edf3; border-color: rgba(255,255,255,.3); }

@@ -1,7 +1,6 @@
 package web
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/user/mini_code/provider"
@@ -71,30 +70,14 @@ func TestMessageViewsKeepMultimodalContent(t *testing.T) {
 	}
 }
 
-// TestUITranscriptRendersNotices: the front-end must branch on the label. It
-// used to call addUser() for every role:"user" row, which is how an injected
-// broadcast ended up drawn as the user's own message.
-func TestUITranscriptRendersNotices(t *testing.T) {
-	src := uiSource(t)
-	for _, want := range []string{
-		"if (msg.notice) { addNotice(msg.notice, txt); return; }", // the branch, ahead of addUser
-		"function addNotice(kind, text)",
-		"NOTICE_LABELS",
-		"addCard(\"notice\"",
-	} {
-		if !strings.Contains(src, want) {
-			t.Fatalf("the UI no longer renders injected notices (missing %q)", want)
-		}
-	}
-	// The notice card must not be drawn with the user's avatar or "你" tag.
-	i := strings.Index(src, "function addNotice")
-	if i < 0 {
-		t.Fatal("addNotice missing")
-	}
-	block := src[i : i+900]
-	for _, bad := range []string{"userAvatarBox", "m-tag user"} {
-		if strings.Contains(block, bad) {
-			t.Errorf("addNotice draws %q; an injected line must not impersonate the user", bad)
-		}
-	}
-}
+// The front-end half of this rule ("an injected user-role row must be drawn as
+// a runtime notice, never as the user's own message") used to be asserted here
+// by grepping addNotice/addCard out of the old renderer. The UI is a Preact app
+// now, so the assertion lives where the behaviour does — two jsdom tests, one
+// per path:
+//
+//	web/ui/test/render.test.mjs → "七类运行时注入的 user 轮渲染成 notice,不冒充用户"
+//	web/ui/test/render.test.mjs → "后端已标 notice 的轮优先级高于 marker 探测"
+//
+// and the classifier itself is covered by test/messages.test.mjs. The Go half
+// (the label the API hands the UI in messageViews) stays tested above.

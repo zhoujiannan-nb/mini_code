@@ -26,7 +26,7 @@ input, select, textarea { outline: none; }
 /* 统一过渡 + 0.5px 按压反馈 */
 .btn, .icon-btn, .mode-btn, .compact-btn, .send-btn, .stop-btn, .tasks-btn,
 .plus-btn, .new-btn, .set-close, .set-nav-item, .cb-copy, .task-stop, .mc-fetch,
-.model-inline-btn, .sess-item, .group-item, .model-tile, .boot-tile {
+.model-inline-btn, .sess-item, .model-tile, .boot-tile {
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
               color var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
               transform var(--dur) var(--ease);
@@ -67,16 +67,15 @@ header::after {
   color: var(--text3); padding: 10px 12px 5px; font-weight: 700;
 }
 .sess-list { padding: 0 8px 10px; }
-.sess-item, .group-item { padding: 8px 10px; margin-bottom: 1px; }
-.sess-item:hover, .group-item:hover { background: var(--hover); }
-.sess-item.active, .group-item.active {
+.sess-item { padding: 8px 10px; margin-bottom: 1px; }
+.sess-item:hover { background: var(--hover); }
+.sess-item.active {
   background: var(--hover-2); border-color: transparent;
   box-shadow: inset 2px 0 0 0 var(--accent);
 }
 .sess-title { font-weight: 600; letter-spacing: -.005em; }
 .del-btn:hover { background: var(--red); color: #fff; }
 .rename-btn:hover { background: var(--ink); color: var(--ink-fg); }
-.gh-add:hover { background: var(--ink); color: var(--ink-fg); }
 
 /* ---------- 聊天头 ---------- */
 .chat-head { max-width: var(--col-w); width: 100%; margin: 0 auto; }
@@ -92,7 +91,7 @@ header::after {
   border: 1px solid transparent;
 }
 .m-tag.user { border-color: var(--accent-b); }
-.m-tag.ai, .m-tag.member { border-color: var(--border); }
+.m-tag.ai { border-color: var(--border); }
 /* 用户气泡:扁平、无框、右下角收尖朝头像(DSH UserMessageBubble) */
 .msg.user .m-card {
   background: var(--accent-l); border-color: transparent; padding: 10px 14px;
@@ -208,8 +207,8 @@ input[type=range] { accent-color: var(--accent); }
 .set-nav-item.active { background: var(--hover-2); color: var(--title); box-shadow: inset 2px 0 0 0 var(--accent); }
 .set-page > h3 { font-size: 14.5px; letter-spacing: -.01em; }
 .frow input[type=text], .frow input[type=password], .frow input[type=number],
-.frow select, .g-bg-input { background: var(--bg); }
-.frow input:focus, .frow select:focus, .g-bg-input:focus {
+.frow select { background: var(--bg); }
+.frow input:focus, .frow select:focus {
   border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring-soft); background: var(--surface);
 }
 .btn { background: var(--surface); }
@@ -284,13 +283,13 @@ aside::after {                             /* 侧栏顶部一条极淡高光,和
 }
 
 /* ---------- ② 可读性:11px 一档的小字整体抬到 11.5~12px,并改用次级文本色 ---------- */
-:root { --msg-text: 15px; --msg-time: 11.5px; }
+:root { --msg-text: 15px; }
 .composer-foot { font-size: 12px; color: var(--text2); }
 .composer-foot .token-usage { color: var(--text2); }
 .mode-btn, .compact-btn { font-size: 12px; color: var(--text2); }
 .foot-hint { font-size: 11.5px; color: var(--text2); }
 .t-args, .t-res { font-size: 12px; }
-.sess-meta, .group-item .g-count, .set-nav-count, .empty-hint { font-size: 11.5px; }
+.sess-meta, .set-nav-count, .empty-hint { font-size: 11.5px; }
 .sec-head { font-size: 11px; }
 .m-tag { font-size: 11px; }
 .pill { font-size: 12px; }
@@ -341,10 +340,10 @@ main { background: transparent; }
 /* 页内的顶栏分隔线取消后,聊天头与页边之间留一点呼吸 */
 .chat-head { padding-top: 2px; }
 /* 侧栏现在坐在框上:选中/hover 的中性叠色要稍微加重一点点才看得出来 */
-.sess-item:hover, .group-item:hover { background: rgba(38,49,42,.09); }
-.sess-item.active, .group-item.active { background: rgba(38,49,42,.07); }
-html[data-theme="dark"] .sess-item:hover, html[data-theme="dark"] .group-item:hover { background: rgba(255,255,255,.08); }
-html[data-theme="dark"] .sess-item.active, html[data-theme="dark"] .group-item.active { background: rgba(255,255,255,.06); }
+.sess-item:hover { background: rgba(38,49,42,.09); }
+.sess-item.active { background: rgba(38,49,42,.07); }
+html[data-theme="dark"] .sess-item:hover { background: rgba(255,255,255,.08); }
+html[data-theme="dark"] .sess-item.active { background: rgba(255,255,255,.06); }
 /* 框上的小控件描边略加重,免得在 frame 上"洗白" */
 header .icon-btn { border-color: var(--border2); background: transparent; }
 .pill { background: rgba(38,49,42,.06); }
@@ -459,14 +458,7 @@ header .icon-btn:active { transform: translateY(.5px); }
 .new-btn { margin: 4px var(--side-x) 6px; }
 .sec-head { padding-left: var(--side-x); padding-right: var(--side-x); }
 .sess-list { padding-left: var(--side-x); padding-right: var(--side-x); }
-.group-list { padding-left: var(--side-x); padding-right: var(--side-x); }
-/* 群区/归档区的分隔线也跟着内缩,不再横穿到侧栏两边 */
-.group-sec { border-top: none; position: relative; }
-.group-sec::before {
-  content: ""; position: absolute; left: var(--side-x); right: var(--side-x); top: 0;
-  height: 1px; background: var(--border); pointer-events: none;
-}
-.sess-item, .group-item { padding-left: 10px; padding-right: 10px; }
+.sess-item { padding-left: 10px; padding-right: 10px; }
 
 @media (max-width: 760px) {
   :root { --band-h: 42px; --band-x: 6px; }
@@ -543,19 +535,18 @@ aside {
     linear-gradient(155deg, var(--side-sweep), transparent 42%),
     linear-gradient(180deg, var(--side-wash), transparent 26%);
 }
-.sess-item:hover, .group-item:hover {
+.sess-item:hover {
   background: linear-gradient(90deg, var(--act-2), transparent 82%);
 }
 /* 选中项写在 hover 之后:鼠标掠过时也不要盖掉"当前会话"的那层绿 */
-.sess-item.active, .group-item.active {
+.sess-item.active {
   background: linear-gradient(90deg, var(--act-1), var(--act-2) 62%, transparent);
   box-shadow: inset 2px 0 0 0 var(--accent);
 }
-.sess-item.active:hover, .group-item.active:hover {
+.sess-item.active:hover {
   background: linear-gradient(90deg, var(--act-1), var(--act-2) 62%, transparent);
 }
-/* 分区那条内缩的 hairline 也改成渐隐,别在渐变底上切一刀硬线 */
-.group-sec::before { background: linear-gradient(90deg, var(--border2), transparent 88%); }
+
 /* =====================================================================
    ===== v7:① 侧栏与顶栏有色差 → 渐变改铺在整块"框"上 ② 会话头:模型标签在前
             ③ 会话标题只留几个字(完整内容在 tooltip) =====
@@ -911,16 +902,13 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
 .sess-item:hover { background: var(--accent-l); }
 /* 选中:极浅绿整块底 + 左侧 3px 绿条(设计稿那条),不再用向右淡出的渐变 */
 .sess-item.active,
-.sess-item.active:hover,
-.sess-item.active .group-item.active {
+.sess-item.active:hover {
   background: var(--accent-l);
   box-shadow: inset 3px 0 0 0 var(--accent);
 }
 html[data-theme="dark"] .sess-item:hover { background: rgba(106, 216, 108, .10); }
 html[data-theme="dark"] .sess-item.active,
 html[data-theme="dark"] .sess-item.active:hover { background: rgba(106, 216, 108, .14); }
-/* 群聊区跟着同一份内缩,和上面的卡片左右完全对齐 */
-.group-sec { margin-left: var(--side-inset); margin-right: var(--side-inset); }
 
 /* agent 默认头像:统一一张脸 —— 墨色块 + 字母 M(和"新建会话"那颗胶囊同色系),
    不再按"会话标题首字 + 会话 id 哈希色"取色(同一个 agent 换个会话就换脸,设计稿没这东西)。

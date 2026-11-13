@@ -109,7 +109,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, params map[string]interface{
 	// file into memory (see readLargeWindow). The output format matches the
 	// small-file path below.
 	if info.Size() > largeFileThreshold {
-		return t.readLargeWindow(fp, path, offset, limit, tail), nil
+		return t.readLargeWindow(ctx, fp, path, offset, limit, tail), nil
 	}
 
 	raw, err := os.ReadFile(fp)
@@ -127,10 +127,14 @@ func (t *ReadFileTool) Execute(ctx context.Context, params map[string]interface{
 		return NewTextResult(fmt.Sprintf("Error: %s is a binary file, not readable as text. Inspect it via exec (e.g. a small script) if needed.", path)), nil
 	}
 
-	// DecodeToUTF8: text files on Windows are often GBK (ANSI) encoded;
-	// without this the raw bytes become U+FFFD noise once the tool result
-	// is JSON-marshaled for the LLM or persisted.
-	content := util.DecodeToUTF8(raw)
+	// DecodeText: text files on Windows are often GBK (ANSI) encoded; without
+	// this the raw bytes become U+FFFD noise once the tool result is
+	// JSON-marshaled for the LLM or persisted. The detected format is not
+	// needed here (read_file never writes), but the same helper is used by
+	// edit_file/write_file so both halves of a read-modify-write cycle see
+	// exactly the same text — the asymmetry between the two was the bug that
+	// made a GBK file impossible to edit with a Chinese old_text.
+	content, _ := util.DecodeText(raw)
 	// Normalize CRLF to LF for display. CRLF is the dominant line ending on
 	// Windows; without this, every line the model sees carries a trailing
 	// "\r" (rendered as a "\r" escape in JSON), which wastes tokens,
@@ -204,7 +208,7 @@ const largeFileThreshold = 1 << 20 // 1 MiB
 // terminated segment or a final unterminated segment; a trailing newline does
 // not create a phantom empty line; CRLF is normalized to LF. When the scan
 // stops early the total line count is unknown and the footer says so.
-func (t *ReadFileTool) readLargeWindow(fp, path string, offset, limit, tail int) *ToolResult {
+func (t *ReadFileTool) readLargeWindow(ctx context.Context, fp, path string, offset, limit, tail int) *ToolResult {
 	f, err := os.Open(fp)
 	if err != nil {
 		return NewTextResult(fmt.Sprintf("Error reading file: %s", err))
@@ -218,6 +222,14 @@ func (t *ReadFileTool) readLargeWindow(fp, path string, offset, limit, tail int)
 	if bytes.IndexByte(head[:n], 0) >= 0 {
 		return NewTextResult(fmt.Sprintf("Error: %s is a binary file, not readable as text. Inspect it via exec (e.g. a small script) if needed.", path))
 	}
+	// A UTF-8 BOM is part of the file's identity but not of its text: leaving
+	// it in place glues an invisible U+FEFF to the first line, which the model
+	// then cannot reproduce in old_text. The small-file path drops it via
+	// util.DecodeText; this path scans line by line, so it drops it here.
+	if bytes.HasPrefix(head[:n], []byte{0xEF, 0xBB, 0xBF}) {
+		n -= 3
+		copy(head[:n], head[3:])
+	}
 	// Re-play the 8KB head and continue with the buffered reader: the line
 	// stream starts at byte 0, and br still holds everything after the head.
 	src := bufio.NewReaderSize(io.MultiReader(bytes.NewReader(head[:n]), br), 256*1024)
@@ -226,6 +238,12 @@ func (t *ReadFileTool) readLargeWindow(fp, path string, offset, limit, tail int)
 	var window, ring []string
 	earlyStopped := false
 	for {
+		// A cancelled call must stop scanning: tail over a multi-GB log is the
+		// one place where "stop" could otherwise take a very long time. The check
+		// is amortized (every 1024 lines) so it costs nothing on the hot path.
+		if lineNo&1023 == 0 && ctx.Err() != nil {
+			return NewTextResult("Interrupted while scanning the file.")
+		}
 		raw, rerr := src.ReadString('\n')
 		if len(raw) > 0 {
 			// DecodeToUTF8 per line: large Windows text files are often GBK;
@@ -336,17 +354,24 @@ func (t *WriteFileTool) Execute(ctx context.Context, params map[string]interface
 	if err := os.MkdirAll(filepath.Dir(fp), 0755); err != nil {
 		return NewTextResult(fmt.Sprintf("Error writing file: %s", err)), nil
 	}
+	// Encoding: a write must not silently transcode the file it touches. The
+	// existing file's encoding (UTF-8 or GBK, with or without a BOM) is
+	// preserved — including in append mode, because appending UTF-8 bytes to a
+	// GBK file corrupts its tail for every reader that follows (editor, build
+	// tool, the next read_file). A new file is UTF-8.
+	srcFormat, _ := existingTextFormat(fp)
 	if appendMode {
 		// Append mode: add content to the end of the file (create it when
 		// missing). This is the reliable way to build a large file in
 		// several smaller write calls — a single oversized write can be
 		// cut off by the output token limit, and re-writing the whole file
 		// for every chunk would double the output cost.
+		data, encNote := encodeFor(srcFormat, content)
 		f, err := os.OpenFile(fp, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return NewTextResult(fmt.Sprintf("Error appending to file: %s", err)), nil
 		}
-		n, werr := f.WriteString(content)
+		n, werr := f.Write(data)
 		cerr := f.Close()
 		if werr != nil {
 			return NewTextResult(fmt.Sprintf("Error appending to file: %s", werr)), nil
@@ -355,9 +380,9 @@ func (t *WriteFileTool) Execute(ctx context.Context, params map[string]interface
 			return NewTextResult(fmt.Sprintf("Error appending to file: %s", cerr)), nil
 		}
 		if info, serr := os.Stat(fp); serr == nil {
-			return NewTextResult(fmt.Sprintf("Successfully appended %d bytes to %s (file is now %d bytes)", n, fp, info.Size())), nil
+			return NewTextResult(fmt.Sprintf("Successfully appended %d bytes to %s (file is now %d bytes)%s", n, fp, info.Size(), encNote)), nil
 		}
-		return NewTextResult(fmt.Sprintf("Successfully appended %d bytes to %s", n, fp)), nil
+		return NewTextResult(fmt.Sprintf("Successfully appended %d bytes to %s%s", n, fp, encNote)), nil
 	}
 	// Overwrite guard: before replacing an existing non-empty file, record
 	// what it held. A model that meant to append (or that silently drops
@@ -366,14 +391,54 @@ func (t *WriteFileTool) Execute(ctx context.Context, params map[string]interface
 	// the recovery path (it still holds the old content in context, or can
 	// re-read a backup) and at the append flag for next time.
 	prevNote := overwriteNote(fp)
-	if err := os.WriteFile(fp, []byte(content), 0644); err != nil {
+	data, encNote := encodeFor(srcFormat, content)
+	if err := os.WriteFile(fp, data, 0644); err != nil {
 		return NewTextResult(fmt.Sprintf("Error writing file: %s", err)), nil
 	}
-	msg := fmt.Sprintf("Successfully wrote %d bytes to %s", len(content), fp)
+	msg := fmt.Sprintf("Successfully wrote %d bytes to %s", len(data), fp)
 	if prevNote != "" {
 		msg += " " + prevNote
 	}
-	return NewTextResult(msg), nil
+	return NewTextResult(msg + encNote), nil
+}
+
+// existingTextFormat reports the encoding of the file at fp, so a write can put
+// the text back in the form the file already had. ok is false when the path does
+// not exist (a new file is UTF-8).
+//
+// Files up to 8 MiB are sampled whole: a head-only sample can classify a file
+// whose first bytes are pure ASCII as UTF-8 while its Chinese body is GBK, and
+// that mistake is exactly the mixed-encoding corruption this function exists to
+// prevent. Above 8 MiB the head is the best available answer.
+func existingTextFormat(fp string) (util.TextFormat, bool) {
+	info, err := os.Stat(fp)
+	if err != nil || info.IsDir() || info.Size() == 0 {
+		return util.TextFormat{Encoding: util.EncUTF8}, false
+	}
+	f, err := os.Open(fp)
+	if err != nil {
+		return util.TextFormat{Encoding: util.EncUTF8}, false
+	}
+	defer f.Close()
+	limit := int64(8 << 20)
+	if info.Size() < limit {
+		limit = info.Size()
+	}
+	buf := make([]byte, limit)
+	n, _ := io.ReadFull(f, buf)
+	return util.DetectTextFormat(buf[:n]), true
+}
+
+// encodeFor encodes s into the file's format. When the text cannot be
+// represented there (an emoji in a GBK file, say), UTF-8 is written instead of
+// mangled bytes, and the returned note says the encoding changed — a silent
+// change would leave the file unreadable by whatever wrote it.
+func encodeFor(f util.TextFormat, s string) ([]byte, string) {
+	data, ok := f.Encode(s)
+	if ok {
+		return data, ""
+	}
+	return []byte(s), fmt.Sprintf(" Note: the text contains characters %s cannot represent, so the file was written as UTF-8.", f)
 }
 
 // overwriteNote returns a short note describing the content an overwrite is
@@ -467,25 +532,34 @@ func (t *EditFileTool) Execute(ctx context.Context, params map[string]interface{
 		return NewTextResult(msg), nil
 	}
 
-	rawStr := string(raw)
+	// Decode with the same helper read_file uses. Before this, read_file
+	// handed the model GBK-decoded text while edit_file matched against the
+	// RAW bytes: a Chinese old_text copied from a successful read could never
+	// match, and a successful ASCII-only edit silently rewrote the whole file
+	// as UTF-8. Both halves now go through util.DecodeText / TextFormat.Encode,
+	// so the text the model edits is the text it read and the file keeps its
+	// original encoding (UTF-8 or GBK, BOM preserved).
+	content, srcFormat := util.DecodeText(raw)
 	// Detect the file's line-ending style so an edit does not silently
 	// convert a CRLF file to LF: byte-exact checks, git diffs and Windows
 	// tooling all notice the change. Files without CRLF stay LF.
-	crlf := strings.Contains(rawStr, "\r\n")
-	content := strings.ReplaceAll(rawStr, "\r\n", "\n")
+	crlf := strings.Contains(content, "\r\n")
+	content = strings.ReplaceAll(content, "\r\n", "\n")
 	oldNorm := strings.ReplaceAll(oldText, "\r\n", "\n")
 	newNorm := strings.ReplaceAll(newText, "\r\n", "\n")
 
-	// finishEdit writes the edited content back, restoring the file's
-	// original line-ending style. It returns a ToolResult on failure.
-	finishEdit := func(newContent string) *ToolResult {
+	// finishEdit writes the edited content back, restoring the file's original
+	// line-ending style and encoding. It returns a ToolResult on failure and a
+	// note for the success message when the encoding had to change.
+	finishEdit := func(newContent string) (*ToolResult, string) {
 		if crlf {
 			newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
 		}
-		if err := os.WriteFile(fp, []byte(newContent), 0644); err != nil {
-			return NewTextResult(fmt.Sprintf("Error editing file: %s", err))
+		data, encNote := encodeFor(srcFormat, newContent)
+		if err := os.WriteFile(fp, data, 0644); err != nil {
+			return NewTextResult(fmt.Sprintf("Error editing file: %s", err)), ""
 		}
-		return nil
+		return nil, encNote
 	}
 
 	// Pass 1: exact substring match (fast, byte-for-byte).
@@ -502,10 +576,11 @@ func (t *EditFileTool) Execute(ctx context.Context, params map[string]interface{
 		} else {
 			newContent = strings.Replace(content, oldNorm, newNorm, 1)
 		}
-		if r := finishEdit(newContent); r != nil {
+		if r, encNote := finishEdit(newContent); r != nil {
 			return r, nil
+		} else {
+			return NewTextResult(fmt.Sprintf("Successfully edited %s%s", fp, encNote)), nil
 		}
-		return NewTextResult(fmt.Sprintf("Successfully edited %s", fp)), nil
 	}
 
 	// Pass 2: whitespace-tolerant line match. The tool promises to tolerate
@@ -531,10 +606,11 @@ func (t *EditFileTool) Execute(ctx context.Context, params map[string]interface{
 
 	newLines := strings.Split(newNorm, "\n")
 	newContent := spliceLineRanges(fileLines, ranges, newLines)
-	if r := finishEdit(newContent); r != nil {
+	if r, encNote := finishEdit(newContent); r != nil {
 		return r, nil
+	} else {
+		return NewTextResult(fmt.Sprintf("Successfully edited %s (whitespace-tolerant match)%s", fp, encNote)), nil
 	}
-	return NewTextResult(fmt.Sprintf("Successfully edited %s (whitespace-tolerant match)", fp)), nil
 }
 
 // wsNormalizeLine trims a line and collapses runs of spaces/tabs into a
@@ -830,6 +906,11 @@ func (t *ListDirTool) Execute(ctx context.Context, params map[string]interface{}
 		filepath.Walk(dp, func(p string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil
+			}
+			// Stop an interrupted recursive listing instead of walking the rest of
+			// the tree before returning.
+			if ctx.Err() != nil {
+				return filepath.SkipAll
 			}
 			if p == dp {
 				return nil
