@@ -12,32 +12,10 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// Tool routing follows the dsh convention: name the dedicated tool AND explicitly forbid
-// the shell spelling. "Batch your calls" alone measurably failed — on the SWE-bench round
-// the model walked the tree with dir/type/findstr (43 shell calls) and used search_files
-// 6 times, costing 1.43x the round trips dsh needed.
-const toolConstraints = `<tool_requirements>
-# Tool Usage Instructions
-- Call tools only through structured tool_calls with valid JSON object parameters.
-- Use the dedicated tools, not the shell: glob/list_dir to discover files, search_files to
-  search file contents, read_file to read them. Do not walk the tree with exec (dir, type,
-  findstr, more) to look at code — one dedicated call replaces several shell round trips.
-- exec is for running things (tests, builds, git, package tools), not for inspecting files.
-- Batch every independent call into one response: two or more read-only calls that do not
-  depend on each other go out together, never one per turn.
-</tool_requirements>
-`
-// Deliberately rate-limited: the old wording ("report the result of each tool used ...
-// before/after tool calls") cost a progress line per tool call, i.e. extra output on
-// every round trip.
-const taskProgressAnchor = `<progress_anchor>
-# Progress Reporting
-- Report progress at most once every 3-4 turns, and only when something actually changed:
-【当前进展】 目标: xxx | 已完成: xxx | 下一步: xxx
-- Never spend a turn solely on progress — put the anchor in the same message as the work,
-  and do not narrate individual tool calls.
-</progress_anchor>`
-
+// 2026-11-13 duel3 之后:旧的 toolConstraints/taskProgressAnchor 两段随 persona
+// 一并替换为 dsh 全抄版（build.txt）。锚子（每 3-4 回合刷【当前进展]）是汇报腔
+// 制造机——duel3 里 mc 的话痨和磨文化一半归功于它;工具纪律 dsh 版已逐条覆盖
+// （read/glob/grep/job/并发冲突），不再单列。
 const workConstraints = `<work_requirements>
 - The "# Working Directory" block below names this session's folder — it is the same directory stored in the session's database row, and for a worker session it is the worker's shared workspace. Do all reading and writing inside it; database and prompt always mean the same folder.
 - Verify with the project's own tests or commands, not with helper scripts you write. When a scratch script really is the shortest path, put it in a '_work_{timestamp}_{theme}' directory under the working directory (theme in the user's language) and delete it before you finish; final deliverables stay exactly where the task asked for them.
@@ -157,8 +135,6 @@ func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string 
 		persona = strings.ReplaceAll(persona, "{{model}}", name)
 		parts = append(parts, persona)
 	}
-	parts = append(parts, toolConstraints)
-	parts = append(parts, taskProgressAnchor)
 	parts = append(parts, workConstraints)
 	if workDir != "" {
 		parts = append(parts, "\n# Working Directory\n\nThe current working directory is: "+workDir+"\nAll file operations must be confined to this directory.\n")
