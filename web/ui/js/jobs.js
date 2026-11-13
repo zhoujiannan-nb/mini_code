@@ -4,7 +4,6 @@
 // 运行中行带两按停止。面板开着才轮询(2s),关了零开销——监控不该有常驻成本。
 state.jobs = [];
 state.jobsTimer = null;
-let jobsCleared = {};   // sid -> {job_id:true}:Clear 只做客户端隐藏,服务端账本不动
 let jobsSid = null;     // 面板当前服务的会话;切会话自动关面板(数据不跨会话)
 let killArmed = null;   // {key, timer}:两按确认中的 job
 
@@ -56,8 +55,7 @@ const JOB_DOT = { running: "running", completed: "completed", failed: "failed", 
 function renderJobsPanel() {
   const panel = $("#jobs-panel");
   if (!panel || !panel.classList.contains("open")) return;
-  const cleared = jobsCleared[state.current] || {};
-  const jobs = (state.jobs || []).filter(j => !(j.status !== "running" && cleared[j.id]));
+  const jobs = state.jobs || [];
   const live = jobs.filter(j => j.status === "running").sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
   const settled = jobs.filter(j => j.status !== "running")
     .sort((a, b) => Date.parse(b.ended_at || b.started_at) - Date.parse(a.ended_at || a.started_at));
@@ -113,10 +111,17 @@ async function doKill(id) {
   } catch (e) { toast("停止失败:" + e.message, "err"); }
   loadJobs();
 }
-function clearSettledJobs() {
-  const m = jobsCleared[state.current] = jobsCleared[state.current] || {};
-  for (const j of (state.jobs || [])) if (j.status !== "running") m[j.id] = true;
-  renderJobsPanel();
+// Clear 走服务端:把已结束条目从注册表里真删掉(Prune(0),运行中不动),再重取。
+// 纯客户端隐藏不行——面板 2s 轮询就是从这里重取数据的,隐藏等于没清。
+// 清完顺手刷会话摘要:徽标的 jobs_total 只有摘要里有,不刷会挂着旧计数。
+async function clearSettledJobs() {
+  if (!state.current) return;
+  try {
+    await api("/api/sessions/" + state.current + "/jobs/clear", { method: "POST" });
+  } catch (e) { toast("清除失败:" + e.message, "err"); return; }
+  await loadJobs();
+  if (!state.jobs || !state.jobs.length) closeJobsPanel();
+  loadSessions();
 }
 
 function toggleJobsPanel() {

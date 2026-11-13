@@ -32,6 +32,19 @@ func TestJobsAPIEndpoints(t *testing.T) {
 		t.Errorf("kill without a registry: code %d, want 404", code)
 	}
 
+	// Clearing is idempotent: no registry is "nothing to clear", a 200 with
+	// cleared=0, never a 404 — the panel's Clear button must converge even if
+	// the session was torn down between the render and the click.
+	var cleared struct {
+		Cleared int `json:"cleared"`
+	}
+	if code := workerReq(t, "POST", srv.URL+"/api/sessions/"+id+"/jobs/clear", "", &cleared); code != 200 {
+		t.Errorf("clear without a registry: code %d, want 200", code)
+	}
+	if cleared.Cleared != 0 {
+		t.Errorf("cleared = %d, want 0", cleared.Cleared)
+	}
+
 	// The list summary carries the new fields (omitted while zero, decoded as 0).
 	var list []SessionSummary
 	if code := workerReq(t, "GET", srv.URL+"/api/sessions", "", &list); code != 200 {

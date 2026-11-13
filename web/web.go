@@ -141,6 +141,7 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/reasoning", s.handleSetReasoning)
 	mux.HandleFunc("GET /api/sessions/{id}/jobs", s.handleListJobs)
 	mux.HandleFunc("POST /api/sessions/{id}/jobs/kill", s.handleKillJob)
+	mux.HandleFunc("POST /api/sessions/{id}/jobs/clear", s.handleClearJobs)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleRenameSession)
 	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handleSetArchived)
 	// Workers (工作大类): the sidebar switcher and the shared 公约 editor.
@@ -533,6 +534,24 @@ func (s *server) handleKillJob(w http.ResponseWriter, r *http.Request) {
 		"job_id": req.JobID,
 		"status": string(j.Status()),
 	})
+}
+
+// handleClearJobs drops every settled background command from the session's
+// registry (Registry.Prune(0) — running commands are never touched), the UI
+// twin of the panel's Clear button. Clearing must reach the registry, not just
+// the popover: the roster is re-fetched from here on every poll, so a purely
+// local wipe would resurrect the rows the human just dismissed. A session with
+// no registry has nothing to clear, which is a success with cleared=0 rather
+// than a 404 — the click only ever races a session teardown.
+func (s *server) handleClearJobs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	cleared := 0
+	if sess := s.be.Mgr().Peek(id); sess != nil {
+		if reg := sess.Jobs(); reg != nil {
+			cleared = reg.Prune(0)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"cleared": cleared})
 }
 
 func (s *server) handleListSessions(w http.ResponseWriter, r *http.Request) {
