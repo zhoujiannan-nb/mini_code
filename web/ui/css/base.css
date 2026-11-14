@@ -279,45 +279,9 @@ aside {
 .rename-btn:hover { background: var(--blue-btn); color: #fff; }
 .empty-hint { color: var(--text3); font-size: 12px; text-align: center; padding: 24px 12px; }
 
-/* ===== Worker(工作大类)切换条 ===== */
-/* 一行放:worker名 ⌄ ＋。点开名字出下拉选分桶;选中项决定下面列表显示哪个桶。
-   ‹ › 那种"循环切换"去掉了 —— worker 数量一多点着找很费劲,下拉一步到位。 */
-.worker-bar {
-  display: flex; align-items: center; gap: 2px;
-  margin: 6px 10px 0; padding: 2px 4px;
-  background: var(--hover); border: 1px solid var(--border); border-radius: var(--r-md);
-}
-.wk-pick {
-  flex: 1 1 auto; min-width: 0; height: 24px; border: none; background: transparent;
-  display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--title);
-  font-size: 12px; padding: 0 2px;
-}
-.wk-pick:hover { color: var(--accent-t); }
+/* Worker 切换条已收进漏斗弹层(见 layers.css ④):原 .worker-bar/.wk-pick/
+   .wk-add/.worker-sub 一族规则随 DOM 一起删除。仅保留 .wk-label 这个词。 */
 .wk-label { color: var(--text3); font-size: 11px; letter-spacing: .04em; flex: 0 0 auto; }
-.wk-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wk-caret { color: var(--text3); font-size: 10px; flex: 0 0 auto; }
-.wk-add {
-  flex: 0 0 auto; width: 22px; height: 24px; border: none; border-radius: var(--r-xs);
-  background: transparent; color: var(--text2); font-size: 15px; cursor: pointer; line-height: 24px;
-}
-.wk-add:hover { background: var(--accent-btn); color: #fff; }
-/* 操作行:小字按钮一排。"未分配"没有 worker 可操作,留空即折叠。 */
-.worker-sub {
-  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
-  margin: 3px 12px 0; padding: 0 2px; min-height: 16px;
-  font-size: 11px; color: var(--text3);
-}
-.worker-sub:empty { display: none; }
-.wk-sub-tip { flex: 1 1 100%; }
-.wk-sub-btn {
-  border: none; background: transparent; color: var(--text3); cursor: pointer;
-  font-size: 11px; padding: 1px 4px; border-radius: var(--r-xs);
-  transition: background .12s ease, color .12s ease;
-}
-/* hover 走主色浅底(以前是中性灰 --hover-2,和整套绿主题不搭,看着像没上色的网页控件)。
-   文字同时换成主色深字,浅绿底上对比仍然 ≥8:1。🗑 保持红色:破坏性动作不该长得像普通按钮。 */
-.wk-sub-btn:hover { background: var(--accent-h); color: var(--accent-t); }
-.wk-sub-danger:hover { background: var(--red-btn); color: #fff; }
 /* worker 菜单(切换)。注意背景必须是实色的 --surface:之前写的
    var(--panel) 在调色板里根本不存在,解析成透明 → 菜单叠在会话列表上时
    底下的标题直接透出来,等于看不清。阴影也要够重,否则实色块和列表分层不出来。 */
