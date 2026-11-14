@@ -105,12 +105,25 @@ header::after {
 .msg.tool .m-card:hover { box-shadow: inset 2px 0 0 0 var(--accent), 0 0 0 .5px var(--border2); }
 .t-name { font-weight: 700; color: var(--title2); font-size: 11.5px; letter-spacing: .02em; }
 .t-args, .t-res { font-size: 11.5px; line-height: 1.6; }
-details.m-think summary {
-  font-size: 11.5px; font-weight: 600; color: var(--text3);
-  padding: 2px 6px; margin-left: -6px; border-radius: var(--r-xs);
+/* 思考小框:标题行走"分区标签"档(小字 + 字距),框体跟工具卡同一套配方
+   (次级面板底色 + 左侧色条 + 发丝描边)。淡色靠 --text3,深浅主题都自适配。 */
+/* 折叠态:默认只留标题行(仅 live 展开),正文仍在 DOM。头部整行可点。 */
+.think-box.collapsed .think-box-body { display: none; }
+.think-box-hd {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .06em;
+  color: var(--text3); padding-left: 2px; cursor: pointer;
 }
-details.m-think summary:hover { color: var(--accent-t); background: var(--hover); }
-.think-body, .m-think-live { border-top: 1px solid var(--border); font-size: 12.5px; }
+.think-box-hd .tb-caret { width: 10px; font-size: 9px; opacity: .7; }
+.think-box-hd .tb-tag { letter-spacing: .02em; }
+.think-box-body {
+  line-height: 1.65; border-color: transparent;
+  box-shadow: inset 2px 0 0 0 var(--border2), 0 0 0 .5px var(--border);
+}
+/* 正在想的那条:左侧色条换成主色,一眼分得出"这段还在长" */
+.think-box.live .think-box-body {
+  box-shadow: inset 2px 0 0 0 var(--accent-b), 0 0 0 .5px var(--border);
+}
+.think-box.live .think-box-hd .tb-live { color: var(--accent-t); font-weight: 600; letter-spacing: 0; }
 
 /* Markdown 节奏(DSH 字号阶梯:h1-h3 全 700,正文 14/24) */
 .md p { margin: 6px 0; }
@@ -293,8 +306,8 @@ aside::after {                             /* 侧栏顶部一条极淡高光,和
 .sec-head { font-size: 11px; }
 .m-tag { font-size: 11px; }
 .pill { font-size: 12px; }
-details.m-think summary { font-size: 12px; }
-.think-body, .m-think-live { font-size: 13px; }
+.think-box-hd { font-size: 11px; }
+.think-box-body { font-size: 13px; }   /* 比正文(--msg-text 14px)小一档 */
 .cb-pre { font-size: 13px; }
 .cb-lang { font-size: 11px; }
 .cb-copy { font-size: 11.5px; }
@@ -315,7 +328,7 @@ details.m-think summary { font-size: 12px; }
    现在:① ② 合成一块 frame(同一底色、中间不再画线),③ 是一张圆角页,
    浮在 frame 上(投影 + 发丝描边),四边留白让框透出来 —— 一眼就是"页叠在框上"。
    ===================================================================== */
-:root { --frame: #eceee8; }
+:root { --frame: #e6ecf3; }
 html[data-theme="dark"] { --frame: #040404; }
 
 /* 框:整个窗口底 = frame;侧栏与顶栏都不再画自己的底色/分隔线 */
@@ -808,22 +821,74 @@ details.ms-step[open] > summary { color: var(--text); margin-bottom: 3px; }
   max-height: 240px; overflow: auto; white-space: pre-wrap;
 }
 .ms-cut { display: block; margin-top: 4px; color: var(--text3); font-size: 11px; }
-/* 步骤里的思考块:比正文里那个再收一点,别抢戏 */
-.ms-step details.m-think { margin: 0; }
-.ms-step details.m-think summary { padding: 2px 4px; }
-.ms-step .think-body { border-top: none; padding-top: 4px; font-size: 12.5px; color: var(--text2); }
+/* 步骤里的思考框:比正文里那个再收一点,别抢戏 */
+.ms-step .think-box { margin: 2px 0 4px; }
+.ms-step .think-box-body { font-size: 12.5px; padding: 6px 10px; max-height: 9em; }
+
+/* ── todo_write 待办清单卡(.todo-card,见 js/components/TodoCard.js)───────────
+   配方跟 .think-box 同一档:淡色分区标题行 + 次级面板底色的框体,颜色一律走主题变量,
+   深浅两套主题自适配。三态图标:待办淡空心、进行中主色实心并提到正文字色、
+   完成打勾 + 划掉的淡色文字 —— 扫一眼就知道还剩哪几条。 */
+.todo-card { margin: 2px 0 4px; min-width: 0; }
+.todo-card-hd {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .06em;
+  color: var(--text3); user-select: none; margin-bottom: 3px;
+}
+/* 完成数统计("3/5")常驻标题行:清单折叠起来之后它也还在说进度 */
+.todo-card-hd .td-n {
+  font-family: var(--mono); font-weight: 600; letter-spacing: 0;
+  font-size: 10.5px; line-height: 16px; padding: 0 6px; border-radius: 999px;
+  background: var(--accent-l); color: var(--accent-t); font-variant-numeric: tabular-nums;
+}
+.todo-card-hd .td-now { margin-left: auto; letter-spacing: 0; font-weight: 600; color: var(--amber-t); }
+.todo-card-body {
+  list-style: none; margin: 0; padding: 6px 10px;
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  color: var(--text2); font-size: 12.5px; line-height: 1.6;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  /* 限高跟着字号走:清单再长也只在框内滚,别把消息流顶飞。 */
+  max-height: 14em; overflow-y: auto; overscroll-behavior: contain;
+}
+.todo-item { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.todo-item .td-ico { flex: 0 0 auto; width: 12px; text-align: center; font-size: 11px; color: var(--text3); }
+.todo-item .td-text { min-width: 0; word-break: break-word; }
+.todo-item.pending .td-text { color: var(--text2); }
+.todo-item.in_progress .td-ico { color: var(--accent-t); }
+.todo-item.in_progress .td-text { color: var(--text); font-weight: 600; }
+.todo-item.completed .td-ico { color: var(--accent-t); }
+.todo-item.completed .td-text { color: var(--text3); text-decoration: line-through; text-decoration-thickness: .5px; }
+/* 清单住在步骤展开区里时收一点,跟同区的思考框、结果块一个体量 */
+.ms-step .todo-card-body { font-size: 12px; max-height: 12em; }
+
+/* goal 工具(create_goal / update_goal / get_goal):一行状态文案,别做面板 ——
+   读者要的只是"这个会话在朝什么目标推进、推到哪一步了"。 */
+.goal-line {
+  display: block; margin: 2px 0 4px; padding: 4px 8px; min-width: 0;
+  border-radius: var(--r-xs); background: var(--surface2);
+  box-shadow: inset 2px 0 0 0 var(--border2);
+  color: var(--text2); font-size: 12px; line-height: 1.6; word-break: break-word;
+}
+
+/* 折叠条标题行上的清单进度:那一步折叠起来之后,"3/5" 还得看得见。
+   配方跟 .ms-work / .ms-run 同一枚小胶囊,只换成主色(它是进度,不是杂项)。 */
+.ms-todo {
+  flex: 0 0 auto; font-family: var(--mono); font-size: 10.5px;
+  line-height: 16px; height: 16px; padding: 0 6px; border-radius: 999px;
+  background: var(--accent-l); color: var(--accent-t); white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ms-todo:empty { display: none; }
+
 
 /* 并进正文卡片里时:贴在标题行下方,和答案之间留一口呼吸 */
 .m-card details.m-steps.ms-inline { margin: 2px 0 10px; }
 
-/* 步骤里的思考:比正文淡,展开也走同一套"长出来"的动画 */
-.ms-step details.m-think > summary { color: var(--text3); font-size: 11.5px; }
-.ms-step .think-body { color: var(--text2); }
-.ms-step details[open] > .think-body {
-  animation: ms-fade-in .16s var(--ease) both;
-}
-/* 正文卡片里那个独立的思考块(没有工具的轮次)也淡一档并平滑展开 */
-details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
+/* 思考:比正文淡一档,出现时走同一套"长出来"的淡入(节点只挂一次,
+   流式增量不会每来一个 delta 就重播一遍) */
+.ms-step .think-box-body { color: var(--text2); }
+.think-box-body { animation: ms-fade-in .16s var(--ease) both; }
 @keyframes ms-fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -833,8 +898,8 @@ details.m-think > .think-body { animation: ms-fade-in .16s var(--ease) both; }
 @media (prefers-reduced-motion: reduce) {
   .m-steps-wrap,
   .ms-step.ms-in,
-  .ms-step details[open] > .think-body,
-  details.m-think > .think-body {
+  .ms-step .think-box-body,
+  .think-box-body {
     transition: none !important;
     animation: none !important;
   }

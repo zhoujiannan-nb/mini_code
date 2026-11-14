@@ -6,31 +6,28 @@ import (
 	"github.com/user/mini_code/agent"
 )
 
-// TestCopyMoveToolsNotRegistered pins the tool-ablation decision: copy_file and
-// move_file are dropped from the default toolset after two independent
-// measurements recorded zero uses (an 82-sample three-arm ablation, plus 257
-// real tool calls on the live instance), while the environment section already
-// teaches the shell spellings of copy/move/ren. Keeping the implementations in
-// tools/fileops.go means re-enabling them for one worker is a single Register
-// call — but they must not silently come back for everyone: they cost 1414 B of
-// tool schema on every request, and every schema change busts the provider's
-// cached prefix once for every session.
-func TestCopyMoveToolsNotRegistered(t *testing.T) {
+// TestDshSurfaceRegistered pins the tool-face decision: the default toolset is
+// dsh's core surface verbatim (names and schemas), and mc's historical names are
+// gone. The job tools (job_output / job_list / job_kill) attach separately via
+// EnableJobTools, and the root extras (subagent family, goals) via
+// EnableAgentTools — workflow excepted, deliberately unregistered
+// (see the note in EnableAgentTools) — so they are not asserted here.
+func TestDshSurfaceRegistered(t *testing.T) {
 	pluginHome(t) // isolate from whatever plugins are installed on this machine
 	cfg := agent.BuildAgentConfig()
 	got := names(NewPromptBuilder(cfg, "C:\\work").GetFilteredDefinitions(cfg))
 
-	for _, gone := range []string{"copy_file", "move_file"} {
-		if contains(got, gone) {
-			t.Fatalf("%s must not be registered by default (see registerDefaultTools); got %v", gone, got)
+	for _, want := range []string{"read", "write", "edit", "glob", "grep", "pwsh", "read_image", "skill", "todo_write", "working_directory", "web_fetch"} {
+		if !contains(got, want) {
+			t.Fatalf("%s must be registered (dsh core surface); got %v", want, got)
 		}
 	}
-	// The file tools that the ablation proved the model actually leans on must
-	// stay — dropping list_dir/delete_file instead made the model re-implement
-	// them through exec and cost more, not less.
-	for _, keep := range []string{"read_file", "write_file", "edit_file", "delete_file", "list_dir", "exec", "search_files"} {
-		if !contains(got, keep) {
-			t.Fatalf("%s must stay registered; got %v", keep, got)
+	// Retired names must not come back: every extra schema byte rides on every
+	// request and busts the provider's cached prefix once per session.
+	for _, gone := range []string{"copy_file", "move_file", "delete_file", "list_dir",
+		"read_file", "write_file", "edit_file", "search_files", "exec", "readimg", "skills"} {
+		if contains(got, gone) {
+			t.Fatalf("%s must not be registered by default (see registerDefaultTools); got %v", gone, got)
 		}
 	}
 }

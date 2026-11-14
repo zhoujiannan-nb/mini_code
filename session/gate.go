@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/user/mini_code/agent"
 	"github.com/user/mini_code/plugin"
@@ -47,7 +48,9 @@ type Approver interface {
 //     applies inside the exec tool itself);
 //  3. cautious mode — destructive calls (delete_file, rm/del/... commands)
 //     are denied outright when catastrophic, otherwise sent to the approver
-//     for a UI confirmation.
+//     for a UI confirmation. A call carrying dsh's sandbox_permissions +
+//     justification pair (see sandboxEscalation) always asks, even when the
+//     call itself would run friction-free.
 //
 // The mode is read live on every call, so switching a session's mode while
 // a task is running takes effect from the next tool call on.
@@ -73,6 +76,17 @@ func (s *Session) gateFor(cfg *agent.AgentConfig) ToolGate {
 				return false, fmt.Sprintf("Error: tool %q is not permitted for agent role %q. Use only the tools available to you.", toolName, s.record.AgentRole)
 			}
 		}
+		// dsh's one-shot escalation pair, validated in every mode: the schema
+		// promises an enum and a mandatory justification, and a promise the
+		// schema makes is a promise the gate enforces. MiniCode runs no OS
+		// sandbox (the ledger records the deviation), so "wider access" has
+		// exactly one meaning here: ask the user for this one call.
+		escMode, just, esc := sandboxEscalation(params)
+		if esc {
+			if deny := validateEscalation(escMode, just); deny != "" {
+				return false, deny
+			}
+		}
 		// The worker 公约 is a contract with every other session of that worker,
 		// so the model cannot write it at all: the workers tool only offers
 		// note_read, and the sole write path is a human editing it in the
@@ -92,6 +106,23 @@ func (s *Session) gateFor(cfg *agent.AgentConfig) ToolGate {
 			return true, ""
 		}
 		action, _ := classifyDestructive(toolName, params)
+		if esc {
+			// The escalation retry (dsh FsSandboxController): a hard block is
+			// a hard block — wider access cannot widen a prohibition, and the
+			// model must not shop for a mode that passes.
+			if action == "block" {
+				return false, "Error: Command blocked — dangerous pattern detected. sandbox_permissions does not apply to hard blocks; no wider mode makes this legal. Choose a different approach."
+			}
+			// Everything else: the retry asks the user, with the model's own
+			// justification front and center. One approval buys one call —
+			// dsh's perCall precedence; the session-level wider setting in
+			// MiniCode is the full/cautious mode itself.
+			decision := s.requestEscalation(ctx, toolName, params, escMode, just)
+			if !decision.Approved {
+				return false, fmt.Sprintf("[sandbox: the user did not grant %s for this call (%s). Do NOT retry it — not with the same arguments, not without the wider access. Explain the blocked step to the user instead.]", escMode, decision.Reason)
+			}
+			return true, ""
+		}
 		switch action {
 		case "block":
 			return false, "Error: Command blocked — dangerous pattern detected. This operation is prohibited in all modes. Choose a different approach."
@@ -103,6 +134,32 @@ func (s *Session) gateFor(cfg *agent.AgentConfig) ToolGate {
 		}
 		return true, ""
 	}
+}
+
+// sandboxEscalation reads dsh's one-shot escalation pair off a tool call's
+// parameters (write/edit/pwsh expose them in the schema; a hallucinated call
+// elsewhere is treated the same — the pair only ever tightens the gate).
+// requested is true as soon as sandbox_permissions is non-empty, so a bad
+// pair is denied rather than silently run as a normal call.
+func sandboxEscalation(params map[string]interface{}) (mode, justification string, requested bool) {
+	mode, _ = params["sandbox_permissions"].(string)
+	if strings.TrimSpace(mode) == "" {
+		return "", "", false
+	}
+	justification, _ = params["justification"].(string)
+	return strings.TrimSpace(mode), strings.TrimSpace(justification), true
+}
+
+// validateEscalation enforces the schema pair: the enum, and the mandatory
+// one-sentence justification the schema promises the user gets to read.
+func validateEscalation(mode, justification string) string {
+	if mode != "workspace-write" && mode != "danger-full-access" {
+		return "Error: sandbox_permissions must be \"workspace-write\" or \"danger-full-access\". Drop the parameter and run the call normally."
+	}
+	if justification == "" {
+		return "Error: sandbox_permissions requires a one-sentence justification for the user (why this exact call needs the wider access). Run the call without the parameter instead."
+	}
+	return ""
 }
 
 // isPluginTool reports whether name belongs to an installed, enabled plugin.
@@ -122,6 +179,20 @@ func isPluginTool(name string) bool {
 // requestApproval sends a destructive operation to the approver (UI popup)
 // and blocks until it is decided, the task is canceled, or it times out.
 func (s *Session) requestApproval(ctx context.Context, toolName string, params map[string]interface{}) ApprovalDecision {
+	return s.requestApprovalArgs(ctx, toolName, approvalArgs(toolName, params))
+}
+
+// requestEscalation is requestApproval for a sandbox escalation retry: the
+// approval card leads with the mode being asked for and the model's own
+// justification, so the user reads the sentence the schema promised before
+// deciding on the wider access.
+func (s *Session) requestEscalation(ctx context.Context, toolName string, params map[string]interface{}, mode, justification string) ApprovalDecision {
+	args := approvalArgs(toolName, params)
+	return s.requestApprovalArgs(ctx, toolName, fmt.Sprintf("[sandbox: asking for %s] %s\n%s", mode, justification, args))
+}
+
+// requestApprovalArgs is the shared UI round-trip behind both paths.
+func (s *Session) requestApprovalArgs(ctx context.Context, toolName, argsJSON string) ApprovalDecision {
 	a := s.manager.approverRef()
 	if a == nil {
 		return ApprovalDecision{Approved: false, Reason: "no approval channel available"}
@@ -131,7 +202,7 @@ func (s *Session) requestApproval(ctx context.Context, toolName string, params m
 		ParentID:     s.record.ParentID,
 		SessionTitle: s.record.Title,
 		ToolName:     toolName,
-		ArgsJSON:     approvalArgs(toolName, params),
+		ArgsJSON:     argsJSON,
 	})
 }
 
@@ -142,7 +213,7 @@ func classifyDestructive(toolName string, params map[string]interface{}) (action
 	switch toolName {
 	case "delete_file":
 		return "ask", "file deletion"
-	case "exec":
+	case "pwsh", "exec":
 		cmd, _ := params["command"].(string)
 		if cmd == "" {
 			return "", ""
@@ -158,9 +229,9 @@ func classifyDestructive(toolName string, params map[string]interface{}) (action
 }
 
 // approvalArgs renders the tool parameters for the approval UI: the raw
-// command for exec, compact JSON otherwise.
+// command for pwsh/exec, compact JSON otherwise.
 func approvalArgs(toolName string, params map[string]interface{}) string {
-	if toolName == "exec" {
+	if toolName == "pwsh" || toolName == "exec" {
 		if cmd, ok := params["command"].(string); ok && cmd != "" {
 			return cmd
 		}

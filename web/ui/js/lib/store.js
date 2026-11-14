@@ -275,7 +275,7 @@ function startToolStep(st, msg) {
   const prep = [...run.steps].reverse().find((s) => s.kind !== "think" && s.phase === "prep" && s.name === name);
   if (prep) {
     const steps = run.steps.map((s) => s.key === prep.key ? Object.assign({}, s, {
-      phase: "run", args, t0: now, timeout: toolTimeoutSec(args), folded: false, holdUntil: 0,
+      phase: "run", args, t0: now, timeout: toolTimeoutSec(args, name), folded: false, holdUntil: 0,
     }) : s);
     return withRun(st, steps);
   }
@@ -284,7 +284,7 @@ function startToolStep(st, msg) {
     args,
     phase: "run",
     t0: now,
-    timeout: toolTimeoutSec(args),
+    timeout: toolTimeoutSec(args, name),
     folded: false,
   });
   // 新步骤一到,已经跑完的那几步立刻收进折叠条(旧 liveHoldFlush 的语义)。
@@ -607,7 +607,7 @@ export function applyResync(st, events, active) {
         t0: c.t,
         phase: "run",
         folded: false,
-        timeout: step.timeout || toolTimeoutSec(c.args),
+        timeout: step.timeout || toolTimeoutSec(c.args, name),
         args: step.phase === "soft" && !step.args && c.args != null ? String(c.args) : step.args,
       });
     }

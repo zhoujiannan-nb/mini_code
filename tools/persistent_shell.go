@@ -629,7 +629,11 @@ func (t *ExecTool) runOnShell(ctx context.Context, command, cwd string, timeoutS
 	} else if out.cwd != "" && !sameDir(rep.preCwd, out.cwd) {
 		note = "cwd: " + out.cwd // tell the model where the cd landed; it steers blind otherwise
 	}
-	res.text = buildExecResult(command, out.out, out.stderr, out.code, note)
+	if note != "" {
+		res.text = buildExecResult(out.out, out.stderr, out.code, "", note)
+	} else {
+		res.text = buildExecResult(out.out, out.stderr, out.code, "")
+	}
 	return res
 }
 

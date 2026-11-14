@@ -350,15 +350,17 @@ func countWorkerNotices(messages []provider.Message) int {
 
 // TestWorkersToolRegisteredForEveryRootSession pins the other half of the
 // prefix: a session must not gain or lose tools when it joins a worker, or the
-// join would break its cache too.
+// join would break its cache too. The workers tool itself is no longer on the
+// exposed surface (dsh parity) — the join reminder and 公约 travel as a user
+// message, so the tool list must stay identical either way.
 func TestWorkersToolRegisteredForEveryRootSession(t *testing.T) {
 	mgr, svc := newTestWorkerEnv(t)
 	unattached := mustSession(t, mgr, "unattached")
 	attached := mustSession(t, mgr, "attached")
 
 	defsBefore := toolJSON(t, unattached)
-	if !strings.Contains(defsBefore, `"workers"`) {
-		t.Fatal("the workers tool is missing for an unattached session")
+	if strings.Contains(defsBefore, `"workers"`) {
+		t.Fatal("the workers tool must not be on the dsh tool surface")
 	}
 	w, err := svc.Create("web", "前端工作", attached.WorkDir(), "")
 	if err != nil {

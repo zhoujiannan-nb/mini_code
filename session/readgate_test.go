@@ -39,13 +39,17 @@ func TestWriteGateRefusesUnreadFile(t *testing.T) {
 	}
 	l := gateLoop(t, dir)
 
-	for _, tool := range []string{"edit_file", "write_file", "delete_file"} {
-		deny := l.checkWriteBeforeRead(tool, params("path", "a.txt"))
+	for _, tool := range []string{"edit", "write", "edit_file", "write_file", "delete_file"} {
+		deny := l.checkWriteBeforeRead(tool, params("file_path", "a.txt"))
 		if deny == "" {
 			t.Fatalf("%s on an unread file was allowed", tool)
 		}
-		if !strings.Contains(deny, "has not been read") || !strings.Contains(deny, "read_file") {
+		if !strings.Contains(deny, "has not been read") || !strings.Contains(deny, "call read on") {
 			t.Fatalf("%s refusal is not actionable: %s", tool, deny)
+		}
+		// the historical "path" key must gate the same way
+		if deny := l.checkWriteBeforeRead(tool, params("path", "a.txt")); deny == "" {
+			t.Fatalf("%s on an unread file was allowed via the legacy path key", tool)
 		}
 	}
 }
@@ -197,7 +201,7 @@ func TestEditWithoutReadIsRefusedEndToEnd(t *testing.T) {
 		requests++
 		w.Header().Set("Content-Type", "text/event-stream")
 		if requests == 1 {
-			writeSSEChunk(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"edit_file","arguments":"{\"path\":\"a.txt\",\"old_text\":\"hello\",\"new_text\":\"bye\"}"}}]},"finish_reason":"tool_calls"}]}`)
+			writeSSEChunk(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"edit","arguments":"{\"file_path\":\"a.txt\",\"old_string\":\"hello\",\"new_string\":\"bye\"}"}}]},"finish_reason":"tool_calls"}]}`)
 		} else {
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}`)
 		}

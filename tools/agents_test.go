@@ -88,9 +88,9 @@ func TestAgentToolValidation(t *testing.T) {
 	}
 }
 
-// TestAgentToolForegroundAndBackground pins the two answer shapes: a foreground
-// call returns the result, a background one returns the name plus the tools that
-// reach it later.
+// TestAgentToolForegroundAndBackground pins the dsh answer shape: subagent is
+// always asynchronous — every call returns the name plus the tools that reach
+// it later, never the result itself.
 func TestAgentToolForegroundAndBackground(t *testing.T) {
 	d := &fakeAgents{run: AgentRun{Name: "reviewer", ChildID: "child-9", Status: "completed", Result: "all good"}}
 	tool := NewAgentTool()
@@ -99,8 +99,17 @@ func TestAgentToolForegroundAndBackground(t *testing.T) {
 	res, _ := tool.Execute(context.Background(), map[string]interface{}{
 		"prompt": "review the diff", "description": "代码审查",
 	})
-	if !strings.Contains(res.Text, `"reviewer"`) || !strings.Contains(res.Text, "all good") {
-		t.Fatalf("foreground result = %q, want the name and the result", res.Text)
+	if !strings.Contains(res.Text, `"reviewer"`) || !strings.Contains(res.Text, "started") {
+		t.Fatalf("async result = %q, want a started notice naming the agent", res.Text)
+	}
+	if strings.Contains(res.Text, "all good") {
+		t.Fatalf("the async answer must not carry the result: %q", res.Text)
+	}
+	if !strings.Contains(res.Text, "send_message") || !strings.Contains(res.Text, "wait_agent") {
+		t.Fatalf("result does not say how to reach the agent: %q", res.Text)
+	}
+	if !d.lastSpec.Background {
+		t.Fatalf("subagent must dispatch asynchronously: %+v", d.lastSpec)
 	}
 	if d.lastSpec.Role != "work" {
 		t.Fatalf("default role = %q, want work", d.lastSpec.Role)
@@ -116,9 +125,6 @@ func TestAgentToolForegroundAndBackground(t *testing.T) {
 	})
 	if !strings.Contains(res.Text, `Sub-agent "reviewer" started`) {
 		t.Fatalf("background result = %q, want a started notice", res.Text)
-	}
-	if !strings.Contains(res.Text, "send_message") || !strings.Contains(res.Text, "agent_output") {
-		t.Fatalf("background result does not say how to reach the agent: %q", res.Text)
 	}
 	if !d.lastSpec.Background || d.lastSpec.Model != "qwen-small" {
 		t.Fatalf("spec not passed through: %+v", d.lastSpec)

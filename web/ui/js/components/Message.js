@@ -1,6 +1,7 @@
 // 单条消息:用户 / 助手 / 系统注入 notice / 过程条 / 错误 / 状态行。
 // DOM 与旧 messages.js + steps.js 生成的完全一致(class 名、层级、头像位置都不变),
 // 变的只是"由 state 渲染"而不是"拼字符串再 innerHTML"。
+// 唯一的例外是思考过程:它不再折叠,统一交给 ThinkBox 画成淡色可滚动小框。
 import { h } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import htm from "htm";
@@ -11,16 +12,9 @@ import { mdToHtml } from "../lib/markdown.js";
 import { noticeOf } from "../lib/transcript.js";
 import { useStore } from "../lib/store.js";
 import { StepStrip, StepsCard } from "./Steps.js";
+import { ThinkBox } from "./ThinkBox.js";
 
 const html = htm.bind(h);
-
-// 思考过程折叠块(历史消息里的 reasoning_content)
-function ThinkBlock({ reasoning }) {
-  return html`<details class="m-think">
-    <summary>💭 思考过程(${Array.from(reasoning).length} 字)</summary>
-    <div class="think-body md" dangerouslySetInnerHTML=${{ __html: mdToHtml(reasoning) }} />
-  </details>`;
-}
 
 function NoticeLine({ notice, text }) {
   const n = noticeOf(notice, text);
@@ -63,7 +57,7 @@ function AssistantMessage({ row }) {
     <div class="m-card">
       <div class="m-head"><span class="m-tag ai">Mini Code</span></div>
       ${steps.length ? html`<${StepStrip} steps=${steps} inline=${true} />` : null}
-      ${reasoning ? html`<${ThinkBlock} reasoning=${reasoning} />` : null}
+      ${reasoning ? html`<${ThinkBox} text=${reasoning} />` : null}
       ${text ? html`<div class="m-text md" dangerouslySetInnerHTML=${{ __html: mdToHtml(text) }} />` : null}
     </div>
   </div>`;
@@ -108,7 +102,7 @@ export function LiveMessage({ live }) {
         <span class="m-tag ai">Mini Code</span>
         <span class="live-ind"><span class="pulse"></span>${content ? "生成中…" : "思考中…"}</span>
       </div>
-      ${reasoning ? html`<div class="m-think-live md" dangerouslySetInnerHTML=${{ __html: mdToHtml(reasoning) }} />` : null}
+      ${reasoning ? html`<${ThinkBox} text=${reasoning} live=${true} />` : null}
       ${content ? html`<div class="m-text md" dangerouslySetInnerHTML=${{ __html: mdToHtml(content) }} />` : null}
     </div>
   </div>`;

@@ -25,25 +25,25 @@ func NewSkillsTool(workspace string) *SkillsTool {
 	}
 }
 
-func (t *SkillsTool) Name() string { return "skills" }
-func (t *SkillsTool) Description() string {
-	return "List available skills (internal and external). Use action='list' or action='read'."
-}
-func (t *SkillsTool) IsHidden() bool { return false }
-func (t *SkillsTool) Parameters() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"action":     map[string]interface{}{"type": "string", "description": "Action: 'list' or 'read'", "enum": []string{"list", "read"}},
-			"source":     map[string]interface{}{"type": "string", "description": "Filter: 'internal' or 'external'", "enum": []string{"internal", "external"}},
-			"skill_name": map[string]interface{}{"type": "string", "description": "Skill name to read"},
-		},
-		"required": []string{},
-	}
-}
+// Name/Description/Parameters: dsh's verbatim "skill" surface — one name,
+// load its full instructions. The historical action/skill_name spelling stays
+// accepted, and an empty call still lists the catalog (dsh's catalog lives in
+// the system prompt; MiniCode's does not, so listing must remain reachable).
+func (t *SkillsTool) Name() string                       { return "skill" }
+func (t *SkillsTool) Description() string                { return dshDesc("skill") }
+func (t *SkillsTool) IsHidden() bool                     { return false }
+func (t *SkillsTool) Parameters() map[string]interface{} { return dshParams("skill") }
 
 func (t *SkillsTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	action, _ := params["action"].(string)
+	if name := strParam(params, "name"); name != "" {
+		read := map[string]interface{}{"skill_name": name}
+		if source, ok := params["source"].(string); ok && source != "" {
+			read["source"] = source
+		}
+		params = read
+		action = "read"
+	}
 	if action == "" {
 		action = "list"
 	}

@@ -40,6 +40,7 @@ func TestPureWaitSeconds(t *testing.T) {
 // either path: the job path must report "nothing started" (so the loop can fall
 // through) and the ordinary path must hand the model the explanation.
 func TestWaitLoopIntercepted(t *testing.T) {
+	t.Setenv("MC_EXEC_GATE", "0") // the ping here is the fixture; this test pins the waitloop note
 	tool := NewExecTool(30, t.TempDir())
 	defer tool.Close() // the short case below does run, on a real shell in that dir
 	cmd := `ping -n 40 127.0.0.1 >nul & echo waited`

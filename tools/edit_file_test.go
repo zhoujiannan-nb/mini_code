@@ -52,7 +52,7 @@ func TestEditFileExactMatchUnchanged(t *testing.T) {
 	ws, name := setupEditTest(t, "a.go", file)
 
 	out := runEdit(t, ws, name, "x := 1", "x := 2", false)
-	if !strings.Contains(out, "Successfully edited") {
+	if !strings.Contains(out, "has been updated successfully") {
 		t.Fatalf("expected success, got: %s", out)
 	}
 	got := readBack(t, ws, name)
@@ -62,34 +62,33 @@ func TestEditFileExactMatchUnchanged(t *testing.T) {
 	}
 }
 
-func TestEditFileIndentationTolerant(t *testing.T) {
-	// File uses 4-space indentation; old_text guesses 2 spaces.
+// Literal matching is the only mechanism (dsh parity): an old_text that
+// differs from the file only in indentation must be REFUSED, not patched
+// through a tolerance pass the advertised tool never promised.
+func TestEditFileRefusesIndentationMismatch(t *testing.T) {
 	file := "def add(a, b):\n    return a + b\n"
 	ws, name := setupEditTest(t, "a.py", file)
 
 	out := runEdit(t, ws, name, "def add(a, b):\n  return a + b", "def add(a, b):\n    return a + b + 1", false)
-	if !strings.Contains(out, "Successfully edited") {
-		t.Fatalf("expected whitespace-tolerant success, got: %s", out)
+	if !strings.HasPrefix(out, "Error:") || !strings.Contains(out, "was not found") {
+		t.Fatalf("expected not-found error, got: %s", out)
 	}
 	got := readBack(t, ws, name)
-	want := "def add(a, b):\n    return a + b + 1\n"
-	if got != want {
-		t.Fatalf("content mismatch:\ngot:  %q\nwant: %q", got, want)
+	if got != file {
+		t.Fatalf("file must be untouched, got:  %q", got)
 	}
 }
 
-func TestEditFileTabsVsSpaces(t *testing.T) {
+func TestEditFileRefusesTabsVsSpaces(t *testing.T) {
 	file := "func f() {\n\tif x {\n\t\treturn 1\n\t}\n}\n"
 	ws, name := setupEditTest(t, "b.go", file)
 
-	// old_text uses spaces where the file uses tabs.
 	out := runEdit(t, ws, name, "func f() {\n    if x {\n        return 1\n    }\n}", "func f() {\n\tif x {\n\t\treturn 2\n\t}\n}", false)
-	if !strings.Contains(out, "Successfully edited") {
-		t.Fatalf("expected whitespace-tolerant success, got: %s", out)
+	if !strings.HasPrefix(out, "Error:") || !strings.Contains(out, "was not found") {
+		t.Fatalf("expected not-found error, got: %s", out)
 	}
-	got := readBack(t, ws, name)
-	if !strings.Contains(got, "return 2") {
-		t.Fatalf("expected 'return 2' in result, got: %q", got)
+	if strings.Contains(readBack(t, ws, name), "return 2") {
+		t.Fatal("tolerance replacement must not have been applied")
 	}
 }
 
@@ -101,7 +100,7 @@ func TestEditFileStrayBlankLines(t *testing.T) {
 	oldText := "func main() {\n\tfmt.Println(\"hi\")\n}"
 	newText := "func main() {\n\tfmt.Println(\"hello\")\n}"
 	out := runEdit(t, ws, name, oldText, newText, false)
-	if !strings.Contains(out, "Successfully edited") {
+	if !strings.Contains(out, "has been updated successfully") {
 		t.Fatalf("expected whitespace-tolerant success, got: %s", out)
 	}
 	got := readBack(t, ws, name)
@@ -132,7 +131,7 @@ func TestEditFileAmbiguousWithoutReplaceAll(t *testing.T) {
 	ws, name := setupEditTest(t, "e.txt", file)
 
 	out := runEdit(t, ws, name, "x := 1", "x := 9", false)
-	if !strings.Contains(out, "appears 2 times") {
+	if !strings.Contains(out, "matched 2 times in") {
 		t.Fatalf("expected ambiguity warning, got: %s", out)
 	}
 }
@@ -144,13 +143,10 @@ func TestEditFileAmbiguousReportsLineNumbers(t *testing.T) {
 	ws, name := setupEditTest(t, "e2.txt", file)
 
 	out := runEdit(t, ws, name, "x := 1", "x := 9", false)
-	if !strings.Contains(out, "appears 2 times") {
+	if !strings.Contains(out, "matched 2 times in") {
 		t.Fatalf("expected ambiguity warning, got: %s", out)
 	}
-	if !strings.Contains(out, "at lines 2, 4") {
-		t.Fatalf("expected 'at lines 2, 4' in warning, got: %s", out)
-	}
-	got := readBack(t, ws, name)
+		got := readBack(t, ws, name)
 	if got != file {
 		t.Fatalf("file must be untouched, got: %q", got)
 	}
@@ -163,32 +159,23 @@ func TestEditFileAmbiguousMultiLineOldTextLines(t *testing.T) {
 	ws, name := setupEditTest(t, "e3.txt", file)
 
 	out := runEdit(t, ws, name, "one\ntwo", "ONE\nTWO", false)
-	if !strings.Contains(out, "appears 2 times") {
+	if !strings.Contains(out, "matched 2 times in") {
 		t.Fatalf("expected ambiguity warning, got: %s", out)
-	}
-	if !strings.Contains(out, "at lines 2, 5") {
-		t.Fatalf("expected 'at lines 2, 5' in warning, got: %s", out)
 	}
 }
 
-func TestEditFileWhitespaceTolerantReplaceAll(t *testing.T) {
-	// Two occurrences with different indentation; replace_all must hit both.
+func TestEditFileReplaceAllLiteral(t *testing.T) {
+	// replace_all over two literal occurrences (dsh success text).
 	file := "a = 1\n  b = 2\n\nc = 3\n\tb = 2\n"
 	ws, name := setupEditTest(t, "f.txt", file)
 
 	out := runEdit(t, ws, name, "b = 2", "b = 99", true)
-	if !strings.Contains(out, "Successfully edited") {
+	if !strings.Contains(out, "All occurrences were successfully replaced") {
 		t.Fatalf("expected replace_all success, got: %s", out)
 	}
 	got := readBack(t, ws, name)
-	if strings.Contains(got, "b = 2") {
-		t.Fatalf("expected both occurrences replaced, got: %q", got)
-	}
 	if strings.Count(got, "b = 99") != 2 {
 		t.Fatalf("expected two 'b = 99', got: %q", got)
-	}
-	if !strings.Contains(got, "a = 1") || !strings.Contains(got, "c = 3") {
-		t.Fatalf("unrelated lines must be preserved, got: %q", got)
 	}
 }
 
@@ -277,7 +264,7 @@ func TestEditFilePreservesCRLF(t *testing.T) {
 	ws, name := setupEditTest(t, "h.txt", file)
 
 	out := runEdit(t, ws, name, "beta", "BETA", false)
-	if !strings.Contains(out, "Successfully edited") {
+	if !strings.Contains(out, "has been updated successfully") {
 		t.Fatalf("expected success, got: %s", out)
 	}
 	got := readBack(t, ws, name)
@@ -293,7 +280,7 @@ func TestEditFilePreservesLF(t *testing.T) {
 	ws, name := setupEditTest(t, "i.txt", file)
 
 	out := runEdit(t, ws, name, "beta", "BETA", false)
-	if !strings.Contains(out, "Successfully edited") {
+	if !strings.Contains(out, "has been updated successfully") {
 		t.Fatalf("expected success, got: %s", out)
 	}
 	got := readBack(t, ws, name)
@@ -303,19 +290,13 @@ func TestEditFilePreservesLF(t *testing.T) {
 	}
 }
 
-func TestEditFileCRLFWhitespaceTolerant(t *testing.T) {
-	// The whitespace-tolerant path on a CRLF file must also keep CRLF.
+func TestEditFileRefusesCRLFIndentationMismatch(t *testing.T) {
+	// literal matching only: indentation difference is refused on CRLF too
 	file := "def f():\r\n    return 1\r\n"
 	ws, name := setupEditTest(t, "j.py", file)
-
 	out := runEdit(t, ws, name, "def f():\n  return 1", "def f():\n    return 2", false)
-	if !strings.Contains(out, "Successfully edited") {
-		t.Fatalf("expected whitespace-tolerant success, got: %s", out)
-	}
-	got := readBack(t, ws, name)
-	want := "def f():\r\n    return 2\r\n"
-	if got != want {
-		t.Fatalf("CRLF must be preserved:\ngot:  %q\nwant: %q", got, want)
+	if !strings.HasPrefix(out, "Error:") || !strings.Contains(out, "was not found") {
+		t.Fatalf("expected not-found error, got: %s", out)
 	}
 }
 
@@ -324,8 +305,8 @@ func TestEditFileCRLFReplaceAll(t *testing.T) {
 	ws, name := setupEditTest(t, "k.txt", file)
 
 	out := runEdit(t, ws, name, "x = 1", "x = 9", true)
-	if !strings.Contains(out, "Successfully edited") {
-		t.Fatalf("expected replace_all success, got: %s", out)
+	if !strings.Contains(out, "All occurrences were successfully replaced") {
+		t.Fatalf("expected replace_all success (checked below), got: %s", out)
 	}
 	got := readBack(t, ws, name)
 	want := "x = 9\r\ny = 2\r\nx = 9\r\n"

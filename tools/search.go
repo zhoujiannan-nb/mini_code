@@ -27,58 +27,18 @@ func NewSearchTool(workspace string) *SearchTool {
 	return &SearchTool{_FsTool{workspace: workspace}}
 }
 
-func (t *SearchTool) Name() string { return "search_files" }
-
-func (t *SearchTool) Description() string {
-	return "Search for a pattern (plain text or regex) across files in the workspace. " +
-		"Returns matching lines as 'path:line: content' with a total match count. " +
-		"Set context=N to also show N lines before/after each match (like grep -C): " +
-		"context lines are printed as 'path-line: content' and groups are separated by '--'."
-}
-
-func (t *SearchTool) IsHidden() bool { return false }
-
-func (t *SearchTool) Parameters() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"pattern": map[string]interface{}{
-				"type":        "string",
-				"description": "Pattern to search for: plain text, or a regex (RE2 syntax) if it compiles",
-			},
-			"path": map[string]interface{}{
-				"type":        "string",
-				"description": "Directory or file to search in (default: the workspace root)",
-			},
-			"include": map[string]interface{}{
-				"type":        "string",
-				"description": "Only search files whose name matches this glob, e.g. \"*.go\" or \"*.log\"",
-			},
-			"ignore_case": map[string]interface{}{
-				"type":        "boolean",
-				"description": "Case-insensitive matching (default false)",
-			},
-			"max_results": map[string]interface{}{
-				"type":        "integer",
-				"description": "Maximum number of matching lines to return (default 100, max 500)",
-				"minimum":     1,
-				"maximum":     500,
-			},
-			"context": map[string]interface{}{
-				"type":        "integer",
-				"description": "Number of context lines to show before and after each match, like grep -C (default 0 = match lines only, max 20)",
-				"minimum":     0,
-				"maximum":     20,
-			},
-		},
-		"required": []string{"pattern"},
-	}
-}
+// Name/Description/Parameters: dsh's verbatim "grep" surface. The
+// implementation keeps accepting the unlisted ignore_case/max_results/context
+// parameters for older sessions.
+func (t *SearchTool) Name() string                       { return "grep" }
+func (t *SearchTool) Description() string                { return dshDesc("grep") }
+func (t *SearchTool) IsHidden() bool                     { return false }
+func (t *SearchTool) Parameters() map[string]interface{} { return dshParams("grep") }
 
 const (
-	searchDefaultMax = 100
+	searchDefaultMax = 250 // dsh GREP_MAX_MATCHES (the description promises 250)
 	searchHardMax    = 500
-	searchLineCap    = 240 // per-line display cap
+	searchLineBytes  = 2000 // dsh GREP_MAX_LINE_BYTES: per-line display cap
 	searchFileCap    = 200000
 	searchMaxContext = 20 // max context lines per match (like grep -C)
 )
@@ -104,10 +64,49 @@ func intParam(params map[string]interface{}, key string, def int) int {
 }
 
 func (t *SearchTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
-	pattern, _ := params["pattern"].(string)
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
-		return NewTextResult("Error: missing pattern"), nil
+	// dsh grep.js/grep.ts schema texts, verbatim: an absent pattern is caught
+	// by the dispatch validator; these are the tool-level guards. An empty
+	// pattern string is rejected; whitespace patterns are searched as-is
+	// (dsh does not trim).
+	pattern, isStr := params["pattern"].(string)
+	if !isStr || len(pattern) == 0 {
+		return NewTextResult("Error: invalid arguments: pattern must be a non-empty string"), nil
+	}
+	if p, present := params["path"]; present {
+		ps, _ := p.(string)
+		if strings.TrimSpace(ps) == "" {
+			return NewTextResult("Error: invalid arguments: path must be a non-empty string when given"), nil
+		}
+	}
+	// include: one positive glob when given; empty/negated/comma-list are all
+	// argument errors with dsh's exact texts (grep.ts:68-75).
+	var include string
+	if v, present := params["include"]; present {
+		include, _ = v.(string)
+		if strings.TrimSpace(include) == "" {
+			return NewTextResult("Error: invalid arguments: include must be a non-empty glob when given"), nil
+		}
+		if strings.HasPrefix(strings.TrimSpace(include), "!") {
+			return NewTextResult(`Error: invalid arguments: include must be a positive glob filter; negated patterns ("!…") are not supported`), nil
+		}
+		// A comma INS a brace group is one glob with alternation; a comma at
+		// brace depth 0 is a list, which dsh rejects (grep.ts:70-77).
+		braceDepth := 0
+		for _, ch := range include {
+			switch ch {
+			case '{':
+				braceDepth++
+			case '}':
+				if braceDepth > 0 {
+					braceDepth--
+				}
+			case ',':
+				if braceDepth == 0 {
+					return NewTextResult("Error: invalid arguments: include must be one glob, not a comma-separated list (use {a,b} alternation instead)"), nil
+				}
+			}
+		}
+		include = strings.TrimSpace(include)
 	}
 
 	root := t.workspace
@@ -123,10 +122,6 @@ func (t *SearchTool) Execute(ctx context.Context, params map[string]interface{})
 		return NewTextResult(fmt.Sprintf("Error: path not found: %s", root)), nil
 	}
 
-	var include string
-	if v, ok := params["include"].(string); ok {
-		include = strings.TrimSpace(v)
-	}
 	ignoreCase, _ := params["ignore_case"].(bool)
 	maxResults := intParam(params, "max_results", searchDefaultMax)
 	if maxResults > searchHardMax {
@@ -168,27 +163,28 @@ func (t *SearchTool) Execute(ctx context.Context, params map[string]interface{})
 	var (
 		hits          []fileHit
 		mu            sync.Mutex
-		wg            sync.WaitGroup
-		total         int
-		filesScanned  int
-		truncatedFile bool
+		wg           sync.WaitGroup
+		total        int
 	)
-	noteScan := func(scanned, truncated bool) {
-		mu.Lock()
-		if scanned {
-			filesScanned++
-		}
-		if truncated {
-			truncatedFile = true
-		}
-		mu.Unlock()
+	// rg's --glob understands {a,b} alternation; filepath.Match does not, so
+	// expand the brace groups into a set of plain patterns up front.
+	var includeAlts []string
+	if include != "" {
+		includeAlts = braceExpand(include)
 	}
+
 	scanOne := func(fp string) {
 		if ctx.Err() != nil {
 			return
 		}
-		if include != "" {
-			ok, _ := filepath.Match(include, filepath.Base(fp))
+		if len(includeAlts) > 0 {
+			ok := false
+			for _, alt := range includeAlts {
+				if m, _ := filepath.Match(alt, filepath.Base(fp)); m {
+					ok = true
+					break
+				}
+			}
 			if !ok {
 				return
 			}
@@ -214,12 +210,10 @@ func (t *SearchTool) Execute(ctx context.Context, params map[string]interface{})
 		var idxs []int
 		var texts []string
 		lineNo := 0
-		truncated := false
 		for scanner.Scan() {
 			lineNo++
 			if lineNo > searchFileCap {
-				truncated = true
-				break
+				break // runaway guard; dsh has no matching notice for this
 			}
 			// Per-line decode: a GBK lead byte never spans the 0x0A that
 			// split the line, so decoding line by line is exact (the same
@@ -236,7 +230,6 @@ func (t *SearchTool) Execute(ctx context.Context, params map[string]interface{})
 				texts = append(texts, line)
 			}
 		}
-		noteScan(true, truncated)
 		if len(idxs) == 0 {
 			return
 		}
@@ -290,7 +283,7 @@ func (t *SearchTool) Execute(ctx context.Context, params map[string]interface{})
 	}
 
 	if total == 0 {
-		return NewTextResult(fmt.Sprintf("No matches for %q in %s (%d files scanned).", pattern, root, filesScanned)), nil
+		return NewTextResult("No matches found"), nil
 	}
 
 	// Deterministic ordering: by file, then line number. The scan itself is
@@ -298,68 +291,135 @@ func (t *SearchTool) Execute(ctx context.Context, params map[string]interface{})
 	// serial version regardless of which worker finished first.
 	sort.Slice(hits, func(i, j int) bool { return hits[i].rel < hits[j].rel })
 
+	// dsh grep rendering: a "Found …" header, then matches grouped by file
+	// (path line, then `Line N: text` rows, blank line between files), then —
+	// when the result was capped — a parenthesized footer naming the file that
+	// holds the complete formatted result.
 	var b strings.Builder
 	shown := 0
 	if contextLines == 0 {
-		// Match lines only (legacy output, no context, no separators).
+		var sections []string
 		for _, fm := range hits {
-			for k, mi := range fm.idxs {
+			if shown >= maxResults {
+				break
+			}
+			var rows []string
+			for k := range fm.idxs {
 				if shown >= maxResults {
 					break
 				}
-				b.WriteString(formatMatchLine(fm.rel, mi, fm.texts[k]))
+				rows = append(rows, formatMatchLine(fm.idxs[k]+1, capLineBytes(fm.texts[k])))
 				shown++
 			}
-			if shown >= maxResults {
-				break
+			sections = append(sections, fm.rel+"\n"+strings.Join(rows, "\n"))
+		}
+		header := fmt.Sprintf("Found %d %s", total, grepMatchNoun(total))
+		if total > shown {
+			header = fmt.Sprintf("Found %d of %d matches", shown, total)
+		}
+		b.WriteString(header)
+		b.WriteString("\n\n")
+		b.WriteString(strings.Join(sections, "\n\n"))
+		if total > shown {
+			// The spool carries the complete result in the same grouped
+			// rendering, so the cap costs one read call, not information.
+			var full strings.Builder
+			for _, fm := range hits {
+				var rows []string
+				for k := range fm.idxs {
+					rows = append(rows, formatMatchLine(fm.idxs[k]+1, capLineBytes(fm.texts[k])))
+				}
+				full.WriteString(fm.rel + "\n" + strings.Join(rows, "\n") + "\n\n")
+			}
+			b.WriteString("\n\n")
+			if spool := spoolWrite("grep", full.String()); spool != "" {
+				fmt.Fprintf(&b, "(Full grep result stored at: %s. Use read with offset/limit, or grep this path to search within it.)", spool)
+			} else {
+				b.WriteString("(The complete result could not be saved; narrow pattern, path, or include to see more.)")
 			}
 		}
-	} else {
-		// Match lines plus N context lines each side; groups separated by "--".
-		// Context needs the surrounding lines, which the scan no longer keeps
-		// for every file (that was O(all lines of every matching file) memory);
-		// only the few files that actually matched are re-read here.
-		for _, fm := range hits {
-			if shown >= maxResults {
-				break
+		return NewTextResult(b.String()), nil
+	}
+
+	// Context mode is a hidden legacy parameter (dsh has no equivalent): match
+	// lines plus N context lines each side; groups separated by "--".
+	var matchCount int
+	for _, fm := range hits {
+		if matchCount >= maxResults {
+			break
+		}
+		lines := readLinesForContext(fm.abs)
+		if len(lines) == 0 {
+			continue
+		}
+		matchSet := make(map[int]bool, len(fm.idxs))
+		for _, mi := range fm.idxs {
+			matchSet[mi] = true
+		}
+		for _, rng := range mergeContextRanges(fm.idxs, contextLines, len(lines), maxResults-matchCount) {
+			if b.Len() > 0 {
+				b.WriteString("--\n")
 			}
-			lines := readLinesForContext(fm.abs)
-			if len(lines) == 0 {
+			for i := rng.start; i < rng.end; i++ {
+				if matchSet[i] {
+					b.WriteString(formatLegacyLine(fm.rel, i, lines[i]))
+					matchCount++
+				} else {
+					b.WriteString(formatContextLine(fm.rel, i, lines[i]))
+				}
+			}
+		}
+	}
+	if b.Len() == 0 {
+		return NewTextResult("No matches found"), nil
+	}
+	header := fmt.Sprintf("Found %d %s", total, grepMatchNoun(total))
+	if total > matchCount {
+		header = fmt.Sprintf("Found %d of %d matches", matchCount, total)
+	}
+	return NewTextResult(header + "\n\n" + b.String()), nil
+}
+
+// grepMatchNoun picks "match"/"matches" for a count, like dsh's matchNoun.
+func grepMatchNoun(count int) string {
+	if count == 1 {
+		return "match"
+	}
+	return "matches"
+}
+
+// braceExpand expands {a,b} alternation groups in one glob into the set of
+// plain patterns filepath.Match can handle. Nested groups expand recursively;
+// malformed braces are kept literal.
+func braceExpand(pattern string) []string {
+	depth := 0
+	start := -1
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case '}':
+			if depth == 0 {
 				continue
 			}
-			matchSet := make(map[int]bool, len(fm.idxs))
-			for _, mi := range fm.idxs {
-				matchSet[mi] = true
-			}
-			for _, rng := range mergeContextRanges(fm.idxs, contextLines, len(lines), maxResults-shown) {
-				if b.Len() > 0 {
-					b.WriteString("--\n")
-				}
-				for i := rng.start; i < rng.end; i++ {
-					if matchSet[i] {
-						b.WriteString(formatMatchLine(fm.rel, i, lines[i]))
-						shown++
-					} else {
-						b.WriteString(formatContextLine(fm.rel, i, lines[i]))
+			depth--
+			if depth == 0 && start >= 0 {
+				body := pattern[start+1 : i]
+				prefix, suffix := pattern[:start], pattern[i+1:]
+				var out []string
+				for _, alt := range strings.Split(body, ",") {
+					for _, rest := range braceExpand(prefix + alt + suffix) {
+						out = append(out, rest)
 					}
 				}
+				return out
 			}
 		}
 	}
-
-	if b.Len() == 0 {
-		return NewTextResult(fmt.Sprintf("No matches for %q in %s (%d files scanned).", pattern, root, filesScanned)), nil
-	}
-
-	fmt.Fprintf(&b, "\n(%d matching lines total, %d files scanned", total, filesScanned)
-	if total > shown {
-		fmt.Fprintf(&b, "; showing first %d", shown)
-	}
-	if truncatedFile {
-		b.WriteString("; some very long files were truncated")
-	}
-	b.WriteString(")")
-	return NewTextResult(b.String()), nil
+	return []string{pattern}
 }
 
 // searchWorkers bounds the file-scan pool. Reading a file is dominated by I/O
@@ -391,20 +451,36 @@ func readLinesForContext(fp string) []string {
 	return lines
 }
 
-// formatMatchLine renders a matching line as "path:lineNo: text".
-func formatMatchLine(file string, idx int, text string) string {
-	if len([]rune(text)) > searchLineCap {
-		text = string([]rune(text)[:searchLineCap]) + "…"
-	}
-	return fmt.Sprintf("%s:%d: %s\n", file, idx+1, text)
+// formatMatchLine renders one match row inside its file group, exactly as
+// dsh's formatGrepMatches does: `Line N: text` (the group header carries the
+// path). The line is cut at dsh's byte budget on a rune boundary (cutting
+// mid-sequence would hand the model a broken character).
+func formatMatchLine(lineNo int, text string) string {
+	return fmt.Sprintf("Line %d: %s", lineNo, text)
+}
+
+// formatLegacyLine renders the flat "path:line: text" row used only by the
+// hidden context mode (dsh has no context flag to mirror).
+func formatLegacyLine(file string, idx int, text string) string {
+	return fmt.Sprintf("%s:%d: %s\n", file, idx+1, capLineBytes(text))
 }
 
 // formatContextLine renders a context line as "path-lineNo: text".
 func formatContextLine(file string, idx int, text string) string {
-	if len([]rune(text)) > searchLineCap {
-		text = string([]rune(text)[:searchLineCap]) + "…"
+	return fmt.Sprintf("%s-%d: %s\n", file, idx+1, capLineBytes(text))
+}
+
+// capLineBytes truncates to searchLineBytes bytes (rune-safe) with dsh's
+// preview marker.
+func capLineBytes(text string) string {
+	if len(text) <= searchLineBytes {
+		return text
 	}
-	return fmt.Sprintf("%s-%d: %s\n", file, idx+1, text)
+	cut := searchLineBytes
+	for cut > 0 && (text[cut]&0xC0) == 0x80 { // step back off a UTF-8 tail
+		cut--
+	}
+	return text[:cut] + " (line truncated)"
 }
 
 type lineRange struct{ start, end int } // [start, end), 0-based line indices

@@ -34,7 +34,7 @@ func TestAgeOutCallArgsOnlyBigWriteEdit(t *testing.T) {
 	if json.Unmarshal([]byte(out), &v) != nil {
 		t.Fatalf("replacement is not valid JSON: %q", out)
 	}
-	if v["path"] != "dir/a.txt" || !strings.Contains(v["content"].(string), "aged out") {
+	if v["file_path"] != "dir/a.txt" || !strings.Contains(v["content"].(string), "aged out") {
 		t.Fatalf("summary lost the anchor: %s", out)
 	}
 	// Idempotent: the summary sits far below the threshold.
@@ -44,6 +44,14 @@ func TestAgeOutCallArgsOnlyBigWriteEdit(t *testing.T) {
 	outE, ok := ageOutCallArgs("edit_file", `{"path":"a.txt","old_text":"`+strings.Repeat("o", 2500)+`","new_text":"`+strings.Repeat("n", 2500)+`"}`)
 	if !ok || !strings.Contains(outE, "replaced 2500 chars") {
 		t.Fatalf("edit summary wrong: %q", outE)
+	}
+	// The dsh names and argument keys age the same way.
+	if _, ok := ageOutCallArgs("write", `{"file_path":"a.txt","content":"`+big+`"}`); !ok {
+		t.Fatal("big dsh-name write must age")
+	}
+	outE2, ok := ageOutCallArgs("edit", `{"file_path":"a.txt","old_string":"`+strings.Repeat("o", 2500)+`","new_string":"`+strings.Repeat("n", 2500)+`"}`)
+	if !ok || !strings.Contains(outE2, "replaced 2500 chars") {
+		t.Fatalf("dsh-name edit summary wrong: %q", outE2)
 	}
 }
 

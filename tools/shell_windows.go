@@ -43,6 +43,23 @@ func applyRawCmdLine(cmd *exec.Cmd, command string) {
 	cmd.SysProcAttr.HideWindow = true
 }
 
+// applyPwshWindow hides the console window for a pwsh/powershell.exe call.
+// Unlike applyRawCmdLine it does NOT rewrite the command line: PowerShell
+// parses a single -Command argument correctly through Go's own argv quoting,
+// so there is no quote-mangling layer to bypass. Only CREATE_NO_WINDOW is
+// needed, for the same reason as above (the desktop build has no console).
+func applyPwshWindow(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.HideWindow = true
+}
+
+// exitSignalName always reports no signal on Windows: the platform has no
+// signal vocabulary, and dsh teaches the model that a force-killed command
+// settles as `[exit code: 1]` without a signal marker.
+func exitSignalName(_ *exec.ExitError) string { return "" }
+
 // attachProcessTree places the started process (and every descendant it
 // spawns) into a Windows job object configured with KILL_ON_JOB_CLOSE.
 //

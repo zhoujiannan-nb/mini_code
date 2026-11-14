@@ -71,7 +71,13 @@ func NewJobTools(reg *job.Registry) []*JobTool {
 }
 
 func (t *JobTool) Name() string { return t.name }
+
+// Description/Parameters come from the embedded dsh spec (dsh_surface.go);
+// the parameter names already matched (job_id / wait / timeout_ms / reason).
 func (t *JobTool) Description() string {
+	if d := dshDesc(t.name); d != "" {
+		return d
+	}
 	if t.description == "" {
 		return "Deprecated: this tool is no longer available."
 	}
@@ -79,6 +85,9 @@ func (t *JobTool) Description() string {
 }
 func (t *JobTool) IsHidden() bool { return false }
 func (t *JobTool) Parameters() map[string]interface{} {
+	if d := dshSpecs()[t.name]; d.Parameters != nil {
+		return d.Parameters
+	}
 	return map[string]interface{}{
 		"type":       "object",
 		"properties": t.properties,

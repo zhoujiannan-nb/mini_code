@@ -30,16 +30,16 @@ func TestSearchToolPlainText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Text, "a.txt:1: hello world") {
-		t.Fatalf("missing a.txt:1 match: %s", res.Text)
+	if !strings.Contains(res.Text, "a.txt\nLine 1: hello world") {
+		t.Fatalf("missing a.txt line 1 match: %s", res.Text)
 	}
-	if !strings.Contains(res.Text, "a.txt:3: hello again") {
-		t.Fatalf("missing a.txt:3 match: %s", res.Text)
+	if !strings.Contains(res.Text, "Line 3: hello again") {
+		t.Fatalf("missing a.txt line 3 match: %s", res.Text)
 	}
 	if strings.Contains(res.Text, "sub/b.txt") {
 		t.Fatalf("case-sensitive search should not match HELLO: %s", res.Text)
 	}
-	if !strings.Contains(res.Text, "2 matching lines total") {
+	if !strings.Contains(res.Text, "Found 2 matches") {
 		t.Fatalf("expected total count 2: %s", res.Text)
 	}
 }
@@ -53,10 +53,10 @@ func TestSearchToolIgnoreCase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Text, "a.txt:1") || !strings.Contains(res.Text, "a.txt:2") {
+	if !strings.Contains(res.Text, "Line 1: Hello World") || !strings.Contains(res.Text, "Line 2: hello again") {
 		t.Fatalf("expected both lines: %s", res.Text)
 	}
-	if !strings.Contains(res.Text, "2 matching lines total") {
+	if !strings.Contains(res.Text, "Found 2 matches") {
 		t.Fatalf("expected total 2: %s", res.Text)
 	}
 }
@@ -70,10 +70,10 @@ func TestSearchToolRegex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Text, "log.txt:1") || !strings.Contains(res.Text, "log.txt:3") {
+	if !strings.Contains(res.Text, "Line 1: ") || !strings.Contains(res.Text, "Line 3: ") {
 		t.Fatalf("regex should match lines 1 and 3: %s", res.Text)
 	}
-	if strings.Contains(res.Text, "log.txt:2") {
+	if strings.Contains(res.Text, "Line 2: ") {
 		t.Fatalf("line 2 should not match: %s", res.Text)
 	}
 }
@@ -88,7 +88,7 @@ func TestSearchToolIncludeGlob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Text, "a.go:1") {
+	if !strings.Contains(res.Text, "a.go\nLine 1: ") {
 		t.Fatalf("expected a.go match: %s", res.Text)
 	}
 	if strings.Contains(res.Text, "a.txt") {
@@ -109,11 +109,15 @@ func TestSearchToolMaxResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Text, "50 matching lines total") {
-		t.Fatalf("total should be 50: %s", res.Text)
+	if !strings.Contains(res.Text, "Found 10 of 50 matches") {
+		t.Fatalf("expected truncation header: %s", res.Text)
 	}
-	if !strings.Contains(res.Text, "showing first 10") {
-		t.Fatalf("should note truncation: %s", res.Text)
+	if !strings.Contains(res.Text, "(Full grep result stored at: ") ||
+		!strings.Contains(res.Text, "Use read with offset/limit, or grep this path to search within it.)") {
+		// dsh spill footer: the complete formatted result lands in a file.
+		if !strings.Contains(res.Text, "(The complete result could not be saved; narrow pattern, path, or include to see more.)") {
+			t.Fatalf("expected the spill footer: %s", res.Text)
+		}
 	}
 	if c := strings.Count(res.Text, "needle line"); c != 10 {
 		t.Fatalf("expected 10 shown lines, got %d", c)
@@ -143,7 +147,7 @@ func TestSearchToolSingleFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Text, "one.txt:1") || !strings.Contains(res.Text, "one.txt:3") {
+	if !strings.Contains(res.Text, "Line 1: alpha") || !strings.Contains(res.Text, "Line 3: alpha") {
 		t.Fatalf("expected lines 1 and 3: %s", res.Text)
 	}
 }
@@ -157,6 +161,42 @@ func TestSearchToolBadPath(t *testing.T) {
 	}
 	if !strings.Contains(res.Text, "Error") {
 		t.Fatalf("expected error for bad path: %s", res.Text)
+	}
+}
+
+// dsh grep schema texts (grep.ts:68-92), verbatim under the stable
+// "invalid arguments: " prefix.
+func TestSearchToolArgumentValidation(t *testing.T) {
+	dir := t.TempDir()
+	st := NewSearchTool(dir)
+	cases := []struct {
+		name   string
+		params map[string]interface{}
+		want   string
+	}{
+		{"empty-pattern", map[string]interface{}{"pattern": ""}, "pattern must be a non-empty string"},
+		{"empty-path", map[string]interface{}{"pattern": "x", "path": "  "}, "path must be a non-empty string when given"},
+		{"blank-include", map[string]interface{}{"pattern": "x", "include": "  "}, "include must be a non-empty glob when given"},
+		{"negated-include", map[string]interface{}{"pattern": "x", "include": "!*.md"}, `include must be a positive glob filter; negated patterns ("!…") are not supported`},
+		{"comma-include", map[string]interface{}{"pattern": "x", "include": "*.ts,*.tsx"}, "include must be one glob, not a comma-separated list (use {a,b} alternation instead)"},
+	}
+	for _, tc := range cases {
+		res, err := st.Execute(context.Background(), tc.params)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if !strings.Contains(res.Text, "Error: invalid arguments: "+tc.want) {
+			t.Fatalf("%s: expected %q, got: %s", tc.name, tc.want, res.Text)
+		}
+	}
+	// {a,b} alternation is ONE glob and stays valid.
+	writeFile(t, dir, "a.tsx", "needle\n")
+	res, err := st.Execute(context.Background(), map[string]interface{}{"pattern": "needle", "include": "*.{ts,tsx}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Text, "Line 1: needle") {
+		t.Fatalf("alternation glob rejected: %s", res.Text)
 	}
 }
 
@@ -179,7 +219,7 @@ func TestSearchToolContextBasic(t *testing.T) {
 	if !strings.Contains(res.Text, "a.txt-4: line4") {
 		t.Fatalf("missing context line after: %s", res.Text)
 	}
-	if !strings.Contains(res.Text, "1 matching lines total") {
+	if !strings.Contains(res.Text, "Found 1 match") {
 		t.Fatalf("expected total 1: %s", res.Text)
 	}
 }
@@ -255,8 +295,9 @@ func TestSearchToolContextDefaultZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Default (no context param) must behave as before: only the match line.
-	if !strings.Contains(res.Text, "a.txt:2: TARGET") {
+	// Default (no context param) goes through the dsh grouped rendering: the
+	// match line inside its file group, nothing else.
+	if !strings.Contains(res.Text, "a.txt\nLine 2: TARGET") {
 		t.Fatalf("missing match: %s", res.Text)
 	}
 	if strings.Contains(res.Text, "line1") || strings.Contains(res.Text, "line3") {

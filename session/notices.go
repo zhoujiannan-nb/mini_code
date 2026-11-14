@@ -50,6 +50,9 @@ const (
 	// NoticePersist is the one-shot warning that the conversation could not be
 	// saved to disk (session.persistFailureNotice, F1).
 	NoticePersist = "persist"
+	// NoticeGoal is an automatic goal-continuation round (goalround.go): the
+	// driver speaking to the model, not the user repeating themselves.
+	NoticeGoal = "goal"
 )
 
 // emptyRetryNotice is the nudge appended when the model answers with nothing.
@@ -85,6 +88,8 @@ func NoticeKind(m provider.Message) (kind string, ok bool) {
 		return NoticeSummary, true
 	case strings.HasPrefix(trimmed, "__MC_PERSIST_FAILED__"):
 		return NoticePersist, true
+	case strings.HasPrefix(trimmed, goalRoundTag):
+		return NoticeGoal, true
 	case strings.HasPrefix(trimmed, "<agent "), strings.HasPrefix(trimmed, "<subagent "):
 		// "<agent " is current (subagent.go, named agents); "<subagent " is the
 		// marker written by earlier builds — old transcripts must keep rendering

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/user/mini_code/agent"
 )
@@ -101,59 +102,22 @@ func (t *AgentTool) SetSessionContext(parentSessionID string, dispatcher AgentDi
 }
 
 func (t *AgentTool) Name() string { return "subagent" }
-func (t *AgentTool) Description() string {
-	agents := agent.ListAllAgents()
-	var lines []string
-	for _, name := range sortedAgentNames() {
-		lines = append(lines, fmt.Sprintf("  - %s: %s", name, agents[name]))
-	}
-	return fmt.Sprintf(
-		"Start a sub-agent on a self-contained task. %s\n\n"+
-			"Choose run_in_background=true for work that can proceed independently: the call returns immediately with the agent's name and a settlement message arrives when it finishes. "+
-			"Choose run_in_background=false (default) when you need the answer before you can continue.\n\n"+
-			"Roles:\n%s",
-		agentToolDocs, strings.Join(lines, "\n"),
-	)
-}
 func (t *AgentTool) IsHidden() bool { return false }
-func (t *AgentTool) Parameters() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"prompt": map[string]interface{}{
-				"type":        "string",
-				"description": "The task for the sub-agent. It does not see your conversation unless fork=true, so make this self-contained: what to do, where, and what done looks like.",
-			},
-			"description": map[string]interface{}{
-				"type":        "string",
-				"description": "A short description (3-5 words) of what this agent is for, shown by list_agents. Write it in the language the user writes in.",
-			},
-			"name": map[string]interface{}{
-				"type":        "string",
-				"description": "Optional stable name: lower-case letters, digits and dashes, max 32 chars, starting with a letter; \"lead\" is reserved. Omit to get agent-1, agent-2, ...",
-			},
-			"role": map[string]interface{}{
-				"type":        "string",
-				"description": fmt.Sprintf("Which agent role to run (default: work). Available: %s", strings.Join(sortedAgentNames(), ", ")),
-			},
-			"fork": map[string]interface{}{
-				"type":        "boolean",
-				"description": "Copy this conversation into the sub-agent as its starting context (default false = a fresh conversation with only the prompt).",
-			},
-			"run_in_background": map[string]interface{}{
-				"type":        "boolean",
-				"description": "Return immediately instead of waiting for the result (default false).",
-			},
-			"model": map[string]interface{}{
-				"type":        "string",
-				"description": "Optional model name for this sub-agent only (default: inherits this session's model).",
-			},
-		},
-		"required": []string{"prompt", "description"},
-	}
-}
+
+// Description/Parameters: dsh's verbatim "subagent" surface. dsh's subagent
+// is always asynchronous — it returns the name and the completion notice
+// arrives later — so the exposed schema carries no run_in_background and
+// Execute forces one. The historical foreground path stays reachable for
+// in-process callers (tests) through the unlisted parameter.
+func (t *AgentTool) Description() string                { return dshDesc("subagent") }
+func (t *AgentTool) Parameters() map[string]interface{} { return dshParams("subagent") }
 
 func (t *AgentTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
+	return t.dispatch(ctx, params, false, true)
+}
+
+// dispatch is the shared body of subagent and subagent_fork.
+func (t *AgentTool) dispatch(ctx context.Context, params map[string]interface{}, forceFork, forceAsync bool) (*ToolResult, error) {
 	prompt, _ := params["prompt"].(string)
 	if strings.TrimSpace(prompt) == "" {
 		return NewTextResult("Error: missing required parameter 'prompt'"), nil
@@ -170,7 +134,13 @@ func (t *AgentTool) Execute(ctx context.Context, params map[string]interface{}) 
 		return NewTextResult(fmt.Sprintf("Error: unknown role %q. Available: %s", role, strings.Join(sortedAgentNames(), ", "))), nil
 	}
 	fork, _ := params["fork"].(bool)
+	if forceFork {
+		fork = true
+	}
 	runBg, _ := params["run_in_background"].(bool)
+	if forceAsync {
+		runBg = true
+	}
 	model, _ := params["model"].(string)
 	name, _ := params["name"].(string)
 	if t.dispatcher == nil {
@@ -195,10 +165,10 @@ func (t *AgentTool) Execute(ctx context.Context, params map[string]interface{}) 
 			"Sub-agent %q started (role %s, session %s). It runs independently while you continue working.\n"+
 				"- A settlement message with its result arrives when it finishes; it will wake you if you have stopped.\n"+
 				"- send_message(agent=%q, message=...) reaches it while it runs (delivered at its next turn) or wakes it afterwards.\n"+
-				"- agent_output(agent=%q, wait=true) to read its result now, cancel_agent(agent=%q) to stop it, list_agents() to see all agents.\n"+
-				"Do NOT sleep in a loop, poll for progress, or duplicate its work; avoid editing the same files it is working on. "+
-				"Either continue with non-overlapping work, or briefly tell the user what you launched and end your turn.",
-			run.Name, role, run.ChildID, run.Name, run.Name, run.Name)), nil
+				"- list_agents() shows every agent's state; wait_agent blocks until the next input (a settlement notice, an agent message, user steering) arrives.\n"+
+			"Do NOT sleep in a loop, poll for progress, or duplicate its work; avoid editing the same files it is working on. "+
+			"Either continue with non-overlapping work, or briefly tell the user what you launched and end your turn.",
+			run.Name, role, run.ChildID, run.Name)), nil
 	}
 
 	switch run.Status {
@@ -209,6 +179,25 @@ func (t *AgentTool) Execute(ctx context.Context, params map[string]interface{}) 
 	default:
 		return NewTextResult(fmt.Sprintf("[Sub-agent %q failed] %s", run.Name, run.Error)), nil
 	}
+}
+
+// SubagentForkTool is dsh's subagent_fork: the same dispatch, seeded with
+// this conversation's completed turns (MiniCode's fork=true).
+type SubagentForkTool struct{ inner *AgentTool }
+
+func NewSubagentForkTool(parentSessionID string, dispatcher AgentDispatcher) *SubagentForkTool {
+	inner := NewAgentTool()
+	inner.SetSessionContext(parentSessionID, dispatcher)
+	return &SubagentForkTool{inner: inner}
+}
+
+func (t *SubagentForkTool) Name() string                       { return "subagent_fork" }
+func (t *SubagentForkTool) Description() string                { return dshDesc("subagent_fork") }
+func (t *SubagentForkTool) Parameters() map[string]interface{} { return dshParams("subagent_fork") }
+func (t *SubagentForkTool) IsHidden() bool                     { return false }
+
+func (t *SubagentForkTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
+	return t.inner.dispatch(ctx, params, true, true)
 }
 
 // SendMessageTool delivers a message to an existing sub-agent.
@@ -222,28 +211,11 @@ func NewSendMessageTool(parentSessionID string, dispatcher AgentDispatcher) *Sen
 }
 
 func (t *SendMessageTool) Name() string { return "send_message" }
-func (t *SendMessageTool) Description() string {
-	return "Send a message to another agent. If it is running, the message is delivered at its next turn (its current work continues to completion — this steers it instead of restarting it). " +
-		"If it is idle or already finished, it is woken with this message as a new task, keeping its conversation. " +
-		"Delivery is confirmed, not answered: the reply arrives as its own message later, never as this call's result."
-}
-func (t *SendMessageTool) IsHidden() bool { return false }
-func (t *SendMessageTool) Parameters() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"agent": map[string]interface{}{
-				"type":        "string",
-				"description": "The agent's name (as returned by subagent / list_agents) or its session id.",
-			},
-			"message": map[string]interface{}{
-				"type":        "string",
-				"description": "What to tell it. It does not share your context, so include what it needs to act.",
-			},
-		},
-		"required": []string{"agent", "message"},
-	}
-}
+
+// Description/Parameters: dsh's verbatim surface.
+func (t *SendMessageTool) Description() string                { return dshDesc("send_message") }
+func (t *SendMessageTool) IsHidden() bool                     { return false }
+func (t *SendMessageTool) Parameters() map[string]interface{} { return dshParams("send_message") }
 
 func (t *SendMessageTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	agentRef, _ := params["agent"].(string)
@@ -319,50 +291,92 @@ func (t *ListAgentsTool) Execute(ctx context.Context, params map[string]interfac
 	return NewTextResult(strings.TrimRight(b.String(), "\n")), nil
 }
 
-// AgentOutputTool reads one agent's most recent result.
-type AgentOutputTool struct {
+// InputWaiter is the session-side half of wait_agent, implemented by
+// *session.Session: it reports whether an input (user steering, a sub-agent
+// message, a job settlement notice — in MiniCode they all arrive through the
+// injection queue) is already waiting, and blocks for the next one without
+// consuming it.
+type InputWaiter interface {
+	HasPendingInput() bool
+	WaitForInput(ctx context.Context, timeout time.Duration) bool
+}
+
+// WaitAgentTool is dsh's wait_agent: block until the next input the agent
+// could process arrives — a sub-agent message, a settlement notice, user
+// steering — or the timeout fires. dsh's schema exposes only timeout_ms, and
+// MiniCode honours that: with no agent given the tool waits on this session's
+// injection queue. The historical wait-for-one-agent's-result behaviour stays
+// reachable through the unlisted `agent` parameter (dsh-faithful surfaces
+// never send it; tests and old transcripts do).
+type WaitAgentTool struct {
 	parentSessionID string
 	dispatcher      AgentDispatcher
+	inputs          InputWaiter
 }
 
-func NewAgentOutputTool(parentSessionID string, dispatcher AgentDispatcher) *AgentOutputTool {
-	return &AgentOutputTool{parentSessionID: parentSessionID, dispatcher: dispatcher}
+func NewWaitAgentTool(parentSessionID string, dispatcher AgentDispatcher) *WaitAgentTool {
+	return &WaitAgentTool{parentSessionID: parentSessionID, dispatcher: dispatcher}
 }
 
-func (t *AgentOutputTool) Name() string { return "agent_output" }
-func (t *AgentOutputTool) Description() string {
-	return "Read the result of an agent's most recent run. With wait=true it blocks until the run finishes (or wait_seconds elapses). " +
-		"Results come from the agent's own conversation, so this also works for agents started in an earlier session of the app."
-}
-func (t *AgentOutputTool) IsHidden() bool { return false }
-func (t *AgentOutputTool) Parameters() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"agent": map[string]interface{}{
-				"type":        "string",
-				"description": "The agent's name or session id.",
-			},
-			"wait": map[string]interface{}{
-				"type":        "boolean",
-				"description": "Block until the current run finishes (default false).",
-			},
-			"wait_seconds": map[string]interface{}{
-				"type":        "integer",
-				"description": "Max seconds to wait when wait=true (default 60, max 300).",
-				"minimum":     1,
-				"maximum":     300,
-			},
-		},
-		"required": []string{"agent"},
+// SetInputWaiter wires the session's injection-queue doorbell. Without it the
+// no-agent mode degrades to the honest "not wired" error instead of blocking
+// on nothing.
+func (t *WaitAgentTool) SetInputWaiter(w InputWaiter) { t.inputs = w }
+
+func (t *WaitAgentTool) Name() string { return "wait_agent" }
+
+// Description/Parameters: dsh's verbatim surface.
+func (t *WaitAgentTool) Description() string                { return dshDesc("wait_agent") }
+func (t *WaitAgentTool) IsHidden() bool                     { return false }
+func (t *WaitAgentTool) Parameters() map[string]interface{} { return dshParams("wait_agent") }
+
+// waitAgentTimeoutMS reads dsh's timeout_ms (schema default 30000, bounds
+// 10000..3600000) with the historical `timeout` (seconds) kept as a hidden
+// alias.
+func waitAgentTimeoutMS(params map[string]interface{}) int {
+	if v, ok := params["timeout_ms"].(float64); ok && v > 0 {
+		return int(v)
 	}
+	if v, ok := params["timeout"].(float64); ok && v > 0 {
+		return int(v * 1000)
+	}
+	return 30000
 }
 
-func (t *AgentOutputTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
+func clampTimeoutMS(ms int) time.Duration {
+	if ms < 10000 {
+		ms = 10000
+	}
+	if ms > 3600000 {
+		ms = 3600000
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+func (t *WaitAgentTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
+	timeout := clampTimeoutMS(waitAgentTimeoutMS(params))
+
+	// dsh mode: wait for the next input to this session. The input is not
+	// consumed — the loop drains it at the start of the next turn, so the
+	// model sees the content itself right after this tool result.
 	agentRef, _ := params["agent"].(string)
 	if strings.TrimSpace(agentRef) == "" {
-		return NewTextResult("Error: 'agent' is required"), nil
+		if t.inputs == nil {
+			return NewTextResult("Error: wait_agent is not wired to this session's input queue in this build."), nil
+		}
+		if t.inputs.HasPendingInput() {
+			return NewTextResult("An input is already waiting. It enters your conversation as the next user message."), nil
+		}
+		if !t.inputs.WaitForInput(ctx, timeout) {
+			if ctx.Err() != nil {
+				return NewTextResult("Wait aborted: the task was interrupted."), nil
+			}
+			return NewTextResult(fmt.Sprintf("No new input within %s. Nothing is waiting; decide what to do next.", timeout.Truncate(time.Second))), nil
+		}
+		return NewTextResult("An input has arrived. It enters your conversation as the next user message — read it there before deciding your next step."), nil
 	}
+
+	// Historical mode: wait for one agent's current run and return its reply.
 	if t.dispatcher == nil {
 		return NewTextResult("Error: sub-agent service not available in this session."), nil
 	}
@@ -370,12 +384,7 @@ func (t *AgentOutputTool) Execute(ctx context.Context, params map[string]interfa
 	if err != nil {
 		return NewTextResult(fmt.Sprintf("Error: %s%s", err, unknownAgentHint(t.parentSessionID, t.dispatcher))), nil
 	}
-	wait, _ := params["wait"].(bool)
-	waitSec := 0
-	if v, ok := params["wait_seconds"].(float64); ok {
-		waitSec = int(v)
-	}
-	out, err := t.dispatcher.Output(ctx, childID, wait, waitSec)
+	out, err := t.dispatcher.Output(ctx, childID, true, int(timeout/time.Second))
 	if err != nil {
 		return NewTextResult(fmt.Sprintf("Error: agent %q: %s", name, err)), nil
 	}

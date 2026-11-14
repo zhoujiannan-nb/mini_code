@@ -17,7 +17,13 @@ import (
 
 func newShellTool(t *testing.T, dir string, timeout int) *ExecTool {
 	t.Helper()
+	// These tests target the persistent cmd.exe engine specifically. The dsh
+	// tool surface pins it off (one fresh pwsh per call), so the engine is
+	// switched back on here; the discipline gate is off because ping/type in
+	// these files are test fixtures, not model behaviour.
+	t.Setenv("MC_EXEC_GATE", "0")
 	tool := NewExecTool(timeout, dir)
+	tool.noPersistentS = false
 	t.Cleanup(func() { _ = tool.Close() })
 	return tool
 }
@@ -39,7 +45,7 @@ func execCmd(t *testing.T, tool *ExecTool, command string, extra ...map[string]i
 
 func TestPersistentShellEnvPersists(t *testing.T) {
 	tool := newShellTool(t, t.TempDir(), 30)
-	if out := execCmd(t, tool, "set MCTEST=abc123"); !strings.Contains(out, "Exit code: 0") {
+	if out := execCmd(t, tool, "set MCTEST=abc123"); strings.Contains(out, "[exit code:") {
 		t.Fatalf("set failed: %s", out)
 	}
 	out := execCmd(t, tool, "echo %MCTEST%")
@@ -51,11 +57,11 @@ func TestPersistentShellEnvPersists(t *testing.T) {
 func TestPersistentShellCwdPersists(t *testing.T) {
 	dir := t.TempDir()
 	tool := newShellTool(t, dir, 30)
-	if out := execCmd(t, tool, "mkdir sub"); !strings.Contains(out, "Exit code: 0") {
+	if out := execCmd(t, tool, "mkdir sub"); strings.Contains(out, "[exit code:") {
 		t.Fatalf("mkdir failed: %s", out)
 	}
 	out := execCmd(t, tool, "cd sub")
-	if !strings.Contains(out, "Exit code: 0") {
+	if strings.Contains(out, "[exit code:") {
 		t.Fatalf("cd failed: %s", out)
 	}
 	// the result itself should tell the model where it landed
@@ -71,7 +77,7 @@ func TestPersistentShellCwdPersists(t *testing.T) {
 func TestPersistentShellExitCode(t *testing.T) {
 	tool := newShellTool(t, t.TempDir(), 30)
 	out := execCmd(t, tool, `dir nope_missing_dir_zz 2>nul`)
-	if !strings.Contains(out, "Exit code: 1") {
+	if !strings.Contains(out, "[exit code: 1]") {
 		t.Fatalf("expected exit code 1, got: %s", out)
 	}
 }
@@ -81,11 +87,11 @@ func TestPersistentShellExitCode(t *testing.T) {
 func TestPersistentShellExitAndReborn(t *testing.T) {
 	tool := newShellTool(t, t.TempDir(), 30)
 	out := execCmd(t, tool, "exit 3")
-	if !strings.Contains(out, "Exit code: 3") {
+	if !strings.Contains(out, "[exit code: 3]") {
 		t.Fatalf("expected the shell's exit code 3, got: %s", out)
 	}
 	out = execCmd(t, tool, "echo alive")
-	if !strings.Contains(out, "alive") || !strings.Contains(out, "Exit code: 0") {
+	if !strings.Contains(out, "alive") || strings.Contains(out, "[exit code:") {
 		t.Fatalf("shell did not restart for the next call: %s", out)
 	}
 }
@@ -99,7 +105,7 @@ func TestPersistentShellTimeoutRecovery(t *testing.T) {
 		t.Fatalf("expected a timeout report, got: %s", out)
 	}
 	out = execCmd(t, tool, "echo alive")
-	if !strings.Contains(out, "alive") || !strings.Contains(out, "Exit code: 0") {
+	if !strings.Contains(out, "alive") || strings.Contains(out, "[exit code:") {
 		t.Fatalf("shell did not recover after timeout: %s", out)
 	}
 }
@@ -114,7 +120,7 @@ func TestPersistentShellStdinStarved(t *testing.T) {
 	if strings.Contains(out, "timed out") {
 		t.Fatalf("`more` ate the protocol stream instead of NUL: %s", out)
 	}
-	if !strings.Contains(out, "Exit code: 0") {
+	if strings.Contains(out, "[exit code:") {
 		t.Fatalf("unexpected result: %s", out)
 	}
 }
@@ -148,8 +154,11 @@ func TestPersistentShellWorkingDirSwitch(t *testing.T) {
 	}
 }
 
-// The batch-spelling for-loop must fall back to the one-shot path (where
-// `%f` is the correct spelling) instead of wedging the persistent shell.
+// The batch-spelling for-loop must fall back to the one-shot path instead of
+// wedging the persistent shell. The one-shot path is PowerShell now, so the
+// batch spelling is a parse error there — what this test pins is the fallback
+// happening (a ParserError, not a hang) and the persistent shell being
+// perfectly healthy afterwards.
 func TestPersistentShellForLoopFallsBack(t *testing.T) {
 	dir := t.TempDir()
 	tool := newShellTool(t, dir, 30)
@@ -157,12 +166,12 @@ func TestPersistentShellForLoopFallsBack(t *testing.T) {
 		t.Fatalf("warm-up failed: %s", out)
 	}
 	out := execCmd(t, tool, `for %f in (a b c) do @echo item_%f`)
-	if !strings.Contains(out, "item_a item_b item_c") && !(strings.Contains(out, "item_a") && strings.Contains(out, "item_c")) {
-		t.Fatalf("for-loop fallback did not run the command correctly: %s", out)
+	if !strings.Contains(out, "[exit code: 1]") {
+		t.Fatalf("for-loop fallback did not reach the one-shot shell: %s", out)
 	}
 	// the shell must still be healthy afterwards
 	out = execCmd(t, tool, "echo after")
-	if !strings.Contains(out, "after") || !strings.Contains(out, "Exit code: 0") {
+	if !strings.Contains(out, "after") || strings.Contains(out, "[exit code:") {
 		t.Fatalf("shell unhealthy after for-loop fallback: %s", out)
 	}
 }

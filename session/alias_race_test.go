@@ -25,15 +25,19 @@ import (
 // cache. The record must hold a COPY; the two sides may never share an array.
 //
 // The test drives a REAL Session.Prompt (real turn hook, real store): the
-// fake model answers its first turn with an exec tool call whose command
+// fake model answers its first turn with a pwsh tool call whose command
 // blocks ~5s; while the tool runs, group-style messages are queued and the
 // view is snapshotted. The final persisted history must be exactly the
 // expected sequence — each queued message once, tool result intact, final
 // answer present — and the DB row must round-trip byte-equivalent content.
 func TestQueueDuringRunningTaskNoCorruption(t *testing.T) {
+	// The blocking command below is exactly the sleep-shape the discipline
+	// gate refuses; this test wants the tool to RUN and block ~5s, so the
+	// gate is off for the duration of the test.
+	t.Setenv("MC_EXEC_GATE", "0")
 	block := "sleep 5"
 	if runtime.GOOS == "windows" {
-		block = "ping -n 6 127.0.0.1 >nul"
+		block = "Start-Sleep -Seconds 5"
 	}
 
 	var requests int64
@@ -41,9 +45,12 @@ func TestQueueDuringRunningTaskNoCorruption(t *testing.T) {
 		n := atomic.AddInt64(&requests, 1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		if n == 1 {
-			// First turn: text plus an exec tool call that blocks ~5s.
+			// First turn: text plus a pwsh tool call that blocks ~5s. The
+			// arguments carry "description" because the advertised pwsh
+			// schema (dsh surface) declares it required — the dispatch-layer
+			// validator refuses calls without it.
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":"running the check"}}]}`)
-			writeSSEChunk(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_exec","type":"function","function":{"name":"exec","arguments":"{\"command\":\"` + block + `\"}"}}]},"finish_reason":"tool_calls"}]}`)
+			writeSSEChunk(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_exec","type":"function","function":{"name":"pwsh","arguments":"{\"description\":\"blocking sleep check\",\"command\":\"` + block + `\"}"}}]},"finish_reason":"tool_calls"}]}`)
 		} else {
 			// Second turn: final answer.
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":"all done"},"finish_reason":"stop"}]}`)

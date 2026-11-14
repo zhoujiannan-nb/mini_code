@@ -34,26 +34,15 @@ func NewReadImgTool(workspace string) *ReadImgTool {
 	return &ReadImgTool{workspace: workspace}
 }
 
-func (t *ReadImgTool) Name() string { return "readimg" }
-func (t *ReadImgTool) Description() string {
-	return "Read a local image file and return its base64-encoded content for multimodal model input. Supported formats: JPEG, PNG, WebP, GIF."
-}
-func (t *ReadImgTool) IsHidden() bool { return false }
-func (t *ReadImgTool) Parameters() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"path": map[string]interface{}{
-				"type":        "string",
-				"description": "Absolute local file path of the image",
-			},
-		},
-		"required": []string{"path"},
-	}
-}
+// Name/Description/Parameters: dsh's verbatim "read_image" surface; the
+// historical "path" key stays accepted.
+func (t *ReadImgTool) Name() string                       { return "read_image" }
+func (t *ReadImgTool) Description() string                { return dshDesc("read_image") }
+func (t *ReadImgTool) IsHidden() bool                     { return false }
+func (t *ReadImgTool) Parameters() map[string]interface{} { return dshParams("read_image") }
 
 func (t *ReadImgTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
-	path, _ := params["path"].(string)
+	path := strParam(params, "file_path", "path")
 	if path == "" {
 		return NewTextResult("Error: missing image path"), nil
 	}

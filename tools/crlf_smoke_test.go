@@ -23,11 +23,11 @@ func TestCRLFSmokeReadFile(t *testing.T) {
 	if strings.Contains(res.Text, "\r") {
 		t.Fatalf("read_file output still contains CR: %q", res.Text)
 	}
-	if !strings.Contains(res.Text, "1| alpha") || !strings.Contains(res.Text, "3| gamma") {
+	if !strings.Contains(res.Text, "1: alpha") || !strings.Contains(res.Text, "3: gamma") {
 		t.Fatalf("unexpected read_file output: %q", res.Text)
 	}
-	if !strings.Contains(res.Text, "3 lines total") {
-		t.Fatalf("expected 3 lines total, got: %q", res.Text)
+	if !strings.Contains(res.Text, "total 3 lines") {
+		t.Fatalf("expected total 3 lines, got: %q", res.Text)
 	}
 
 	// search_files must also be CR-free
@@ -39,7 +39,7 @@ func TestCRLFSmokeReadFile(t *testing.T) {
 	if strings.Contains(res2.Text, "\r") {
 		t.Fatalf("search_files output still contains CR: %q", res2.Text)
 	}
-	if !strings.Contains(res2.Text, "crlf.txt:2: beta") {
+	if !strings.Contains(res2.Text, "crlf.txt\nLine 2: beta") {
 		t.Fatalf("unexpected search_files output: %q", res2.Text)
 	}
 
@@ -52,7 +52,7 @@ func TestCRLFSmokeReadFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res3.Text, "Successfully edited") {
+	if !strings.Contains(res3.Text, "has been updated successfully") {
 		t.Fatalf("edit failed: %q", res3.Text)
 	}
 	raw, _ := os.ReadFile(p)

@@ -124,17 +124,6 @@ type AgentLoop struct {
 	altHistory []string
 	altNudged  map[string]int
 
-	// Edit-churn guard: the round-5 A/B (persona clauses stripped, dsh-style)
-	// spent 53 incremental edit_file calls on one file — the "write a
-	// complete file in one write call" prompt clause was load-bearing for
-	// qwen, so it moves from prompt text into harness code. editTally counts
-	// successful edit_file calls per path within the current task; crossing
-	// editNudgeAt injects a corrective user message (see tallyFileEdits),
-	// and a full write_file to the path resets the count because that is
-	// exactly the behavior the nudge asks for.
-	editTally  map[string]int
-	editNudged map[string]int
-
 	// Truncation handling: a response cut off by the output token limit
 	// (finish_reason="length") is not a complete answer. truncPrefix
 	// accumulates the consecutive truncated text chunks of the same answer
@@ -517,8 +506,6 @@ func NewAgentLoop(client *provider.ModelClient, maxTurns int, toolRegistry *tool
 		pathLocks:        make(map[string]*sync.Mutex),
 		nudged:           make(map[string]int),
 		altNudged:        make(map[string]int),
-		editTally:        make(map[string]int),
-		editNudged:       make(map[string]int),
 	}
 }
 
@@ -535,6 +522,7 @@ func fileLockKeys(args string) []string {
 		return nil
 	}
 	var p struct {
+		FilePath    string `json:"file_path"`
 		Path        string `json:"path"`
 		Source      string `json:"source"`
 		Destination string `json:"destination"`
@@ -544,7 +532,7 @@ func fileLockKeys(args string) []string {
 	}
 	seen := make(map[string]bool)
 	var keys []string
-	for _, raw := range []string{p.Path, p.Source, p.Destination} {
+	for _, raw := range []string{p.FilePath, p.Path, p.Source, p.Destination} {
 		if raw == "" {
 			continue
 		}
@@ -1309,76 +1297,7 @@ func (l *AgentLoop) handleToolCalls(ctx context.Context, messages []provider.Mes
 			})
 		}
 	}
-	messages = l.tallyFileEdits(toolCalls, results, messages)
 	return messages
-}
-
-// editNudgeAt is the number of separate successful edits to one file that
-// triggers the first churn nudge; every further editNudgeAt edits escalate
-// once more (two nudges max per file per task).
-const editNudgeAt = 4
-
-// tallyFileEdits implements the edit-churn guard: count successful edit_file
-// calls per target path, nudge toward a single complete write_file once a
-// file accumulates edits, and reset the count when the model does rewrite
-// the file whole. Nudges are injected as user messages right after the tool
-// results, the same channel nudgeIfStuck uses.
-func (l *AgentLoop) tallyFileEdits(calls []provider.ToolCall, results []*tools.ToolResult, messages []provider.Message) []provider.Message {
-	if l.editTally == nil {
-		l.editTally = make(map[string]int)
-		l.editNudged = make(map[string]int)
-	}
-	nudgePath, nudgeN, nudgeLevel := "", 0, 0
-	for i, tc := range calls {
-		if results[i].HasMultimodal() {
-			continue
-		}
-		text := results[i].Text
-		if strings.HasPrefix(text, "Error:") || text == "Interrupted" {
-			continue
-		}
-		p := callPathArg(tc.Function.Arguments)
-		if p == "" {
-			continue
-		}
-		switch tc.Function.Name {
-		case "edit_file":
-			l.editTally[p]++
-			n := l.editTally[p]
-			if n >= editNudgeAt && n%editNudgeAt == 0 {
-				if k := l.editNudged[p]; k < 2 {
-					l.editNudged[p] = k + 1
-					nudgePath, nudgeN, nudgeLevel = p, n, k+1
-				}
-			}
-		case "write_file":
-			// A full rewrite is exactly what the nudge would ask for.
-			delete(l.editTally, p)
-		}
-	}
-	if nudgePath == "" {
-		return messages
-	}
-	var msg string
-	if nudgeLevel == 1 {
-		msg = fmt.Sprintf("This file (%s) has now been edited %d separate times this task. If the changes are cumulative, stop stacking small patches: produce the complete current content with one write_file call instead.", nudgePath, nudgeN)
-	} else {
-		msg = fmt.Sprintf("This file (%s) has now been edited %d times. Do not keep patching it piece by piece: rewrite it whole with write_file, or finish the task with what you have.", nudgePath, nudgeN)
-	}
-	slog.Warn("edit churn detected, nudging model", "path", nudgePath, "edits", nudgeN, "level", nudgeLevel)
-	return append(messages, provider.Message{Role: "user", Content: msg})
-}
-
-// callPathArg returns the "path" argument of a tool call's JSON arguments,
-// or "" when the arguments do not parse or carry no path.
-func callPathArg(args string) string {
-	var v struct {
-		Path string `json:"path"`
-	}
-	if json.Unmarshal([]byte(args), &v) == nil {
-		return v.Path
-	}
-	return ""
 }
 
 // toolCallSignature returns a stable identity for a tool call: the tool name
@@ -1674,9 +1593,30 @@ func (l *AgentLoop) executeSingleTool(ctx context.Context, tc provider.ToolCall)
 		}
 	}()
 	var params map[string]interface{}
+	var argsErr error
 	if tc.Function.Arguments != "" {
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
+			argsErr = err
 			slog.Warn("invalid tool call arguments", "name", tc.Function.Name, "error", err, "params", tc.Function.Arguments)
+		}
+	}
+	// dsh dispatch parity (tools/validate.go): arguments that fail to parse,
+	// or that violate the tool's advertised schema, never reach Execute — and
+	// never touch the file-memory fold below either. dsh runs exactly this
+	// pipeline (parse error / normalize optional nulls / coerce primitives /
+	// schema check) in front of every tool and hands the model the failure
+	// text, instead of letting a missing key silently become a zero value
+	// inside the tool the way a mis-keyed edit call did once.
+	if argsErr != nil {
+		return tools.NewTextResult(fmt.Sprintf("Error: Invalid arguments for tool %q: %s", tc.Function.Name, argsErr))
+	}
+	if tool := l.tools.Get(tc.Function.Name); tool != nil {
+		if params == nil {
+			params = map[string]interface{}{}
+		}
+		tools.NormalizeAndCoerceArgs(tool.Parameters(), params)
+		if verr := tools.ValidateToolArgs(tc.Function.Name, tool.Parameters(), params); verr != nil {
+			return tools.NewTextResult("Error: " + verr.Error())
 		}
 	}
 	// Fold the call's outcome back into the session's file memory once it has

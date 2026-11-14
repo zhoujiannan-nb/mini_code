@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/user/mini_code/job"
 )
@@ -56,24 +58,20 @@ type JobHost interface {
 	Jobs() *job.Registry
 }
 
-// promoteNote is the model-facing handover text. It is deliberately short and
-// carries three facts and one prohibition: the job exists, its output is being
-// kept, the model will be told when it ends — and re-running the command is not
-// the way to find out. The prohibition is the point: without it a timed-out
-// build gets re-launched, and the machine ends up doing the same build twice.
-func promoteNote(j *job.Job, waitedSec int) string {
-	return fmt.Sprintf(
-		"Command still running after %ds, so it was moved to the background as job %s. "+
-			"Its process is alive and its output is being buffered; you will be notified when it finishes.\n"+
-			"Do NOT run this command again and do not sleep to wait for it. To look at it now or to wait for it: "+
-			"job_output(job_id=%q, wait=true, timeout_ms=60000)",
-		waitedSec, j.ID, j.ID)
+// promoteNote is the model-facing handover text, shaped exactly like dsh's
+// promoted foreground result: one consuming read of the output so far (so a
+// later job_output continues right after it), then the still-running marker.
+func promoteNote(j *job.Job, waited time.Duration) string {
+	body := j.Output(true)
+	if body != "" && !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return fmt.Sprintf("%s[still running after %dms; moved to background job %s]",
+		body, waited.Milliseconds(), j.ID)
 }
 
-// backgroundNote is the same promise for a job the model asked for up front.
+// backgroundNote is dsh's exact background-start ack: one short line naming
+// the job; everything else flows through the job_* tools.
 func backgroundNote(j *job.Job) string {
-	return fmt.Sprintf(
-		"Started in the background as job %s. Its output is being buffered and you will be notified when it finishes.\n"+
-			"Read what it has produced so far with job_output(job_id=%q). Continue with other work meanwhile; do not launch a second copy of the same command.",
-		j.ID, j.ID)
+	return fmt.Sprintf("started background job %s", j.ID)
 }

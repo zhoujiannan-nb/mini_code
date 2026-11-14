@@ -137,6 +137,9 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/model", s.handleSetModel)
 	mux.HandleFunc("POST /api/sessions/{id}/reasoning", s.handleSetReasoning)
 	mux.HandleFunc("GET /api/sessions/{id}/jobs", s.handleListJobs)
+	// The goal the session carries (dsh surface, session-lifetime): the body
+	// is the goal snapshot {"cur":…,"rounds":N}, or null when no goal exists.
+	mux.HandleFunc("GET /api/sessions/{id}/goal", s.handleGetGoal)
 	mux.HandleFunc("GET /api/sessions/{id}/jobs/output", s.handleJobOutput)
 	mux.HandleFunc("POST /api/sessions/{id}/jobs/kill", s.handleKillJob)
 	mux.HandleFunc("POST /api/sessions/{id}/jobs/clear", s.handleClearJobs)
@@ -478,6 +481,27 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		"jobs":    jobs,
 		"running": running,
 	})
+}
+
+// handleGetGoal answers the goal half of the dsh surface over HTTP: the
+// session's current goal and the automatic rounds delivered for it. The body
+// is the persisted snapshot ({"cur":…,"rounds":N}) or null when the session
+// has no goal. The session must be live — the same store the model's
+// get_goal tool reads, so the two views can never disagree.
+func (s *server) handleGetGoal(w http.ResponseWriter, r *http.Request) {
+	sess := s.be.Mgr().Peek(r.PathValue("id"))
+	if sess == nil {
+		writeErr(w, http.StatusNotFound, "session not loaded")
+		return
+	}
+	snap := sess.GoalState().Snapshot()
+	if snap == "" {
+		writeJSON(w, http.StatusOK, nil)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(snap))
 }
 
 // handleJobOutput returns the buffered output of one background command for

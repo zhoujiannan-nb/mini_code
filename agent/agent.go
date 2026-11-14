@@ -17,14 +17,56 @@ type AgentConfig struct {
 	Permissions PermissionConfig
 }
 
+// basePermissions is the role's compiled-in allow list. GetFilteredDefinitions
+// drops any registered tool whose name is neither listed here nor flagged as an
+// appended (plugin) tool, so every name the session registers must appear —
+// this is the dsh surface (core + root extras) plus the historical mc names,
+// which stay allowed so nothing that is still registered somewhere disappears.
 var basePermissions = map[string]interface{}{
-	"read_file":    "allow",
-	"list_dir":     "allow",
-	"search_files": "allow",
-	"exec":         "allow",
-	"skills":       "allow",
-	"readimg":      "allow",
-	"workers":      "allow", // 工作大类: discover/create/join + the shared 公约 (only registered for root sessions)
+	// dsh core surface
+	"read":               "allow",
+	"write":              "allow",
+	"edit":               "allow",
+	"glob":               "allow",
+	"grep":               "allow",
+	"pwsh":               "allow",
+	"read_image":         "allow",
+	"skill":              "allow",
+	"job_output":         "allow",
+	"job_list":           "allow",
+	"job_kill":           "allow",
+	"todo_write":         "allow",
+	"working_directory":  "allow",
+	"web_fetch":          "allow",
+	// dsh root extras
+	"subagent":           "allow",
+	"subagent_fork":      "allow",
+	"send_message":       "allow",
+	"list_agents":        "allow",
+	"wait_agent":         "allow",
+	"create_goal":        "allow",
+	"get_goal":           "allow",
+	"update_goal":        "allow",
+	// workflow stays allowed in the role table (dsh's preset has it) even
+	// though MiniCode does not register it — the surface decision lives in
+	// session/prompt.go EnableAgentTools; one-line re-registration must not
+	// need a permission change here.
+	"workflow":           "allow",
+	// historical mc names (not registered by default anymore, allowed if wired)
+	"read_file":          "allow",
+	"write_file":         "allow",
+	"edit_file":          "allow",
+	"delete_file":        "allow",
+	"list_dir":           "allow",
+	"search_files":       "allow",
+	"exec":               "allow",
+	"skills":             "allow",
+	"readimg":            "allow",
+	"agent_output":       "allow",
+	"cancel_agent":       "allow",
+	"context_usage":      "allow",
+	"compact_context":    "allow",
+	"workers":            "allow", // 工作大类: discover/create/join + the shared 公约 (only registered for root sessions)
 }
 
 func mergePermissions(overrides ...map[string]interface{}) PermissionConfig {
@@ -48,19 +90,12 @@ func BuildAgentConfig() *AgentConfig {
 		Prompt:      prompt,
 		Mode:        "primary",
 		Permissions: mergePermissions(map[string]interface{}{
-			"write_file":  "allow",
-			"edit_file":   "allow",
-			"delete_file": "allow",
+			"write": "allow",
+			"edit":  "allow",
 			// move_file / copy_file dropped from the default toolset (see
 			// session.registerDefaultTools) — no permission entry to grant.
-			// Agent orchestration (one level deep: only root sessions get these).
-			"subagent":      "allow",
-			"send_message":  "allow",
-			"list_agents":   "allow",
-			"agent_output":  "allow",
-			"cancel_agent":  "allow",
-			"context_usage":   "allow", // read context token usage (paired with compact_context)
-			"compact_context": "allow", // actively request context compaction
+			// Agent orchestration (one level deep: only root sessions get
+			// these) is granted by basePermissions; dsh's root surface.
 		}),
 	}
 }
@@ -77,9 +112,8 @@ func WorkAgentConfig() *AgentConfig {
 		Prompt:      prompt,
 		Mode:        "subagent",
 		Permissions: mergePermissions(map[string]interface{}{
-			"write_file":  "allow",
-			"edit_file":   "allow",
-			"delete_file": "allow",
+			"write": "allow",
+			"edit":  "allow",
 			// move_file / copy_file dropped from the default toolset (see
 			// session.registerDefaultTools).
 		}),
@@ -114,9 +148,13 @@ func loadCustomAgents() map[string]*AgentConfig {
 				Prompt:      strings.TrimSpace(string(data)),
 				Mode:        "subagent",
 				Permissions: mergePermissions(map[string]interface{}{
+					"write":      "deny",
+					"edit":       "deny",
 					"write_file": "deny",
 					"edit_file":  "deny",
+					"pwsh":       map[string]interface{}{"rm": "deny", "del": "deny"},
 					"exec":       map[string]interface{}{"rm": "deny", "del": "deny"},
+					"skill":      "allow",
 					"skills":     "allow",
 				}),
 			}

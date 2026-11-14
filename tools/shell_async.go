@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -81,12 +82,30 @@ type execSpec struct {
 // the loop to fall back to the synchronous path after a rejected StartAsync.
 func (t *ExecTool) execSpec(params map[string]interface{}) (*execSpec, *ToolResult, error) {
 	spec := &execSpec{}
-	spec.command, _ = params["command"].(string)
-	if spec.command == "" {
-		return nil, nil, fmt.Errorf("missing command")
+	cmdStr, isStr := params["command"].(string)
+	spec.command = cmdStr
+	// dsh's stable argument texts (index.ts), verbatim under the normalized
+	// "Error: invalid arguments: " prefix.
+	if !isStr || spec.command == "" {
+		return nil, NewTextResult("Error: invalid arguments: invalid command: expected a non-empty string"), nil
 	}
+	if v, present := params["description"]; present {
+		desc, _ := v.(string)
+		if strings.TrimSpace(desc) == "" {
+			return nil, NewTextResult("Error: invalid arguments: invalid description: expected a non-empty string"), nil
+		}
+	}
+	if v, present := params["timeoutMs"]; present {
+		n, ok := numberParam(v)
+		if !ok || n <= 0 {
+			return nil, NewTextResult(fmt.Sprintf("Error: invalid arguments: invalid timeoutMs: expected a positive number, got %s", jsonLiteral(v))), nil
+		}
+	}
+	t.dirMu.Lock()
 	spec.cwd = t.workingDir
-	if wd, ok := params["working_dir"].(string); ok && wd != "" {
+	t.dirMu.Unlock()
+	// dsh's spelling is `workdir`; the historical `working_dir` stays accepted.
+	if wd := strParam(params, "workdir", "working_dir"); wd != "" {
 		spec.cwd = wd
 		spec.cwdParam = wd
 	}
@@ -98,12 +117,30 @@ func (t *ExecTool) execSpec(params map[string]interface{}) (*execSpec, *ToolResu
 	if v, ok := numberParam(params["timeout"]); ok && v > 0 {
 		spec.timeout = v
 	}
+	// dsh's spelling is `timeoutMs` (milliseconds); convert to the seconds the
+	// engine works in, rounding up so a short patience never becomes zero.
+	if v, ok := numberParam(params["timeoutMs"]); ok && v > 0 {
+		sec := (v + 999) / 1000
+		if sec < 1 {
+			sec = 1
+		}
+		spec.timeout = sec
+	}
 	if spec.timeout > 600 {
 		spec.timeout = 600
 	}
 	spec.input, _ = params["input"].(string)
 	spec.background, _ = params["run_in_background"].(bool)
 
+	// Sleeping to wait for work is not a command, it is a habit — and it is the
+	// cost that survives every timeout mechanism, because nothing is timing out:
+	// the model is choosing to burn the turn. Skipped above the threshold; see
+	// waitloop.go for why this one is intercepted instead of annotated. It runs
+	// before the discipline gate because its note explains the wait, where the
+	// gate would only refuse it.
+	if sec := pureWaitSeconds(spec.command); sec >= waitInterceptSec {
+		return nil, NewTextResult(waitLoopNote(sec)), nil
+	}
 	if err := t.guardCommand(spec.command); err != "" {
 		return nil, NewTextResult(err), nil
 	}
@@ -113,14 +150,7 @@ func (t *ExecTool) execSpec(params map[string]interface{}) (*execSpec, *ToolResu
 	// too long" error that does not say what to do. Point the model at the real
 	// fix: write the command to a script file and run that file.
 	if len(spec.command) > 8000 {
-		return nil, NewTextResult(fmt.Sprintf("Error: command is too long (%d chars); the shell command-line limit is ~8191. Write the command to a script file (.bat/.py/.sh) with the write_file tool, then run that file instead.", len(spec.command))), nil
-	}
-	// Sleeping to wait for work is not a command, it is a habit — and it is the
-	// cost that survives every timeout mechanism, because nothing is timing out:
-	// the model is choosing to burn the turn. Skipped above the threshold; see
-	// waitloop.go for why this one is intercepted instead of annotated.
-	if sec := pureWaitSeconds(spec.command); sec >= waitInterceptSec {
-		return nil, NewTextResult(waitLoopNote(sec)), nil
+		return nil, NewTextResult(fmt.Sprintf("Error: command is too long (%d chars); the shell command-line limit is ~8191. Write the command to a script file (.bat/.py/.sh) with the write tool, then run that file instead.", len(spec.command))), nil
 	}
 	return spec, nil, nil
 }
@@ -225,7 +255,7 @@ func (t *ExecTool) StartAsync(ctx context.Context, owner string, params map[stri
 		return &AsyncCall{Job: j, Settled: true}, nil
 	}
 	gate.off()
-	return &AsyncCall{Job: j, Note: promoteNote(j, int(wait/time.Second))}, nil
+	return &AsyncCall{Job: j, Note: promoteNote(j, wait)}, nil
 }
 
 // runJobCommand runs the command to completion under the job's own context and
@@ -255,14 +285,17 @@ func (t *ExecTool) runJobCommand(ctx context.Context, spec *execSpec, j *job.Job
 func (t *ExecTool) runOneShotJob(ctx context.Context, spec *execSpec, j *job.Job, sink func(string)) (string, job.Status, int) {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd", "/C", spec.command)
-		// Pass the command line to cmd.exe verbatim (see applyRawCmdLine): Go's
-		// default argument escaping plus cmd.exe's quote-stripping rules mangle
-		// any command containing double quotes.
-		applyRawCmdLine(cmd, spec.command)
+		// dsh parity: one fresh PowerShell per call (see run() in shell.go).
+		if shellPath, lookErr := exec.LookPath("pwsh"); lookErr == nil {
+			cmd = exec.CommandContext(ctx, shellPath, "-NoProfile", "-NonInteractive", "-NoLogo", "-Command", spec.command)
+		} else {
+			cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-NoLogo", "-Command", spec.command)
+		}
+		applyPwshWindow(cmd)
 	} else {
 		cmd = exec.CommandContext(ctx, "sh", "-c", spec.command)
 	}
+	applyManagedEnv(cmd)
 	if spec.cwd != "" {
 		if fi, err := os.Stat(spec.cwd); err != nil || !fi.IsDir() {
 			return fmt.Sprintf("Error: working_dir %q does not exist or is not a directory. Create it first (e.g. mkdir) or omit working_dir to run in the default directory.", spec.cwd), job.StatusFailed, 0
@@ -303,18 +336,11 @@ func (t *ExecTool) runOneShotJob(ctx context.Context, spec *execSpec, j *job.Job
 	defer detachTree()
 
 	err := cmd.Wait()
-	code := 0
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Sprintf("Error: the command exceeded the %d-minute background limit and its process tree was killed.", int(bgHardCap/time.Minute)), job.StatusFailed, -1
-		}
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			code = exitErr.ExitCode()
-		} else {
-			code = 1
-		}
+	code, signal := exitOutcome(err)
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Sprintf("Error: the command exceeded the %d-minute background limit and its process tree was killed.", int(bgHardCap/time.Minute)), job.StatusFailed, -1
 	}
-	text := buildExecResult(spec.command, stdout.Bytes(), stderr.Bytes(), code, "")
+	text := buildExecResult(stdout.Bytes(), stderr.Bytes(), code, signal)
 	status := job.StatusCompleted
 	if code != 0 {
 		status = job.StatusFailed
@@ -332,6 +358,29 @@ func numberParam(v interface{}) (int, bool) {
 		return n, true
 	}
 	return 0, false
+}
+
+// jsonLiteral renders a rejected parameter the way dsh quotes it back in the
+// invalid-timeoutMs message (JSON.stringify semantics for the values JSON
+// can carry; anything else falls back to Go's rendering).
+func jsonLiteral(v interface{}) string {
+	if b, err := json.Marshal(v); err == nil {
+		return string(b)
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// applyManagedEnv gives every spawned shell the same non-interactive, no-
+// color, no-pager environment dsh's managed shell env provides: colored
+// tables and pagers burn tokens and stall pipes, and the model reads text,
+// not ANSI.
+func applyManagedEnv(cmd *exec.Cmd) {
+	cmd.Env = append(os.Environ(),
+		"NO_COLOR=1",
+		"TERM=dumb",
+		"PAGER=cat",
+		"GIT_PAGER=cat",
+	)
 }
 
 // liveGate keeps a UI feed attached to the call that is waiting, and not to

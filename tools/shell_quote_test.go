@@ -12,21 +12,20 @@ import (
 )
 
 // TestExecPreservesQuotes is the regression test for the quote-mangling bug:
-// Go's per-argument escaping plus cmd.exe's quote-stripping rules used to
-// break every command containing double quotes:
-//   - `echo "hello world"` printed `\"hello world\"`
-//   - `type "path with space.txt"` failed with "syntax is incorrect"
-//   - `python -c "print(1+1)"` printed nothing (python saw a quoted string)
-// The command line must now reach cmd.exe verbatim (applyRawCmdLine).
+// Go's per-argument escaping plus the shell's quote-stripping rules used to
+// break every command containing double quotes. The commands are written in
+// the PowerShell dialect the pwsh tool now speaks: a quoted string must reach
+// the child program with its quotes honoured, not backslash-escaped, and a
+// quoted path containing a space must open the file.
 func TestExecPreservesQuotes(t *testing.T) {
+	t.Setenv("MC_EXEC_GATE", "0") // Get-Content here is the fixture, not model behaviour
 	dir := t.TempDir()
 	tool := NewExecTool(30, dir)
 	t.Cleanup(func() { _ = tool.Close() })
 
-	// 1. echo with a quoted string: cmd's echo keeps the quotes, so the
-	//    output must contain exactly "hello world" (with quotes) and no
-	//    stray backslashes.
-	res, err := tool.Execute(context.Background(), map[string]interface{}{"command": `echo "hello world"`})
+	// 1. echo a string that contains literal double quotes: the output must
+	//    contain exactly "hello world" (with quotes) and no stray backslashes.
+	res, err := tool.Execute(context.Background(), map[string]interface{}{"command": `echo '"hello world"'`})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -45,16 +44,16 @@ func TestExecPreservesQuotes(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err = tool.Execute(context.Background(), map[string]interface{}{
-		"command": `type "` + spaced + `" && echo END`,
+		"command": `Get-Content "` + spaced + `"; echo END`,
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if !strings.Contains(res.Text, "spaced-ok") || !strings.Contains(res.Text, "END") {
-		t.Errorf("type with quoted spaced path: output %q, want it to contain %q and %q", res.Text, "spaced-ok", "END")
+		t.Errorf("quoted spaced path: output %q, want it to contain %q and %q", res.Text, "spaced-ok", "END")
 	}
-	if !strings.Contains(res.Text, "Exit code: 0") {
-		t.Errorf("type with quoted spaced path: expected exit code 0: %q", res.Text)
+	if strings.Contains(res.Text, "[exit code:") {
+		t.Errorf("quoted spaced path: expected a clean exit (no marker): %q", res.Text)
 	}
 
 	// 3. python -c with a quoted program text: python must receive the code

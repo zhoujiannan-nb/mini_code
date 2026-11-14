@@ -380,3 +380,181 @@ test("render: background sub-agent shows stop but does not lock the composer", a
   await settle();
   assert.equal(fetchMock.callsTo("/api/messages").length, 1, "send must work while only a sub-agent runs");
 });
+
+/* ================= 7) 思考过程:淡色小框,live 展开、其余折叠,流式跟着长 ================= */
+// reasoning_content 的展示回归测试。三条路(历史消息、执行步骤、正在生成的那条)
+// 都走 js/components/ThinkBox.js。折叠是 2026-11 的显式设计:只有 live 那一个默认
+// 展开,其余默认折叠(.collapsed 只藏框体,正文仍在 DOM)—— 但绝不允许再出现
+// <details> 二次折叠或 display:none 把内容从 DOM 里抹掉。
+test("render: reasoning 画成折叠小框,live 自动展开、历史折叠但内容仍在 DOM", async () => {
+  await resetAll({
+    messages: [
+      { role: "user", content: "为什么" },
+      { role: "assistant", content: "因为如此", reasoning_content: "先想想背景\n\n再给结论" },
+    ],
+  });
+  mountApp();
+  await settle();
+  document.querySelector("#sess-list .sess-item").click();
+  await settle();
+
+  const boxes = Array.from(document.querySelectorAll("#messages .think-box"));
+  assert.equal(boxes.length, 1, "带 reasoning_content 的历史消息要画出思考框");
+  const box = boxes[0];
+  assert.equal(box.tagName, "DIV", "思考框是普通盒子,不是 details");
+  assert.equal(box.querySelectorAll("details").length, 0, "不能再套一层折叠(折叠 = 没展示)");
+  assert.equal(box.querySelector("summary"), null);
+  assert.ok(box.classList.contains("collapsed"), "历史思考框默认折叠(一轮里只留 live 展开)");
+  assert.match(box.textContent, /思考过程/);
+  assert.match(box.textContent, /先想想背景/, "折叠只藏框体,正文仍在 DOM");
+  assert.ok(box.querySelector(".think-box-body"), "正文装在可滚动的框体里");
+  // 思考与正文是两块:正文照常渲染
+  assert.match(document.querySelector("#messages .msg.ai .m-text.md").textContent, /因为如此/);
+
+  // 流式:reasoning_delta 一到,正在生成的那条就出现**展开的**小框,并跟着增量继续长。
+  const es = FakeEventSource.instances[0];
+  es.emit({ kind: "reasoning_delta", session_id: "s1", reasoning: "让我先" });
+  await settle();
+  const liveSel = "#messages .msg.ai .think-box.live .think-box-body";
+  assert.ok(document.querySelector(liveSel), "流式思考必须有可见小框(以前是 display:none)");
+  assert.equal(document.querySelector("#messages .msg.ai .think-box.live").classList.contains("collapsed"), false, "live 框不折叠");
+  assert.match(document.querySelector(liveSel).textContent, /让我先/);
+  es.emit({ kind: "reasoning_delta", session_id: "s1", reasoning: "让我先算一下" });
+  await settle();
+  assert.equal(document.querySelectorAll("#messages .think-box.live").length, 1, "只有一条在想的框");
+  assert.match(document.querySelector(liveSel).textContent, /让我先算一下/);
+
+  // 正文开始后思考框不消失:两段都在同一条正在生成的消息里。
+  es.emit({ kind: "content_delta", session_id: "s1", content: "结论是" });
+  await settle();
+  assert.match(document.querySelector(liveSel).textContent, /让我先算一下/);
+  const liveCard = document.querySelector("#messages .think-box.live").closest(".m-card");
+  assert.match(liveCard.querySelector(".m-text.md").textContent, /结论是/);
+});
+
+/* ================= 8) todo_write:参数本身就是一张清单 ================= */
+// dsh 的 todo_write 收 todos=[{content,status}],status ∈ pending/in_progress/completed。
+// 把这段 JSON 摊在展开区里等于什么都没画 —— 两边(「执行过程」折叠条里的历史步骤、
+// 「正在执行」卡里的实时步骤)都得画成 .todo-card:三态图标 + 文本 + "3/5" 统计,默认展开。
+test("render: todo_write 画成三态清单卡,带完成数统计,历史与实时都生效", async () => {
+  const todos = [
+    { content: "读 dsh_tools.json", status: "completed" },
+    { content: "改 lib/tools.js 的参数表", status: "completed" },
+    { content: "给 todo_write 补渲染测试", status: "completed" },
+    { content: "跑 npm test 到全绿", status: "in_progress" },
+    { content: "整理改动清单", status: "pending" },
+  ];
+  const args = JSON.stringify({ todos });
+  await resetAll({
+    messages: [
+      { role: "user", content: "按计划改" },
+      { role: "assistant", content: "", tool_calls: [{ function: { name: "todo_write", arguments: args } }] },
+      { role: "tool", name: "todo_write", content: "已记录 5 项" },
+      { role: "assistant", content: "计划已记录" },
+    ],
+  });
+  mountApp();
+  await settle();
+  document.querySelector("#sess-list .sess-item").click();
+  await settle();
+
+  const card = document.querySelector("#messages .todo-card");
+  assert.ok(card, "todo_write 那一步要画成清单卡(不是 ms-args 里的 JSON)");
+  assert.match(card.querySelector(".td-n").textContent, /3\/5/, "完成数统计");
+  const items = Array.from(card.querySelectorAll(".todo-item"));
+  assert.equal(items.length, 5, "五条待办");
+  assert.deepEqual(items.map((li) => li.className.replace("todo-item ", "")),
+    ["completed", "completed", "completed", "in_progress", "pending"]);
+  assert.equal(items[0].querySelector(".td-ico").textContent, "✓", "完成打勾");
+  assert.equal(items[3].querySelector(".td-ico").textContent, "●", "进行实心");
+  assert.equal(items[4].querySelector(".td-ico").textContent, "○", "待办空心");
+  assert.match(items[3].querySelector(".td-text").textContent, /跑 npm test 到全绿/);
+  assert.match(card.textContent, /待办清单/);
+
+  // 默认展开 + 折叠状态下也看得见进度
+  const step = card.closest("details.ms-step");
+  assert.ok(step, "清单长在待办那一步的展开区里");
+  assert.equal(step.open, true, "清单卡默认展开(它是这一步在说什么,不是参数细节)");
+  assert.match(step.querySelector("summary .ms-todo").textContent, /3\/5/, "标题行也报进度");
+  assert.equal(step.querySelector(".ms-args"), null, "清单卡顶掉了原始 JSON 参数");
+
+  // 实时:tool_start 一到,「正在执行」卡里就是清单,不用等它跑完
+  const es = FakeEventSource.instances[0];
+  es.emit({
+    kind: "tool_start", session_id: "s1", tool_name: "todo_write",
+    tool_args: JSON.stringify({ todos: [{ content: "读 dsh_tools.json", status: "completed" }, { content: "改 Steps.js", status: "in_progress" }] }),
+  });
+  await settle();
+  const live = document.querySelector("#messages .ms-live .todo-card");
+  assert.ok(live, "正在执行的那一步也画成清单");
+  assert.match(live.querySelector(".td-n").textContent, /1\/2/);
+  assert.match(live.querySelector(".td-now").textContent, /进行中 1/);
+});
+
+/* ================= 9) pwsh:dsh 的 description 与 timeoutMs(毫秒) ================= */
+// 命令工具改名成 pwsh、超时改名成 timeoutMs(毫秒)以后,步骤卡上有两件事得跟着变:
+// 标题行显示模型写的那句 description(dsh 明说它是"给 UI 显示的"),计时那栏按毫秒算
+// —— 模型没写时执行器套它自己的默认值 120000ms、上限 600000ms,别报一个跑不到的上限。
+test("render: pwsh 步骤显示 description,计时上限按 timeoutMs 毫秒读(缺省 120s、封顶 600s)", async () => {
+  await resetAll();
+  mountApp();
+  await settle();
+  document.querySelector("#sess-list .sess-item").click();
+  await settle();
+  const es = FakeEventSource.instances[0];
+
+  es.emit({
+    kind: "tool_start", session_id: "s1", tool_name: "pwsh",
+    tool_args: '{"description":"跑前端测试","command":"npm test","timeoutMs":300000}',
+  });
+  await settle();
+  const step = () => Array.from(document.querySelectorAll("#messages .ms-live .ms-step"));
+  assert.equal(step().length, 1);
+  assert.match(step()[0].querySelector(".t-name").textContent, /pwsh/);
+  assert.equal(step()[0].querySelector(".ms-arg1").textContent, "跑前端测试",
+    "标题行是 description,不是整段命令行");
+  assert.match(step()[0].querySelector(".ms-run").textContent, /执行 \d+s \/ 最长 5m/, "300000ms = 300s");
+  assert.match(step()[0].querySelector(".ms-out").textContent, /command: npm test/, "命令全文在展开区");
+
+  // 没写 timeoutMs:报执行器的默认上限 120000ms,而不是什么都不显示
+  es.emit({
+    kind: "tool_start", session_id: "s1", tool_name: "pwsh",
+    tool_args: '{"description":"列出目录","command":"dir /b"}',
+  });
+  // 超过上限的:执行器会压到 600000ms,界面跟着说 10m
+  es.emit({
+    kind: "tool_start", session_id: "s1", tool_name: "pwsh",
+    tool_args: '{"description":"跑一次完整构建","command":"npm run build","timeoutMs":900000}',
+  });
+  await settle();
+  const runs = step().map((s) => s.querySelector(".ms-run").textContent);
+  assert.equal(runs.length, 3);
+  assert.match(runs[1], /最长 2m/, "默认 120000ms");
+  assert.match(runs[2], /最长 10m/, "封顶 600000ms");
+});
+
+/* ================= 10) goal 工具:一行状态文案,不做大面板 ================= */
+test("render: create_goal / update_goal 步骤各给一行状态文案", async () => {
+  await resetAll({
+    messages: [
+      { role: "user", content: "长期目标" },
+      { role: "assistant", content: "", tool_calls: [
+        { function: { name: "create_goal", arguments: '{"objective":"把前端适配到 dsh 工具面"}' } },
+        { function: { name: "update_goal", arguments: '{"goal_id":"g1","revision":2,"action":"complete"}' } },
+      ] },
+      { role: "tool", name: "create_goal", content: "goal g1 已创建" },
+      { role: "tool", name: "update_goal", content: "goal g1 已完成" },
+      { role: "assistant", content: "收工" },
+    ],
+  });
+  mountApp();
+  await settle();
+  document.querySelector("#sess-list .sess-item").click();
+  await settle();
+
+  const lines = Array.from(document.querySelectorAll("#messages .goal-line"));
+  assert.equal(lines.length, 2, "两个 goal 步骤各一行");
+  assert.match(lines[0].textContent, /新建目标[：:]\s*把前端适配到 dsh 工具面/);
+  assert.match(lines[1].textContent, /标记完成/);
+  assert.equal(document.querySelectorAll("#messages .goal-panel").length, 0, "就一行字,别做面板");
+});

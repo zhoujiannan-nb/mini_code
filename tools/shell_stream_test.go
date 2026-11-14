@@ -44,11 +44,13 @@ func (c *chunkLog) first() (time.Time, bool) {
 // the UI must see output before the command finishes, and the final result must
 // be exactly what the non-streaming path returns.
 func TestExecStreamedReportsOutputWhileRunning(t *testing.T) {
-	sleep := "sleep 1"
+	t.Setenv("MC_EXEC_GATE", "0") // the sleep here is the fixture, not model behaviour
+	command := "echo one; sleep 1; echo two"
 	if runtime.GOOS == "windows" {
-		sleep = "ping -n 2 127.0.0.1 >nul" // sleep(1) is not on a bare Windows box
+		// The pwsh tool speaks PowerShell on Windows; spell the wait and the
+		// sequence in its own dialect.
+		command = "echo one; Start-Sleep 1; echo two"
 	}
-	command := "echo one && " + sleep + " && echo two"
 
 	var log chunkLog
 	start := time.Now()

@@ -38,7 +38,7 @@ func TestExecSettledReadsLikeSync(t *testing.T) {
 		t.Fatalf("a fast command should settle in the foreground, got note %q", call.Note)
 	}
 	out := call.Job.Output(false)
-	if !strings.Contains(out, "hello-async") || !strings.Contains(out, "Exit code: 0") {
+	if !strings.Contains(out, "hello-async") || strings.Contains(out, "[exit code:") {
 		t.Fatalf("settled output is not the normal exec text: %q", out)
 	}
 	if !call.Job.Awaited() {
@@ -60,7 +60,7 @@ func TestExecPromotedIsCollectable(t *testing.T) {
 	if call.Settled {
 		t.Fatal("a 1s wait must not collect a ~5s command")
 	}
-	if !strings.Contains(call.Note, "moved to the background") {
+	if !strings.Contains(call.Note, "moved to background job") {
 		t.Fatalf("expected a handover note, got %q", call.Note)
 	}
 	snap := call.Job.Snapshot()
@@ -71,7 +71,7 @@ func TestExecPromotedIsCollectable(t *testing.T) {
 		t.Fatal("promoted job never settled within 30s")
 	}
 	out := call.Job.Output(false)
-	if !strings.Contains(out, "Exit code: 0") {
+	if strings.Contains(out, "[exit code:") {
 		t.Fatalf("promoted job's output lost the exec format: %q", out)
 	}
 	if call.Job.Status() != job.StatusCompleted {
@@ -88,7 +88,7 @@ func TestExecRunInBackgroundIsNotAwaited(t *testing.T) {
 	if call.Settled {
 		t.Fatal("run_in_background must return without waiting")
 	}
-	if !strings.Contains(call.Note, "Started in the background") {
+	if !strings.Contains(call.Note, "started background job") {
 		t.Fatalf("expected a start note, got %q", call.Note)
 	}
 	// Poll the state instead of waiting on the job: a blocked Wait is itself
@@ -114,7 +114,7 @@ func TestExecRunInBackgroundIsNotAwaited(t *testing.T) {
 func TestExecStateCarriesToNewShell(t *testing.T) {
 	dir := t.TempDir()
 	tool := newShellTool(t, dir, 30)
-	if out := execCmd(t, tool, "mkdir sub && cd sub && set MCREPLAY=777"); !strings.Contains(out, "Exit code: 0") {
+	if out := execCmd(t, tool, "mkdir sub && cd sub && set MCREPLAY=777"); strings.Contains(out, "[exit code:") {
 		t.Fatalf("setup failed: %s", out)
 	}
 

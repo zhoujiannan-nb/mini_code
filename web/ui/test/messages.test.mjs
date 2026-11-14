@@ -6,12 +6,12 @@ import assert from "node:assert/strict";
 
 import {
   NOTICE_LABELS, noticeOf, contentText, contentImages,
-  makeToolStep, makeThinkStep, findOpenStep, groupSteps, historyRows,
+  makeToolStep, makeThinkStep, findOpenStep, groupSteps, historyRows, detectNoticeKind,
 } from "../js/lib/transcript.js";
 
-test("messages: 九类注入 notice 各有中文标签,未知类型落到「系统注入」", () => {
+test("messages: 十类注入 notice 各有中文标签,未知类型落到「系统注入」", () => {
   assert.deepEqual(Object.keys(NOTICE_LABELS).sort(), [
-    "compact", "context", "job", "persist", "retry", "steer", "subagent", "summary", "worker",
+    "compact", "context", "goal", "job", "persist", "retry", "steer", "subagent", "summary", "worker",
   ]);
   assert.equal(noticeOf("worker", "x").label, "工作区公约");
   assert.equal(noticeOf("context", "x").label, "上下文提醒");
@@ -22,6 +22,7 @@ test("messages: 九类注入 notice 各有中文标签,未知类型落到「系�
   assert.equal(noticeOf("compact", "x").label, "压缩指令");
   assert.equal(noticeOf("summary", "x").label, "压缩摘要");
   assert.equal(noticeOf("persist", "x").label, "持久化告警");
+  assert.equal(noticeOf("goal", "x").label, "目标续跑轮");
   assert.equal(noticeOf("mystery", "x").label, "系统注入");
 });
 
@@ -130,4 +131,10 @@ test("messages: 步骤摘要数步数、数思考、取最近一步", () => {
   assert.equal(g.tools.length, 2);
   assert.equal(g.lastHint, "最近 write_file · ✓ 2 字");
   assert.equal(groupSteps([]).lastHint, "");
+});
+
+test("messages: 前端兜底按标记认 notice,goal_round 块算「goal」", () => {
+  assert.equal(detectNoticeKind('<goal_round round="2" max="8">\n自动续跑\n</goal_round>'), "goal");
+  assert.equal(detectNoticeKind('<goal_round status="cap">\n预算用尽\n</goal_round>'), "goal");
+  assert.equal(detectNoticeKind("我来改一下代码"), "");
 });

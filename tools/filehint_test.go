@@ -22,7 +22,7 @@ func TestFileHintReadNotFound(t *testing.T) {
 	dir := t.TempDir()
 	makeFiles(t, dir, "data_v2.csv", "data.csv", "readme.md", "zzz_unrelated.txt")
 	out := runRead(t, dir, "data_v1.csv", nil)
-	if !strings.Contains(out, "file not found") {
+	if !strings.Contains(out, "not found") {
 		t.Fatalf("expected not-found error, got: %s", out)
 	}
 	if !strings.Contains(out, "data_v2.csv") {
@@ -40,7 +40,7 @@ func TestFileHintReadExtensionTypo(t *testing.T) {
 	dir := t.TempDir()
 	makeFiles(t, dir, "Report.docx", "notes.txt")
 	out := runRead(t, dir, "Report.doc", nil)
-	if !strings.Contains(out, "file not found") {
+	if !strings.Contains(out, "not found") {
 		t.Fatalf("expected not-found error, got: %s", out)
 	}
 	if !strings.Contains(out, "Report.docx") {
@@ -54,7 +54,7 @@ func TestFileHintReadNoSimilar(t *testing.T) {
 	dir := t.TempDir()
 	makeFiles(t, dir, "alpha.txt", "beta.txt")
 	out := runRead(t, dir, "completely_different_name_zzz", nil)
-	if !strings.Contains(out, "file not found") {
+	if !strings.Contains(out, "not found") {
 		t.Fatalf("expected not-found error, got: %s", out)
 	}
 	if strings.Contains(out, "Hint: similar names") {
@@ -67,7 +67,7 @@ func TestFileHintReadNoSimilar(t *testing.T) {
 func TestFileHintReadMissingParent(t *testing.T) {
 	dir := t.TempDir()
 	out := runRead(t, dir, "no_such_dir/x.txt", nil)
-	if !strings.Contains(out, "file not found") {
+	if !strings.Contains(out, "not found") {
 		t.Fatalf("expected not-found error, got: %s", out)
 	}
 	if strings.Contains(out, "Hint: similar names") {
@@ -90,11 +90,11 @@ func TestFileHintReadDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := runRead(t, dir, "sub", nil)
-	if !strings.Contains(out, "not a file") {
+	if !strings.Contains(out, "not a regular file") {
 		t.Fatalf("expected not-a-file error, got: %s", out)
 	}
-	if !strings.Contains(out, "list_dir") {
-		t.Fatalf("expected a list_dir suggestion, got: %s", out)
+	if !strings.Contains(out, "use glob") {
+		t.Fatalf("expected a glob suggestion, got: %s", out)
 	}
 	if !strings.Contains(out, "2 entries") {
 		t.Fatalf("expected the entry count, got: %s", out)
@@ -109,7 +109,7 @@ func TestFileHintReadSuccessUnchanged(t *testing.T) {
 	if strings.Contains(out, "Hint:") {
 		t.Fatalf("success path must not carry hints, got: %s", out)
 	}
-	if !strings.Contains(out, "1| x") {
+	if !strings.Contains(out, "1: x") {
 		t.Fatalf("expected file content, got: %s", out)
 	}
 }
@@ -120,7 +120,7 @@ func TestFileHintEditNotFound(t *testing.T) {
 	dir := t.TempDir()
 	makeFiles(t, dir, "config.yaml", "config_old.yaml")
 	out := runEdit(t, dir, "config.yml", "a", "b", false)
-	if !strings.Contains(out, "file not found") {
+	if !strings.Contains(out, "not found") {
 		t.Fatalf("expected not-found error, got: %s", out)
 	}
 	if !strings.Contains(out, "config.yaml") {

@@ -60,6 +60,20 @@ type Session struct {
 	// them at the start of each turn (AgentLoop.SetInjections). Guarded by mu.
 	pendingInjects []string
 
+	// injectWake is wait_agent's doorbell: QueueUserMessage pings it (never
+	// blocks, buffered 1) so a blocked WaitForInput wakes without polling.
+	// Created lazily under mu; waiters re-check pendingInjects first, so an
+	// edge lost to the buffered channel cannot drop input.
+	injectWake chan struct{}
+
+	// goalStore and sessionTodo are this conversation's goal and task list
+	// (dsh's goal/todo live on the session, not the task — see
+	// goalround.go). Built lazily by GoalState/TodoState from the persisted
+	// metadata snapshot, with the tools' OnChanged hook writing every
+	// accepted change back. Guarded by mu.
+	goalStore   *tools.GoalStore
+	sessionTodo *tools.TodoTool
+
 	// execTool is the session's one exec tool, kept across tasks. It owns the
 	// shell pool and the background-command registry, and both are session state
 	// by definition: rebuilding the tool per task would cold-start every shell,
@@ -119,6 +133,26 @@ const persistFailureNotice = "__MC_PERSIST_FAILED__ The conversation could not b
 	"Your work is still in memory and you can keep going, but if the app crashes now that work is lost. " +
 	"Finish the current step, tell the user that persistence is failing, and stop unless they ask you to continue."
 
+// persistRetry attempts a persistence write a few times with a short backoff.
+// Concurrent sessions share one SQLite file: a deferred transaction that
+// upgrades to a write gets SQLITE_BUSY back immediately — the connection's
+// busy_timeout does not cover that case — and a moment's patience almost
+// always clears it. Without this, one busy moment injects the persist-failure
+// notice and the agent stops mid-task. Both wrapped writes (Update,
+// AppendMessages) are single transactions, so a retry never double-applies.
+func persistRetry(fn func() error) error {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		if err = fn(); err == nil {
+			return nil
+		}
+		if attempt < 4 {
+			time.Sleep(time.Duration(30*(1<<attempt)) * time.Millisecond)
+		}
+	}
+	return err
+}
+
 // persistLocked writes the session record and records the outcome. Callers must
 // hold s.mu (it touches record.Messages and the health counters).
 //
@@ -126,7 +160,7 @@ const persistFailureNotice = "__MC_PERSIST_FAILED__ The conversation could not b
 // (the metadata setters) may ignore it; the task path must not, because that is
 // the one an interrupted run depends on.
 func (s *Session) persistLocked() bool {
-	if err := s.store.Update(s.record); err != nil {
+	if err := persistRetry(func() error { return s.store.Update(s.record) }); err != nil {
 		s.notePersistFailure(err)
 		return false
 	}
@@ -175,7 +209,9 @@ func (s *Session) persistTurnLocked() {
 	}
 	prefixUnchanged := s.msgRows == 0 || (n > s.msgRows && lastMessageJSON(msgs[:s.msgRows]) == s.msgLastJSON)
 	if prefixUnchanged && n > s.msgRows {
-		if err := s.store.AppendMessages(s.ID(), msgs[s.msgRows:], n); err != nil {
+		if err := persistRetry(func() error {
+			return s.store.AppendMessages(s.ID(), msgs[s.msgRows:], n)
+		}); err != nil {
 			s.notePersistFailure(err)
 			return
 		}
@@ -357,10 +393,55 @@ func (s *Session) LastUsage() map[string]interface{} {
 // final save.
 func (s *Session) QueueUserMessage(text string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.pendingInjects = append(s.pendingInjects, text)
 	s.record.Messages = append(s.record.Messages, provider.Message{Role: "user", Content: text})
+	if s.injectWake == nil {
+		s.injectWake = make(chan struct{}, 1)
+	}
+	select {
+	case s.injectWake <- struct{}{}:
+	default: // a wake-up is already pending
+	}
 	s.persistLocked()
+	s.mu.Unlock()
+}
+
+// HasPendingInput reports whether inputs are queued for the loop's next drain.
+// Implements tools.InputWaiter (wait_agent's session-side half).
+func (s *Session) HasPendingInput() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.pendingInjects) > 0
+}
+
+// WaitForInput blocks until the next queued input arrives or the timeout
+// fires; ctx cancellation (user stop) unblocks it too. It deliberately does
+// NOT consume pendingInjects: the loop still drains them at the start of the
+// next turn, so the wait result and the drained user message describe the
+// same input instead of racing over who delivers it.
+// Implements tools.InputWaiter.
+func (s *Session) WaitForInput(ctx context.Context, timeout time.Duration) bool {
+	s.mu.Lock()
+	if len(s.pendingInjects) > 0 {
+		s.mu.Unlock()
+		return true
+	}
+	if s.injectWake == nil {
+		s.injectWake = make(chan struct{}, 1)
+	}
+	wake := s.injectWake
+	s.mu.Unlock()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-wake:
+		return true
+	case <-timer.C:
+		return false
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // DrainUserMessages returns and clears all queued user messages (called by
@@ -502,41 +583,51 @@ func (s *Session) preparePromptTools() (*agent.AgentConfig, *PromptBuilder, *too
 	}
 
 	pb := NewPromptBuilder(cfg, s.record.WorkDir)
-	// One exec tool per session, not per task (see sharedExec). Registering it
+	// The todo list belongs to the conversation, not the task: hand the
+	// builder this session's instance (restored from metadata, persist hook
+	// installed) in place of the placeholder it built for itself.
+	pb.Tools.Register(s.TodoState())
+	// One pwsh tool per session, not per task (see sharedExec). Registering it
 	// here replaces the instance the builder created for itself, and it has to
 	// happen before the job tools are attached: they take the job registry from
-	// the exec tool, so "what is running in this session" can only ever mean the
-	// commands this session's own exec started.
-	pb.Tools.Register(s.sharedExec(s.record.WorkDir))
+	// the pwsh tool, so "what is running in this session" can only ever mean the
+	// commands this session's own pwsh started.
+	ex := s.sharedExec(s.record.WorkDir)
+	pb.Tools.Register(ex)
+	// ...and the working_directory tool has to follow the same swap: it was
+	// built against the placeholder instance this Register just displaced, so
+	// re-attach it to the long-lived exec tool (and seed its reported
+	// directory from the exec tool's live one — a previous task's cd survives
+	// the per-task builder, and the model must be told the truth about it).
+	if cd, ok := pb.Tools.Get("working_directory").(*tools.WorkingDirectoryTool); ok {
+		cd.SetExecHost(ex)
+		cd.SetDir(ex.WorkingDir())
+	}
 	isRootSession := s.record.ParentID == ""
 	if cfg.Mode == "primary" && s.manager != nil && isRootSession {
+		// The goal belongs to the conversation: the goal tools this enables
+		// must bind to the session's store (restored from metadata, persist
+		// hook installed), not to the per-builder throwaway one.
+		pb.goalStore = s.GoalState()
 		pb.EnableAgentTools(s.manager, s.ID())
 	}
-	// Background commands (exec jobs), the tools that read and stop them, and the
+	// Background commands (pwsh jobs), the tools that read and stop them, and the
 	// notice a command gets when it ends after its wait was given up on. Every
 	// session, children included: the job ids it hands out must resolve in the
 	// conversation that received them.
 	if s.manager != nil {
 		pb.EnableJobTools(s.manager, s.ID())
 	}
-	// Context-management tools (context_usage / compact_context), wired to a
-	// per-task context state the agent loop updates each turn.
+	// Context-management state (used to auto-compact at the threshold). The
+	// context_usage / compact_context tools are NOT registered — dsh's surface
+	// has none — but the state still drives the automatic compaction in the loop.
 	ctxState := tools.NewContextState()
-	pb.EnableContextTools(ctxState)
 
 	// Worker (工作大类): nothing goes into the system prompt. The join reminder
 	// and the 公约 travel as one user message the loop appends once per task
 	// (Session.WorkerNotice), which keeps the request an exact extension of the
-	// cached prefix. The tool is registered for every root session, attached or
-	// not, so joining never changes the tool list either. When the service is
-	// not wired at all, nothing is registered and the prompt stays as it was.
-	if s.manager != nil {
-		if wsvc := s.manager.Workers(); wsvc != nil {
-			if isRootSession {
-				pb.EnableWorkerTools(s.ID(), wsvc.ToolAPIFor(s.ID()))
-			}
-		}
-	}
+	// cached prefix. The workers tool is not registered either (dsh's surface has
+	// no such tool); the service and the notice path are untouched.
 	return cfg, pb, ctxState, nil
 }
 
@@ -577,6 +668,10 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		s.updateStatus("failed")
 		return "", "", err
 	}
+	// Whose round is this? The driver's notice carries the <goal_round tag;
+	// anything else is a human round, and the goal store gates update_goal
+	// accordingly (goalround.go).
+	s.markGoalRoundOrigin(goal)
 	// Name the model in the persona placeholder ("a coding agent powered by the
 	// {{model}} model"), dsh-style. The session keeps its client for life, so
 	// this cannot change the prompt of an ongoing conversation.
@@ -737,6 +832,10 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 				for _, t := range texts {
 					s.manager.deliverIdle(s.ID(), t)
 				}
+			} else {
+				// Nobody queued a message: if a goal is still active, this is
+				// where the next automatic round is decided (goalround.go).
+				s.driveGoalRound()
 			}
 		}
 		return result.Content, reasoning, nil

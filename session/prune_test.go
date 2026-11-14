@@ -73,13 +73,13 @@ func TestPruneToolTextSpillPathInMarker(t *testing.T) {
 	}
 	// The marker must also carry the recovery recipe, not just the path —
 	// a bare path pushed models into blind re-read loops.
-	if !strings.Contains(pruned, "read_file offset/limit") {
+	if !strings.Contains(pruned, "read offset/limit") {
 		t.Fatalf("marker missing recovery hint: %q", pruned)
 	}
 }
 
 func TestPruneExemptTools(t *testing.T) {
-	for _, n := range []string{"read_file", "list_dir", "glob"} {
+	for _, n := range []string{"read", "list_dir", "glob", "read_file"} {
 		if !pruneExempt(n) {
 			t.Errorf("%s must be exempt from pruning", n)
 		}

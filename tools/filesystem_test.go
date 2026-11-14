@@ -37,10 +37,10 @@ func TestReadFileTrailingNewlineLineCount(t *testing.T) {
 	// phantom empty line 3.
 	dir, name := writeTempFile(t, "a.txt", "alpha\nbeta\n")
 	out := runRead(t, dir, name, nil)
-	if !strings.Contains(out, "2 lines total") {
-		t.Fatalf("expected '2 lines total', got: %s", out)
+	if !strings.Contains(out, "total 2 lines") {
+		t.Fatalf("expected 'total 2 lines', got: %s", out)
 	}
-	if strings.Contains(out, "3| ") {
+	if strings.Contains(out, "3: ") {
 		t.Fatalf("phantom line 3 present: %s", out)
 	}
 }
@@ -48,8 +48,8 @@ func TestReadFileTrailingNewlineLineCount(t *testing.T) {
 func TestReadFileNoTrailingNewlineLineCount(t *testing.T) {
 	dir, name := writeTempFile(t, "b.txt", "alpha\nbeta")
 	out := runRead(t, dir, name, nil)
-	if !strings.Contains(out, "2 lines total") {
-		t.Fatalf("expected '2 lines total', got: %s", out)
+	if !strings.Contains(out, "total 2 lines") {
+		t.Fatalf("expected 'total 2 lines', got: %s", out)
 	}
 }
 
@@ -57,8 +57,8 @@ func TestReadFileBlankLastLine(t *testing.T) {
 	// "a\n\n" is 2 lines: "a" and a genuinely empty second line.
 	dir, name := writeTempFile(t, "c.txt", "a\n\n")
 	out := runRead(t, dir, name, nil)
-	if !strings.Contains(out, "2 lines total") {
-		t.Fatalf("expected '2 lines total', got: %s", out)
+	if !strings.Contains(out, "total 2 lines") {
+		t.Fatalf("expected 'total 2 lines', got: %s", out)
 	}
 }
 
@@ -66,8 +66,8 @@ func TestReadFileSingleNewline(t *testing.T) {
 	// "\n" is exactly one (empty) line.
 	dir, name := writeTempFile(t, "d.txt", "\n")
 	out := runRead(t, dir, name, nil)
-	if !strings.Contains(out, "1 lines total") {
-		t.Fatalf("expected '1 lines total', got: %s", out)
+	if !strings.Contains(out, "total 1 lines") {
+		t.Fatalf("expected 'total 1 lines', got: %s", out)
 	}
 }
 
@@ -93,7 +93,8 @@ func TestReadFilePaginationContinuesAtRightLine(t *testing.T) {
 		t.Fatalf("expected continuation hint offset=3, got: %s", out)
 	}
 	out2 := runRead(t, dir, name, map[string]interface{}{"offset": float64(3), "limit": float64(2)})
-	if !strings.Contains(out2, "3| l3") || !strings.Contains(out2, "4| l4") {
+	if !strings.Contains(out2, "3: l3") || !strings.Contains(out2, "4: l4") {
 		t.Fatalf("expected lines 3-4 on continuation, got: %s", out2)
 	}
 }
+

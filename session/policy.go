@@ -25,10 +25,13 @@ import (
 
 // observedReads are the calls that count as having seen a path exists.
 var observedReads = map[string]bool{
+	"read":         true, // dsh name
 	"read_file":    true,
+	"read_image":   true, // dsh name
 	"readimg":      true,
 	"list_dir":     true,
 	"glob":         true,
+	"grep":         true, // dsh name
 	"search_files": true,
 }
 
@@ -37,14 +40,18 @@ var observedReads = map[string]bool{
 // search hit proves one line matches — neither is knowing what an overwrite
 // would destroy.
 var contentReads = map[string]bool{
-	"read_file": true,
-	"readimg":   true,
+	"read":       true,
+	"read_file":  true,
+	"read_image": true,
+	"readimg":    true,
 }
 
 // observedMutates are the calls that change a path, and therefore the ones whose
 // blindness is worth recording and whose preconditions are worth enforcing.
 var observedMutates = map[string]bool{
+	"write":       true,
 	"write_file":  true,
+	"edit":        true,
 	"edit_file":   true,
 	"delete_file": true,
 	"copy_file":   true,
@@ -99,16 +106,27 @@ func (l *AgentLoop) obsPath(raw string) string {
 //     replaced, so there is nothing to have read;
 //   - creating a new file is not a blind overwrite (tools.Observation.NeedsRead
 //     already returns false for a path that does not exist).
+// toolPathArg pulls the path out of a file tool's params: dsh's "file_path"
+// first, the historical mc "path" as fallback. One helper so the gate and the
+// memory always key the same argument the tools resolved.
+func toolPathArg(params map[string]interface{}) string {
+	if p, _ := params["file_path"].(string); p != "" {
+		return p
+	}
+	p, _ := params["path"].(string)
+	return p
+}
+
 func (l *AgentLoop) checkWriteBeforeRead(name string, params map[string]interface{}) string {
 	if l.obs == nil || readGateOff() || !observedMutates[name] {
 		return ""
 	}
-	if name == "write_file" {
+	if name == "write_file" || name == "write" {
 		if appendMode, _ := params["append"].(bool); appendMode {
 			return ""
 		}
 	}
-	path, _ := params["path"].(string)
+	path := toolPathArg(params)
 	if path == "" {
 		return ""
 	}
@@ -116,8 +134,8 @@ func (l *AgentLoop) checkWriteBeforeRead(name string, params map[string]interfac
 	if !need {
 		return ""
 	}
-	return fmt.Sprintf("Error: refusing to modify a file the session has not read: %s. Read it first (call read_file on %q; one page is enough for a large file), then retry. "+
-		"write_file with append=true is allowed without a read. Do not guess at the file's content and do not work around this by using the shell.",
+	return fmt.Sprintf("Error: refusing to modify a file the session has not read: %s. Read it first (call read on %q; one page is enough for a large file), then retry. "+
+		"write with append=true is allowed without a read. Do not guess at the file's content and do not work around this by using the shell.",
 		reason, path)
 }
 
@@ -127,7 +145,7 @@ func (l *AgentLoop) observePolicy(callID, name string, params map[string]interfa
 	if l.obs == nil || !observedMutates[name] {
 		return
 	}
-	path, _ := params["path"].(string)
+	path := toolPathArg(params)
 	if path == "" {
 		return
 	}
@@ -162,15 +180,15 @@ func (l *AgentLoop) noteToolOutcome(name string, params map[string]interface{}, 
 	}
 	switch {
 	case contentReads[name]:
-		if path, _ := params["path"].(string); path != "" {
+		if path := toolPathArg(params); path != "" {
 			l.obs.NoteContentRead(l.obsPath(path))
 		}
 	case observedReads[name]:
-		if path, _ := params["path"].(string); path != "" {
+		if path := toolPathArg(params); path != "" {
 			l.obs.NoteRead(l.obsPath(path))
 		}
 	case observedMutates[name]:
-		if path, _ := params["path"].(string); path != "" {
+		if path := toolPathArg(params); path != "" {
 			l.obs.NoteWrite(l.obsPath(path))
 		}
 		// copy_file / move_file also create the destination.

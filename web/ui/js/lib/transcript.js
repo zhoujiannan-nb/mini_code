@@ -21,6 +21,7 @@ export const NOTICE_LABELS = {
   compact: "压缩指令",
   summary: "压缩摘要",
   persist: "持久化告警",
+  goal: "目标续跑轮",
 };
 
 export function noticeOf(kind, text) {
@@ -55,6 +56,7 @@ export function detectNoticeKind(text) {
   // "<agent " 是当前写法(subagent.go,命名 agent);"<subagent " 属于旧会话。
   if (trimmed.startsWith("<agent ") || trimmed.startsWith("<subagent ")) return "subagent";
   if (trimmed.startsWith("<job ")) return "job";
+  if (trimmed.startsWith("<goal_round")) return "goal"; // session/goalround.go
   if (trimmed === LEGACY_STEER_TEXT) return "steer";
   if (trimmed === EMPTY_RETRY_TEXT) return "retry";
   return "";

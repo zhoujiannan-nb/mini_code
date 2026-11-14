@@ -79,8 +79,8 @@ func TestWriteFileOverwriteUnchanged(t *testing.T) {
 	fp := filepath.Join(dir, "ow.txt")
 	runWrite(t, dir, "ow.txt", "original content\n", nil)
 	out := runWrite(t, dir, "ow.txt", "replaced\n", nil)
-	if !strings.Contains(out, "wrote") {
-		t.Fatalf("expected write confirmation, got: %s", out)
+	if !strings.Contains(out, "Updated file") {
+		t.Fatalf("expected the update envelope on overwrite, got: %s", out)
 	}
 	if got := readFileRaw(t, fp); got != "replaced\n" {
 		t.Fatalf("file content = %q, want %q", got, "replaced\n")
@@ -112,8 +112,9 @@ func TestWriteFileAppendNoTrailingSplit(t *testing.T) {
 }
 
 // TestWriteFileOverwriteExistingReportsNote: overwriting an existing
-// non-empty file must still succeed, and the result must flag that it
-// replaced prior content (so a model that meant to append can notice).
+// non-empty file says "Updated file" (dsh distinguishes create from update;
+// the previous content is not echoed to the model — that diff belongs to
+// the UI, and dumping it cost a full re-read of the old file per write).
 func TestWriteFileOverwriteExistingReportsNote(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "ow2.txt")
@@ -121,14 +122,8 @@ func TestWriteFileOverwriteExistingReportsNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := runWrite(t, dir, "ow2.txt", "fresh\n", nil)
-	if !strings.Contains(out, "wrote") {
-		t.Fatalf("expected write confirmation, got: %s", out)
-	}
-	if !strings.Contains(out, "replaced an existing file") {
-		t.Fatalf("expected overwrite note, got: %s", out)
-	}
-	if !strings.Contains(out, "3 lines") {
-		t.Fatalf("expected previous line count in note, got: %s", out)
+	if !strings.Contains(out, "Updated file") {
+		t.Fatalf("expected the update envelope, got: %s", out)
 	}
 	// The write itself must have happened (content replaced).
 	if got := readFileRaw(t, fp); got != "fresh\n" {
@@ -183,18 +178,21 @@ func TestCountTextLines(t *testing.T) {
 	}
 }
 
-// TestWriteFileAppendSchema: the tool schema must expose the append flag so
-// the model knows the capability exists.
+// TestWriteFileAppendSchema: the exposed schema is dsh's verbatim "write"
+// surface, which has no append flag — the capability stays as an mc extension
+// (see the append behaviour tests above) but is deliberately not advertised.
 func TestWriteFileAppendSchema(t *testing.T) {
 	wt := NewWriteFileTool(t.TempDir())
 	props, ok := wt.Parameters()["properties"].(map[string]interface{})
 	if !ok {
 		t.Fatal("Parameters() has no properties object")
 	}
-	if _, ok := props["append"]; !ok {
-		t.Fatal("Parameters() is missing the 'append' property")
+	if _, ok := props["append"]; ok {
+		t.Fatal("Parameters() must match the dsh write schema (no 'append' property)")
 	}
-	if !strings.Contains(wt.Description(), "append") {
-		t.Fatal("Description() does not mention append")
+	for _, want := range []string{"file_path", "content"} {
+		if _, ok := props[want]; !ok {
+			t.Fatalf("Parameters() is missing the %q property", want)
+		}
 	}
 }

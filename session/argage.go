@@ -35,7 +35,9 @@ const argAgeThreshold = 2000
 // ageOutCallArgs renders the summary replacement for a big write/edit
 // argument blob. Returns ("", false) when the call must keep its arguments.
 func ageOutCallArgs(name, args string) (string, bool) {
-	if name != "write_file" && name != "edit_file" {
+	switch name {
+	case "write_file", "write", "edit_file", "edit":
+	default:
 		return "", false
 	}
 	if len([]rune(args)) <= argAgeThreshold {
@@ -45,37 +47,34 @@ func ageOutCallArgs(name, args string) (string, bool) {
 	if json.Unmarshal([]byte(args), &v) != nil {
 		return "", false // not JSON we understand: leave it alone
 	}
-	fp, _ := v["path"].(string)
+	fp, _ := v["file_path"].(string) // dsh key first
 	if fp == "" {
-		fp, _ = v["file_path"].(string) // tolerate dsh-style key if it ever shows up
+		fp, _ = v["path"].(string) // historical mc key
 	}
 	if fp == "" {
 		return "", false
 	}
 	runeLen := func(s string) int { return len([]rune(s)) }
+	strArg := func(keys ...string) string {
+		for _, k := range keys {
+			if s, ok := v[k].(string); ok {
+				return s
+			}
+		}
+		return ""
+	}
 	var summary map[string]any
 	switch name {
-	case "write_file":
-		n := 0
-		if c, ok := v["content"].(string); ok {
-			n = runeLen(c)
-		}
+	case "write_file", "write":
 		summary = map[string]any{
-			"path":    fp,
-			"content": fmt.Sprintf("[aged out: wrote %d chars; the file on disk is the copy of record — read_file before editing again]", n),
+			"file_path": fp,
+			"content":   fmt.Sprintf("[aged out: wrote %d chars; the file on disk is the copy of record — read before editing again]", runeLen(strArg("content"))),
 		}
-	case "edit_file":
-		o, nn := 0, 0
-		if s, ok := v["old_text"].(string); ok {
-			o = runeLen(s)
-		}
-		if s, ok := v["new_text"].(string); ok {
-			nn = runeLen(s)
-		}
+	case "edit_file", "edit":
 		summary = map[string]any{
-			"path":     fp,
-			"old_text": fmt.Sprintf("[aged out: replaced %d chars]", o),
-			"new_text": fmt.Sprintf("[aged out: with %d chars]", nn),
+			"file_path":  fp,
+			"old_string": fmt.Sprintf("[aged out: replaced %d chars]", runeLen(strArg("old_string", "old_text"))),
+			"new_string": fmt.Sprintf("[aged out: with %d chars]", runeLen(strArg("new_string", "new_text"))),
 		}
 	}
 	b, err := json.Marshal(summary)

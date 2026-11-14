@@ -6,28 +6,29 @@ import htm from "htm";
 
 import { AgentAvatar } from "../lib/avatars.js";
 import { memo } from "../lib/memo.js";
-import { mdToHtml } from "../lib/markdown.js";
 import { groupSteps } from "../lib/transcript.js";
 import {
   stepTag, toolArgDisplay, toolWorkHint, toolLivePreview, tailOutput,
+  todoItemsOf, goalLineOf,
 } from "../lib/tools.js";
 import { fmtBytes, byteLenOf, fmtRun } from "../lib/format.js";
 import { dispatch } from "../lib/store.js";
+import { ThinkBox } from "./ThinkBox.js";
+import { TodoCard } from "./TodoCard.js";
 
 const html = htm.bind(h);
 
 // StepView 是单步(工具或思考)。无 hook,可被 memo 包住。
 function StepView({ step, running, now }) {
-  if (step.kind === "think") {
-    const text = String(step.text || "");
-    return html`<details class="m-think">
-      <summary>💭 思考过程(${Array.from(text).length} 字)</summary>
-      <div class="think-body md" dangerouslySetInnerHTML=${{ __html: mdToHtml(text) }} />
-    </details>`;
-  }
+  // 思考步骤:用消息卡里同一个淡色小框(默认折叠,点标题行展开;一轮里只有正在
+  // 想的 live 框自动展开,输出完落成步骤即回到折叠 —— 2026-11 需求)。
+  if (step.kind === "think") return html`<${ThinkBox} text=${step.text} />`;
 
   const tag = stepTag(step, running);
   const arg = toolArgDisplay(step.name, step.args);
+  // 两份"这一步在说什么"的读法,都是自判断:不是清单/不是 goal 工具就分别是 null/""。
+  const todos = todoItemsOf(step.name, step.args);
+  const goal = todos ? "" : goalLineOf(step.name, step.args);
   const live = step.phase === "run" || step.phase === "prep";
   const preview = live ? toolLivePreview(step.name, step.args) : "";
   // 真输出到了就顶掉参数预览:预览是输入,和输出混在同一格里只会看错。
@@ -59,17 +60,22 @@ function StepView({ step, running, now }) {
   const cut = result != null && result.length > shown.length
     ? html`<span class="ms-cut">… 共 ${result.length} 字,已截断</span>` : null;
 
+  // 清单卡与目标状态行默认摊开:它们不是"参数细节",而是这一步在说什么 ——
+  // 跟 ThinkBox 同一套道理(过程就该看见)。两者都只有几行,不会把消息流撑长。
   return html`<details class=${"ms-step ms-in" + (step.folded ? "" : " ms-live-step")}
-    open=${step.phase === "run" || step.phase === "prep"}>
+    open=${live || !!todos || !!goal}>
     <summary>
       <span class="t-name">⚙ ${step.name}</span>
       ${arg ? html`<span class="ms-arg1" title=${arg.value}>${arg.brief}</span>` : null}
+      ${todos ? html`<span class="ms-todo" title=${"已完成 " + todos.done + " / " + todos.total}>✓ ${todos.label}</span>` : null}
       <span class="ms-work" title=${work ? "这次要写入的量,发起调用时就已知;真正的回执要等写完" : ""}>${work}</span>
       <span class=${"ms-run" + (late ? " late" : "")}>${runText}</span>
       <span class=${"ms-tag " + tag.kind}>${tag.spin ? html`<span class="spin"></span>` : null}${tag.text}</span>
     </summary>
     <div class="ms-step-body">
-      ${live ? null : (argsShown ? html`<div class="ms-args">${argsShown}</div>` : null)}
+      ${todos ? html`<${TodoCard} todos=${todos} />` : null}
+      ${goal ? html`<div class="goal-line">🎯 ${goal}</div>` : null}
+      ${live || todos ? null : (argsShown ? html`<div class="ms-args">${argsShown}</div>` : null)}
       ${liveText ? html`<pre class=${"ms-out" + (outIsPreview ? " ms-prev" : "")}>${tailOutput(liveText)}</pre>` : null}
       ${result != null ? html`<div class="ms-res-slot"><div class="t-res">✓ ${shown}${cut}</div></div>` : null}
     </div>

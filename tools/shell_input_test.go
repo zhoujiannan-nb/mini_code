@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// TestExecInputSchema verifies the exec tool declares an `input` (stdin)
-// parameter in its JSON schema and documents it in the description, so the
-// model knows the capability exists.
+// TestExecInputSchema verifies the pwsh tool exposes dsh's verbatim parameter
+// surface. The `input` (stdin) capability stays as an mc extension but is not
+// advertised on the schema (the behaviour test below still covers it).
 func TestExecInputSchema(t *testing.T) {
 	tt := NewExecTool(0, "")
 	params := tt.Parameters()
@@ -17,15 +17,13 @@ func TestExecInputSchema(t *testing.T) {
 	if !ok {
 		t.Fatalf("Parameters() missing 'properties' object")
 	}
-	if _, ok := props["input"]; !ok {
-		t.Errorf("Parameters() does not declare an 'input' parameter")
+	for _, want := range []string{"description", "command", "workdir", "timeoutMs", "run_in_background"} {
+		if _, ok := props[want]; !ok {
+			t.Errorf("Parameters() does not declare the dsh parameter %q", want)
+		}
 	}
-	inp, ok := props["input"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("'input' parameter is not an object")
-	}
-	if desc, _ := inp["description"].(string); !strings.Contains(desc, "stdin") {
-		t.Errorf("input parameter description should mention stdin, got: %s", desc)
+	if _, ok := props["input"]; ok {
+		t.Errorf("Parameters() must match the dsh pwsh schema (no 'input' property)")
 	}
 }
 

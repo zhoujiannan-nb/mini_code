@@ -50,7 +50,7 @@ func TestEditFileGBKRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("edit: %v", err)
 	}
-	if !strings.Contains(out.Text, "Successfully edited") {
+	if !strings.Contains(out.Text, "has been updated successfully") {
 		t.Fatalf("GBK edit failed: %s", out.Text)
 	}
 
@@ -79,7 +79,7 @@ func TestWriteFilePreservesGBKOnOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if !strings.Contains(out.Text, "Successfully wrote") {
+	if !strings.Contains(out.Text, "Updated file") {
 		t.Fatalf("write failed: %s", out.Text)
 	}
 	got, _ := os.ReadFile(fp)
@@ -137,7 +137,7 @@ func TestEditFileUTF8BOMKept(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if !strings.Contains(read.Text, "1| hello") {
+	if !strings.Contains(read.Text, "1: hello") {
 		t.Fatalf("BOM leaked into the first line: %s", read.Text)
 	}
 	if _, err := NewEditFileTool(dir).Execute(context.Background(), map[string]interface{}{
@@ -152,9 +152,9 @@ func TestEditFileUTF8BOMKept(t *testing.T) {
 	}
 }
 
-// TestEditFileEmojiInGBKFileFallsBackToUTF8: the edit cannot be represented in
-// GBK, so the file becomes UTF-8 — but the model is told, because a silent
-// encoding change breaks whoever wrote the file.
+// TestEditFileEmojiInGBKFileFallsBackToUTF8: the edit cannot be represented
+// in GBK, so the file becomes UTF-8 (a safe fallback by content; dsh's
+// contract carries no encoding chatter in the success text).
 func TestEditFileEmojiInGBKFileFallsBackToUTF8(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "e.txt")
@@ -167,11 +167,8 @@ func TestEditFileEmojiInGBKFileFallsBackToUTF8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("edit: %v", err)
 	}
-	if !strings.Contains(out.Text, "Successfully edited") {
+	if !strings.Contains(out.Text, "has been updated successfully") {
 		t.Fatalf("edit failed: %s", out.Text)
-	}
-	if !strings.Contains(out.Text, "UTF-8") {
-		t.Fatalf("the encoding change was not reported: %s", out.Text)
 	}
 	got, _ := os.ReadFile(fp)
 	if string(got) != "状态: 新 🙂\n" {

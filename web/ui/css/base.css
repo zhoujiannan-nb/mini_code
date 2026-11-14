@@ -19,26 +19,26 @@
       ⑤ 消息列与输入卡共用一根宽度主轴
     对比度仍按原作者 AAA 口径:正文/次级 ≥7:1,主色文字 ≥7:1。 */
  :root {
-   --edge: #e7e7e3;        /* 窗口四周:暖灰边 */
-   --bg: #fbfbfa;          /* 聊天区/输入区底(Qoder 暖白) */
+   --edge: #dfe5ec;        /* 窗口四周:暖灰边 */
+   --bg: #f2f5f9;          /* 聊天区/输入区底(Qoder 暖白) */
    --surface: #ffffff;     /* 面板:弹窗/输入框/下拉 */
-   --surface2: #f3f4f1;    /* 次级面板:工具卡/@ 选择器头部 */
+   --surface2: #e9eef4;    /* 次级面板:工具卡/@ 选择器头部 */
    /* 半透明面板:顶栏/侧边栏浮在内容上,backdrop-filter 出层次(强度比 v1 收敛) */
     --surface-a: rgba(255,255,255,.80);
     --card-a: rgba(255,255,255,.72);   /* 会话列表卡片:比 --surface-a 更透一档,让侧栏那道绿渐变透上来 */
     --side-inset: 10px;   /* 侧栏里新建按钮/worker 条/会话卡片共用的左右内缩,必须同一个值 */
-   --side: #f4f5f2;        /* 侧边栏不透明回退值 */
-   --side-a: rgba(244,245,242,.84);
-   --glow1: rgba(106,190,124,.05);  /* 背景光晕压到若有若无:Qoder 基本不用光晕 */
-   --glow2: rgba(120,130,120,.04);
+   --side: #eaeff5;        /* 侧边栏不透明回退值 */
+   --side-a: rgba(234,239,245,.84);
+   --glow1: rgba(96,150,205,.05);  /* 背景光晕压到若有若无:Qoder 基本不用光晕 */
+   --glow2: rgba(110,130,150,.04);
    /* 边框:alpha 阶梯(DSH l2 / l3),叠在任何底色上都自动协调 */
-   --border: rgba(20,20,18,.09);
-   --border2: rgba(20,20,18,.17);
-   --text: #141412;
-   --text2: #3a3b37;    /* AAA: ≥9.5:1 */
-   --text3: #4b4c47;    /* 小字(时间戳/提示)≥8:1 */
-   --title: #0a0a09;      /* 高强调标题 */
-   --title2: #2b2c28;     /* 次级小标题/工具名 */
+   --border: rgba(24,32,44,.10);
+   --border2: rgba(24,32,44,.18);
+   --text: #131720;
+   --text2: #39404d;    /* AAA: ≥9.5:1 */
+   --text3: #4a5160;    /* 小字(时间戳/提示)≥8:1 */
+   --title: #0a0d14;      /* 高强调标题 */
+   --title2: #2b3140;     /* 次级小标题/工具名 */
    /* 强调色:绿色只用于"小面积";主按钮走墨色(--ink),这是 Qoder/DSH 的配方 */
    --accent: #2e7d4f;      /* 强调/边框/图标(对白底 ≥4.9:1) */
    --accent-btn: #255a41;  /* 主色实心(白字 7.4:1) */
@@ -48,9 +48,9 @@
     --accent-l: #eaf7e7;    /* 主色极浅底(Qoder 亮色 primary-bg) */
     --accent-h: #d9efd4;    /* 主色浅底 hover:比 --accent-l 深一档,按钮/菜单项 hover 专用 */
    --accent-b: #bfe3c6;
-   --ink: #141412;         /* 墨色实心按钮(发送/新建/确认) */
-   --ink-h: #2a2b28;
-   --ink-fg: #fbfbfa;
+   --ink: #131720;         /* 墨色实心按钮(发送/新建/确认) */
+   --ink-h: #232a38;
+   --ink-fg: #f2f5f9;
    --blue-l: #eaf1fc;
    --blue-t: #1b5fb0;      /* AAA:info 蓝(Qoder info #3B81E9 压深) */
    --blue-btn: #1b5fb0;
@@ -64,24 +64,24 @@
    --red-l: #fdf0ef;
    --red-b: #f0c4c0;
    --red-btn: #8c1f1a;
-   --ghost-bg: #eef0ec;          /* 幽灵按钮底(+) */
-   --ghost-bg-h: #e3e6e0;
-   --ghost-fg: #3a3b37;
-   --ghost-fg-h: #141412;
+   --ghost-bg: #e7edf4;          /* 幽灵按钮底(+) */
+   --ghost-bg-h: #dce4ee;
+   --ghost-fg: #39404d;
+   --ghost-fg-h: #131720;
    /* 列表/菜单项 hover:同族中性叠色(亮 6%/10%,对应 DSH interactive-bg-hover) */
-   --hover: rgba(38,49,42,.07);
-   --hover-2: rgba(38,49,42,.05);  /* 选中项:再深会吃掉次级文字对比 */
-   --track: #dde0d9;        /* 思考强度滑条未填充段 */
+   --hover: rgba(42,64,96,.07);
+   --hover-2: rgba(42,64,96,.05);  /* 选中项:再深会吃掉次级文字对比 */
+   --track: #d4dce8;        /* 思考强度滑条未填充段 */
    --code-bg: #16181a;      /* 代码块:亮色下也用深色卡(Qoder/DSH 一致) */
    --code-fg: #e6ebe6;
-   --mask: rgba(18,18,16,.42);
-   --sh1: rgba(18,20,16,.035);   /* 分层主要交给发丝描边,投影只留 3~5% */
-   --sh2: rgba(18,20,16,.05);
-   --sh3: rgba(18,20,16,.07);
-   --sh4: rgba(18,20,16,.10);
+   --mask: rgba(16,22,32,.42);
+   --sh1: rgba(20,28,40,.035);   /* 分层主要交给发丝描边,投影只留 3~5% */
+   --sh2: rgba(20,28,40,.05);
+   --sh3: rgba(20,28,40,.07);
+   --sh4: rgba(20,28,40,.10);
    --sh5: rgba(0,0,0,.22);
-   --scroll: #d6d8d1;
-   --scroll-h: #9aa094;
+   --scroll: #ccd7e3;
+   --scroll-h: #93a3b6;
    /* 焦点环:绿色高饱和只在这里 + 链接 + 发送钮上出现 */
    --ring: rgba(46,125,79,.30);
    --ring-soft: rgba(46,125,79,.14);
@@ -420,7 +420,26 @@ aside {
 .msg.user .m-card { background: var(--accent-l); border-color: var(--accent-b); padding: 8px 12px; }
 
 /* 思考过程:浅色字,与正文同列排布 */
-details.m-think { margin-bottom: 8px; }
+
+/* 思考过程小框(ThinkBox.js 的样式;2026-11 误 git checkout 抹掉后按原版恢复)。
+   三处共用:历史消息、执行步骤、正在生成的那条。淡色靠 --text3,限高走 em 跟着
+   字号走(约 8~10 行),超出只在框内滚,不撑长消息流;overscroll-behavior 防止
+   框内滚到底后把外层消息列表一起拽走。折叠态样式见 layers.css。 */
+ .think-box { margin: 0 0 8px; min-width: 0; }
+ .think-box-hd {
+   display: flex; align-items: center; gap: 8px;
+   font-size: 11px; color: var(--text3); user-select: none; margin-bottom: 3px;
+ }
+ .think-box-hd .tb-n { font-family: var(--mono); font-size: 10.5px; opacity: .8; }
+ .think-box-hd .tb-live { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+ .think-box-body {
+   color: var(--text3); font-size: 12.5px; line-height: 1.65;
+   white-space: pre-wrap; word-break: break-word;
+   max-height: 10em; overflow-y: auto; overscroll-behavior: contain;
+   background: var(--surface2); border: 1px solid var(--border);
+   border-radius: var(--r-sm); padding: 6px 10px;
+ }
+ details.m-think { margin-bottom: 8px; }
 details.m-think summary {
   cursor: pointer; font-size: 12px; color: var(--text3); user-select: none; list-style: none;
 }

@@ -31,7 +31,7 @@ func TestSearchParallelIsDeterministic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("run %d: %v", run, err)
 		}
-		if !strings.Contains(res.Text, fmt.Sprintf("%d matching lines total", files)) {
+		if !strings.Contains(res.Text, fmt.Sprintf("Found %d matches", files)) {
 			t.Fatalf("run %d: expected %d matches: %s", run, files, res.Text)
 		}
 		if run == 0 {
@@ -43,20 +43,17 @@ func TestSearchParallelIsDeterministic(t *testing.T) {
 		}
 	}
 
-	// Path order: every result line's path must be >= the previous one's.
+	// Path order: each group header line (a line that is not "Line N: …" and
+	// not the header) must be >= the previous header.
 	var last string
 	for _, line := range strings.Split(first, "\n") {
-		if !strings.Contains(line, ":") || strings.HasPrefix(line, "(") {
+		if line == "" || strings.HasPrefix(line, "Line ") || strings.HasPrefix(line, "Found ") {
 			continue
 		}
-		path, _, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
+		if last != "" && line < last {
+			t.Fatalf("results out of order: %q after %q", line, last)
 		}
-		if last != "" && path < last {
-			t.Fatalf("results out of order: %q after %q", path, last)
-		}
-		last = path
+		last = line
 	}
 }
 

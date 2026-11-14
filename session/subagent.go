@@ -212,7 +212,7 @@ func (s *SubagentService) Dispatch(ctx context.Context, parentID string, spec to
 	}
 
 	if running := s.countRunning(parentID); running >= maxConcurrentBg {
-		return tools.AgentRun{}, fmt.Errorf("too many background agents running (%d); wait for one to finish (list_agents) or stop one (cancel_agent)", maxConcurrentBg)
+		return tools.AgentRun{}, fmt.Errorf("too many background agents running (%d); wait for one to finish (list_agents)", maxConcurrentBg)
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -457,7 +457,7 @@ func (s *SubagentService) settleNotice(job *SubagentJob) string {
 		} else {
 			fmt.Fprintf(&b, "Its closing message:\n%s", truncateRunes(job.Result, 1500))
 		}
-		fmt.Fprintf(&b, "\n\nSend it another message with send_message(agent=%q, ...); read the full result with agent_output(agent=%q).", job.Name, job.Name)
+		fmt.Fprintf(&b, "\n\nSend it another message with send_message(agent=%q, ...) to follow up; its full conversation stays readable in its own session.", job.Name)
 	case "failed":
 		fmt.Fprintf(&b, "It failed: %s", job.Err)
 	case "canceled":
@@ -618,7 +618,7 @@ func (s *SubagentService) Output(ctx context.Context, id string, wait bool, wait
 			case <-ctx.Done():
 				return "", ctx.Err()
 			case <-time.After(time.Duration(waitSeconds) * time.Second):
-				return "", fmt.Errorf("%s is still running after %ds; call agent_output again to keep waiting", job.Name, waitSeconds)
+				return "", fmt.Errorf("%s is still running after %ds; call wait_agent again to keep waiting (or end the turn — the settlement notice arrives when it finishes)", job.Name, waitSeconds)
 			}
 		}
 	}

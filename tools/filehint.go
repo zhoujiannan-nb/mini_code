@@ -95,7 +95,7 @@ func fileNotFoundHint(fp string) string {
 	if len(sims) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("Hint: similar names in %s: %s (check spelling/extension; use list_dir or glob to see all files).", dir, strings.Join(sims, ", "))
+	return fmt.Sprintf("Hint: similar names in %s: %s (check spelling/extension; use glob to see all files).", dir, strings.Join(sims, ", "))
 }
 
 // dirNotFileHint returns a short hint for a path that exists but is a
@@ -106,5 +106,5 @@ func dirNotFileHint(fp string) string {
 	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf("It is a directory with %d entries — use list_dir (or glob) to see its contents.", len(entries))
+	return fmt.Sprintf("It is a directory with %d entries — use glob with the pattern \"%s/*\" to see its contents.", len(entries), filepath.ToSlash(fp))
 }

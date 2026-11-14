@@ -47,7 +47,9 @@ func requestViewEnabled() bool {
 
 // stubArgTools are the tools whose arguments carry whole-file payloads.
 // exec/patch-style args stay verbatim: they are small and replay-critical.
-var stubArgTools = map[string]bool{"write_file": true, "edit_file": true, "copy_file": true, "move_file": true}
+// Both the dsh names (write/edit) and the historical mc names are listed —
+// old transcripts still carry old-name tool calls in their history.
+var stubArgTools = map[string]bool{"write": true, "edit": true, "write_file": true, "edit_file": true, "copy_file": true, "move_file": true}
 
 const (
 	argStubKeep     = 4    // recent assistant turns whose tool calls stay verbatim
@@ -125,20 +127,24 @@ func stubOldToolArgs(messages []provider.Message, keep, minLen int) []provider.M
 // toolArgStub renders the receipt: the path survives, the payload does not.
 // Unparseable arguments still get stubbed — the size itself is the payload.
 func toolArgStub(name, args string) string {
-	path := ""
+	path, pathKey := "", ""
 	var probe map[string]any
 	if err := json.Unmarshal([]byte(args), &probe); err == nil {
-		if s, ok := probe["path"].(string); ok {
-			path = s
+		// dsh spells the path file_path; the historical mc spelling stays read.
+		for _, key := range []string{"file_path", "path"} {
+			if s, ok := probe[key].(string); ok && s != "" {
+				path, pathKey = s, key
+				break
+			}
 		}
 	}
 	var b strings.Builder
 	b.WriteString("{")
 	if path != "" {
 		jp, _ := json.Marshal(path)
-		fmt.Fprintf(&b, `"path":%s,`, jp)
+		fmt.Fprintf(&b, "%q:%s,", pathKey, jp)
 	}
-	fmt.Fprintf(&b, `"content":"[harness view note: this historical %s call SUCCEEDED long ago; its argument text is elided from this request view ONLY. This is NOT the file content and NOT a tool error — the file on disk holds exactly what that call wrote (it may have been edited since). Do NOT re-issue that write because of this note; use read_file on the path to see the current text.]"}`,
+	fmt.Fprintf(&b, `"content":"[harness view note: this historical %s call SUCCEEDED long ago; its argument text is elided from this request view ONLY. This is NOT the file content and NOT a tool error — the file on disk holds exactly what that call wrote (it may have been edited since). Do NOT re-issue that write because of this note; use read on the path to see the current text.]"}`,
 		name)
 	return b.String()
 }
@@ -187,9 +193,9 @@ func offloadOldImages(messages []provider.Message, keep int) []provider.Message 
 				continue
 			}
 			if path != "" {
-				parts = append(parts, provider.NewTextPart("[image offloaded: "+path+" — re-run readimg on that file if you need to see it again]"))
+				parts = append(parts, provider.NewTextPart("[image offloaded: "+path+" — re-run read_image on that file if you need to see it again]"))
 			} else {
-				parts = append(parts, provider.NewTextPart("[image offloaded from history — re-run readimg if you need to see it again]"))
+				parts = append(parts, provider.NewTextPart("[image offloaded from history — re-run read_image if you need to see it again]"))
 			}
 		}
 		out[i].ContentParts = parts
