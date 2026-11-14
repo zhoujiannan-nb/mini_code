@@ -140,14 +140,15 @@ func TestRebuildContextShape(t *testing.T) {
 	}
 }
 
-// TestRebuildContextDropsNoticesAndInstructions: stale 75/80/85% notices and
-// compaction instructions never make it into the new context (the marker-based
-// dedup re-arms the notices from the new, much lower usage).
+// TestRebuildContextDropsNoticesAndInstructions: stale 75/80/85% notices (legacy
+// rows — nothing injects them any more) and compaction instructions never make it
+// into the new context: the numbers they quote are wrong after a compaction, and
+// a "call compact_context" hint would point at a tool that is not registered.
 func TestRebuildContextDropsNoticesAndInstructions(t *testing.T) {
 	in := []provider.Message{
 		{Role: "system", Content: "SYSTEM"},
 		{Role: "user", Content: "work"},
-		usageNotice(usageNoticeStage1Pct, 900, 1000, 950),
+		{Role: "user", Content: "Context usage is now at 80% of the usable input budget (900 / 1000 tokens). " + usageNoticeMarker(80)},
 		BuildCompactRequest(""),
 	}
 	out, ok := RebuildContext(in, "summary", CompactKeepMessages, CompactKeepMaxTokens)
@@ -297,6 +298,7 @@ func TestRebuildBudgetUsesTheThresholdUnits(t *testing.T) {
 		t.Fatalf("overhead did not grow with tool schemas / summary: %d vs %d", bare, overhead)
 	}
 }
+
 // TestBuildCompactRequest covers the two prompt sources: the fixed passive
 // prompt, and the agent-authored focus used for compact_context / manual.
 func TestBuildCompactRequest(t *testing.T) {

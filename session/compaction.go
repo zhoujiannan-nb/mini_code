@@ -18,10 +18,6 @@ const (
 	// below the ceiling: the estimate is calibrated, and the head-room keeps a
 	// mis-estimate from turning the request into a provider-side length error.
 	compactInputFraction = 0.90
-	// noticeInputFractions are the two reminder stages on the SAME reference, so
-	// the model gets a turn or two to call compact_context before the loop does it.
-	noticeInputFraction1 = 0.80
-	noticeInputFraction2 = 0.85
 
 	// CompactKeepMessages is how many verbatim messages survive a compaction:
 	// the newest ones are walked backwards from the summary until this many
@@ -141,10 +137,13 @@ func StripCompactRequests(messages []provider.Message) []provider.Message {
 	return out
 }
 
-// IsUsageNotice reports whether m is one of the context-usage notices (80/85/90%,
-// plus the legacy 75/95% ones still stored in older sessions). They are
-// dropped on compaction: after a compaction the numbers they quote are wrong, and
-// the marker-based dedup re-arms them from the new (much lower) usage.
+// IsUsageNotice reports whether m is one of the context-usage notices (75/80/85/
+// 90/95%). Nothing injects them any more — the reminder told the model to call the
+// unregistered compact_context tool, so the injection was removed — but older
+// sessions still store those rows. They are dropped on compaction: the numbers
+// they quote are wrong after a compaction, and a stale "call compact_context"
+// instruction in the retained tail would only send the model hunting for a tool
+// that is not there.
 func IsUsageNotice(m provider.Message) bool {
 	t := m.GetText()
 	for _, pct := range []int{75, 80, 85, 90, 95} {

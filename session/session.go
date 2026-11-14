@@ -252,29 +252,6 @@ func (s *Session) ModelKey() string       { return s.record.ModelKey }
 func (s *Session) ChannelKey() string     { return s.record.ChannelKey }
 func (s *Session) Record() *SessionRecord { return s.record }
 
-// ContextRemindersEnabled reports whether the context-usage notices
-// (80%/85% budget usage reminders) are on for this session. An absent
-// metadata key keeps the default: enabled.
-func (s *Session) ContextRemindersEnabled() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	v, ok := s.record.Metadata["context_reminders"]
-	if !ok {
-		return true
-	}
-	b, _ := v.(bool)
-	return b
-}
-
-// SetContextRemindersEnabled toggles the experimental context-usage notices for
-// this session and persists the choice.
-func (s *Session) SetContextRemindersEnabled(on bool) {
-	s.mu.Lock()
-	s.record.Metadata["context_reminders"] = on
-	s.persistLocked()
-	s.mu.Unlock()
-}
-
 // ReasoningOverride returns the session's per-session thinking depth override
 // (empty = use the model's configured default). It backs the composer's
 // thinking control: the same model can think at different depths per
@@ -314,10 +291,9 @@ func (s *Session) SetReasoningOverride(thinking, effort string) {
 const lastUsageMetadataKey = "last_usage"
 
 // recordLastUsage persists the last per-call provider usage into the session
-// metadata (whole-row update under the session lock, same pattern as
-// SetContextRemindersEnabled). It is called from the agent loop after each
-// successful LLM call, so the stored value is always the conversation's
-// "last one" — exactly what the UI shows after the task settles.
+// metadata (whole-row update under the session lock). It is called from the
+// agent loop after each successful LLM call, so the stored value is always the
+// conversation's "last one" — exactly what the UI shows after the task settles.
 func (s *Session) recordLastUsage(prompt, cached, completion int, reported bool, speed float64) {
 	if prompt <= 0 && completion <= 0 {
 		return
@@ -762,10 +738,8 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	if s.manager != nil && s.manager.Workers() != nil {
 		loop.SetWorkerNotice(s.WorkerNotice)
 	}
-	// Wire the shared context state (context tools) and the experimental
-	// context-usage notices toggle (session-level, default on).
+	// Wire the shared context state (context tools).
 	loop.SetContextState(ctxState)
-	loop.SetContextRemindersOn(s.ContextRemindersEnabled())
 	loop.SetOnContextUsage(s.onContextUsage)
 	// Wrap the usage callback: first persist the last per-call usage into the
 	// session (DB) so the composer stats restore after a stop/refresh, then

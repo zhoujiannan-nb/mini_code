@@ -36,7 +36,7 @@ export function PluginLogsModal() {
       <div class="set-head">
         <h2 id="pl-log-title">日志</h2>
         <button class="set-close" id="pl-log-close" aria-label="关闭"
-          onClick=${() => setState({ pluginLogs: null })}>&#10005;</button>
+          onClick=${() => setState({ pluginLogs: null })}>✕</button>
       </div>
       <pre class="pl-log" id="pl-log-body">${(logs.lines || []).length
         ? logs.lines.join("\n")

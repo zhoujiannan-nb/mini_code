@@ -69,13 +69,18 @@ export function Chat() {
     }
   };
 
+  // 向上滚轮 = 用户明确要回看:立刻解锁吸底。不能只靠 onScroll 的 90px 判定——
+  // 流式高频追加时,小幅上滚还没来得及触发 scroll 事件就被下一块内容吸回底部,
+  // 体验上就是"往上翻翻不动、像卡住"。
+  const onWheel = (e) => { if (e.deltaY < 0) stickRef.current = false; };
+
   const shown = rows.length > visible ? rows.slice(rows.length - visible) : rows;
   const folded = runSteps.filter((s) => s.folded);
   const liveSteps = runSteps.filter((s) => !s.folded);
   const empty = rows.length === 0 && !live && !pending && runSteps.length === 0;
 
   return html`<div class="messages-wrap">
-    <div class="messages" id="messages" ref=${boxRef} onScroll=${onScroll}>
+    <div class="messages" id="messages" ref=${boxRef} onScroll=${onScroll} onWheel=${onWheel}>
       ${rows.length > visible ? html`<div class="load-older" />` : null}
       <${MessageList} rows=${shown} />
       ${folded.length ? html`<${StepsCard} steps=${folded} />` : null}

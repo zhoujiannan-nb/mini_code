@@ -133,7 +133,6 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/compact", s.handleCompactSession)
 	mux.HandleFunc("POST /api/sessions/{id}/mode", s.handleSetMode)
-	mux.HandleFunc("POST /api/sessions/{id}/context-reminders", s.handleSetContextReminders)
 	mux.HandleFunc("POST /api/sessions/{id}/model", s.handleSetModel)
 	mux.HandleFunc("POST /api/sessions/{id}/reasoning", s.handleSetReasoning)
 	mux.HandleFunc("GET /api/sessions/{id}/jobs", s.handleListJobs)
@@ -358,7 +357,6 @@ type SessionSummary struct {
 	// Tokens is the session-wide total (prompt+completion over every provider
 	// call); 0 for sessions predating the usage counter.
 	Tokens int64 `json:"tokens"`
-	ContextReminders bool   `json:"context_reminders"` // experimental context-usage notices (session-level, default on)
 	// Thinking / ReasoningEffort are the per-session thinking-depth override
 	// (composer control); empty = the model's configured default.
 	Thinking        string `json:"thinking,omitempty"`
@@ -390,7 +388,6 @@ func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 		CreatedAt:        r.CreatedAt,
 		UpdatedAt:        r.UpdatedAt,
 		MessageCount:     len(r.Messages),
-		ContextReminders: contextRemindersOf(r),
 		Thinking:         thinking,
 		ReasoningEffort:  effort,
 	}
@@ -790,20 +787,6 @@ func (s *server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// contextRemindersOf reads the context-usage notices flag from a session
-// record's metadata; an absent key keeps the default: enabled.
-func contextRemindersOf(r *session.SessionRecord) bool {
-	if r.Metadata == nil {
-		return true
-	}
-	v, ok := r.Metadata["context_reminders"]
-	if !ok {
-		return true
-	}
-	b, _ := v.(bool)
-	return b
-}
-
 // reasoningOf reads the per-session thinking-depth override from a session
 // record's metadata (empty = the model's configured default).
 func reasoningOf(r *session.SessionRecord) (thinking, effort string) {
@@ -869,30 +852,6 @@ func (s *server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"session_id": id,
 		"mode":       session.NormalizeMode(req.Mode),
-	})
-}
-
-// handleSetContextReminders toggles the experimental context-usage notices for
-// a session (session-level, default on). It takes effect from the session's
-// next task on; the current in-flight task keeps its setting.
-func (s *server) handleSetContextReminders(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	sess, err := s.be.Mgr().Get(id)
-	if err != nil || sess == nil {
-		writeErr(w, http.StatusNotFound, "session not found: "+id)
-		return
-	}
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	sess.SetContextRemindersEnabled(req.Enabled)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"session_id":        id,
-		"context_reminders": req.Enabled,
 	})
 }
 
@@ -1061,7 +1020,6 @@ type SendMessageRequest struct {
 	Images           []string `json:"images,omitempty"`            // data URLs (data:image/...;base64,...); the model sees them on the first turn
 	Mode             string   `json:"mode,omitempty"`              // permission mode for a NEW session (full / cautious)
 	Model            string   `json:"model,omitempty"`             // model name for a NEW session (config key); ignored for existing sessions
-	ContextReminders *bool    `json:"context_reminders,omitempty"` // new-session preference; nil = default (on)
 	Thinking         string   `json:"thinking,omitempty"`          // thinking switch for a NEW session; ignored for existing sessions
 	ReasoningEffort  string   `json:"reasoning_effort,omitempty"`  // thinking depth for a NEW session; ignored for existing sessions
 	WorkerID         string   `json:"worker_id,omitempty"`         // worker (工作大类) for a NEW session; ignored for existing sessions
@@ -1113,7 +1071,6 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	msg.Images = req.Images
 	msg.Mode = req.Mode
 	msg.Model = req.Model
-	msg.ContextReminders = req.ContextReminders
 	msg.Thinking = strings.TrimSpace(req.Thinking)
 	msg.ReasoningEffort = strings.TrimSpace(req.ReasoningEffort)
 	msg.WorkerID = strings.TrimSpace(req.WorkerID)

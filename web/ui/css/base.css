@@ -1,189 +1,166 @@
-/* 浅色主题默认值(深色在下方 html[data-theme=dark] 覆盖)。
-   风格参考 DeepSeek 桌面端:中性近黑底 + 半透明面板 + 大圆角 + 品牌蓝。
-   对比度沿用原有 AAA 标准(正文/次级文字 ≥7:1,主色文字 ≥7:1)。 */
- /* ============ 设计令牌(v3 · Qoder 国际版取色 + DSH Desktop 结构) ============
-    一手依据(见 _work/design_refs.md):
-      · Qoder(qoder.com 的 --ant-* 令牌):主色绿 亮 #80C776 / 暗 #6AD86C,CTA 深绿
-        亮 #255A41 / 暗 #3D8C66;暗底是"暖黑" #090A0B→#171716→#1A1A17,边框带橄榄相;
-        亮底是"暖白" #FFF→#F3F3F3;radius 6。
-      · DSH(deepseek-harness ui-theme):主按钮用"墨色"而不是彩色,高饱和只给
-        链接/focus/发送钮;边框只用 alpha 阶梯(亮 黑 4/10/12/16%,暗 白 6/12/16/20%);
-        分层靠 0.5px 发丝描边 + 3~5% 双层柔光;气泡扁平无框 radius 20;
-        radius 阶梯 4/8/12/16/20/28 + superellipse;滚动条 5px;内容宽度主轴
-        clamp(680px, 列宽×.64, 920px);动效 .1/.2/.3s + cubic-bezier(.4,0,.2,1)。
-    落到本项目的规则:
-      ① 大面积中性(暖黑/暖白 + 墨色主按钮),小面积彩色(绿)只给强调/链接/发送/状态
-      ② 边框全部走 alpha 阶梯,hover/active 用同族 6%/10%(亮)、7%/5%(暗)
-      ③ 分层去投影:1px 发丝描边 + ≤5% 柔光
-      ④ 圆角阶梯 6/8/12/16/20,气泡 18 扁平,支持引擎下走 superellipse
-      ⑤ 消息列与输入卡共用一根宽度主轴
-    对比度仍按原作者 AAA 口径:正文/次级 ≥7:1,主色文字 ≥7:1。 */
- :root {
-   --edge: #dfe5ec;        /* 窗口四周:暖灰边 */
-   --bg: #f2f5f9;          /* 聊天区/输入区底(Qoder 暖白) */
+/* 「纯白」设计令牌 v2:纯白底 + 中性灰阶 + 墨色主按钮 + 一点蓝。
+   浅色主题默认值(深色在下方 html[data-theme=dark] 覆盖)。
+   口径:界面不靠颜色分层,靠留白、发丝描边和字重;
+   绿色只出现在"成功"语义(状态点/成功徽标),蓝色只管链接/焦点/选中。 */
+  :root {
+   --edge: #e4e4e7;        /* 窗口四周:中性浅灰 */
+   --bg: #ffffff;          /* 聊天区/输入区底:纯白 */
    --surface: #ffffff;     /* 面板:弹窗/输入框/下拉 */
-   --surface2: #e9eef4;    /* 次级面板:工具卡/@ 选择器头部 */
-   /* 半透明面板:顶栏/侧边栏浮在内容上,backdrop-filter 出层次(强度比 v1 收敛) */
-    --surface-a: rgba(255,255,255,.80);
-    --card-a: rgba(255,255,255,.72);   /* 会话列表卡片:比 --surface-a 更透一档,让侧栏那道绿渐变透上来 */
-    --side-inset: 10px;   /* 侧栏里新建按钮/worker 条/会话卡片共用的左右内缩,必须同一个值 */
-   --side: #eaeff5;        /* 侧边栏不透明回退值 */
-   --side-a: rgba(234,239,245,.84);
-   --glow1: rgba(96,150,205,.05);  /* 背景光晕压到若有若无:Qoder 基本不用光晕 */
-   --glow2: rgba(110,130,150,.04);
-   /* 边框:alpha 阶梯(DSH l2 / l3),叠在任何底色上都自动协调 */
-   --border: rgba(24,32,44,.10);
-   --border2: rgba(24,32,44,.18);
-   --text: #131720;
-   --text2: #39404d;    /* AAA: ≥9.5:1 */
-   --text3: #4a5160;    /* 小字(时间戳/提示)≥8:1 */
-   --title: #0a0d14;      /* 高强调标题 */
-   --title2: #2b3140;     /* 次级小标题/工具名 */
-   /* 强调色:绿色只用于"小面积";主按钮走墨色(--ink),这是 Qoder/DSH 的配方 */
-   --accent: #2e7d4f;      /* 强调/边框/图标(对白底 ≥4.9:1) */
-   --accent-btn: #255a41;  /* 主色实心(白字 7.4:1) */
-   --accent-btn-h: #2e6c50;/* hover(白字 6.2:1) */
-   --accent-t: #1f5138;    /* 主色文字(AAA ≥8.6:1) */
-   --ok-dot: #2f8f56;      /* 状态"完成"圆点 */
-    --accent-l: #eaf7e7;    /* 主色极浅底(Qoder 亮色 primary-bg) */
-    --accent-h: #d9efd4;    /* 主色浅底 hover:比 --accent-l 深一档,按钮/菜单项 hover 专用 */
-   --accent-b: #bfe3c6;
-   --ink: #131720;         /* 墨色实心按钮(发送/新建/确认) */
-   --ink-h: #232a38;
-   --ink-fg: #f2f5f9;
-   --blue-l: #eaf1fc;
-   --blue-t: #1b5fb0;      /* AAA:info 蓝(Qoder info #3B81E9 压深) */
+   --surface2: #f4f4f5;    /* 次级面板:工具卡/@ 选择器头部 */
+   --surface-a: rgba(255,255,255,.88);
+   --card-a: #fafafa;      /* 会话列表卡片底色:比纯白沉一档 */
+   --side-inset: 12px;     /* 侧栏里新建按钮/会话卡片共用的左右内缩 */
+   --side: #fafafa;        /* 侧边栏:近白,靠发丝线分隔 */
+   --side-a: #fafafa;
+   --glow1: transparent;   /* 纯白风不用光晕;保留变量名兼容旧规则 */
+   --glow2: transparent;
+   /* 边框:alpha 阶梯,叠在任何底色上都自动协调 */
+   --border: rgba(24,24,27,.09);
+   --border2: rgba(24,24,27,.17);
+   --text: #1a1a20;        /* 主字 */
+   --text2: #52525c;       /* 次级 */
+   --text3: #71717c;       /* 小字(时间戳/提示) */
+   --title: #101014;       /* 高强调标题 */
+   --title2: #2e2e36;      /* 次级小标题/工具名 */
+   /* 强调:一点蓝只给链接/焦点/状态;主按钮一律墨色 */
+   --accent: #2f6fd6;
+   --accent-btn: #2f6fd6;
+   --accent-btn-h: #265cbc;
+   --accent-t: #285fbf;    /* 主色文字 */
+   --ok-dot: #16a34a;      /* 状态"完成"圆点 */
+   --accent-l: #eff4fe;    /* 主色极浅底 */
+   --accent-h: #dbe7fc;    /* 主色浅底 hover */
+   --accent-b: #c3d7f7;
+   --ink: #1b1b20;         /* 墨色实心按钮(发送/新建/确认) */
+   --ink-h: #2c2c34;
+   --ink-fg: #ffffff;
+   --blue-l: #eff4fe;
+   --blue-t: #1b5fb0;
    --blue-btn: #1b5fb0;
-   --amber: #b46b0a;
-   --amber-t: #713f12;    /* 谨慎模式文字(AAA) */
-   --amber-l: #fdf3e0;    /* 谨慎模式底色 */
-   --amber-h: #b46b0a;
+   --amber: #b45309;
+   --amber-t: #7c4a03;
+   --amber-l: #fdf3e3;
+   --amber-h: #b45309;
    --amber-btn: #854f0b;
    --red: #d5493f;
-   --red-t: #8c1f1a;      /* 错误文字(AAA) */
+   --red-t: #8c1f1a;
    --red-l: #fdf0ef;
    --red-b: #f0c4c0;
    --red-btn: #8c1f1a;
-   --ghost-bg: #e7edf4;          /* 幽灵按钮底(+) */
-   --ghost-bg-h: #dce4ee;
-   --ghost-fg: #39404d;
-   --ghost-fg-h: #131720;
-   /* 列表/菜单项 hover:同族中性叠色(亮 6%/10%,对应 DSH interactive-bg-hover) */
-   --hover: rgba(42,64,96,.07);
-   --hover-2: rgba(42,64,96,.05);  /* 选中项:再深会吃掉次级文字对比 */
-   --track: #d4dce8;        /* 思考强度滑条未填充段 */
-   --code-bg: #16181a;      /* 代码块:亮色下也用深色卡(Qoder/DSH 一致) */
-   --code-fg: #e6ebe6;
-   --mask: rgba(16,22,32,.42);
-   --sh1: rgba(20,28,40,.035);   /* 分层主要交给发丝描边,投影只留 3~5% */
-   --sh2: rgba(20,28,40,.05);
-   --sh3: rgba(20,28,40,.07);
-   --sh4: rgba(20,28,40,.10);
-   --sh5: rgba(0,0,0,.22);
-   --scroll: #ccd7e3;
-   --scroll-h: #93a3b6;
-   /* 焦点环:绿色高饱和只在这里 + 链接 + 发送钮上出现 */
-   --ring: rgba(46,125,79,.30);
-   --ring-soft: rgba(46,125,79,.14);
-   --grad: linear-gradient(180deg, #1c1c1a, #101010);
-   --grad-h: linear-gradient(180deg, #2f302c, #1d1d1b);
-   --grad-text: linear-gradient(96deg, #1f5138 0%, #2e7d4f 46%, #4b8f6a 100%);
-   --hairline: rgba(255,255,255,.55);   /* 面板顶部 1px 高光 */
+   --ghost-bg: #f4f4f5;    /* 幽灵按钮底(＋) */
+   --ghost-bg-h: #e7e7ea;
+   --ghost-fg: #3f3f46;
+   --ghost-fg-h: #18181b;
+   /* 列表/菜单项 hover:同族中性叠色 */
+   --hover: rgba(24,24,27,.055);
+   --hover-2: rgba(24,24,27,.09);
+   --track: #e4e4e7;        /* 滑条未填充段 */
+   --code-bg: #17171a;      /* 代码块:亮色下也用深色卡 */
+   --code-fg: #e6e6e8;
+   --mask: rgba(18,18,22,.45);
+   --sh1: rgba(18,18,22,.04);
+   --sh2: rgba(18,18,22,.06);
+   --sh3: rgba(18,18,22,.08);
+   --sh4: rgba(18,18,22,.11);
+   --sh5: rgba(0,0,0,.24);
+   --scroll: #d4d4d8;
+   --scroll-h: #a1a1aa;
+   --ring: rgba(47,111,214,.32);
+   --ring-soft: rgba(47,111,214,.14);
+   --grad: linear-gradient(180deg, #22222a, #141418);
+   --grad-h: linear-gradient(180deg, #33333c, #222228);
+   --hairline: rgba(255,255,255,.7);   /* 面板顶部 1px 高光 */
    --dur: .12s;
    --ease: cubic-bezier(.4,0,.2,1);
-   /* 圆角阶梯(DSH 4/8/12/16/20/28 的本地化,支持引擎下走 superellipse) */
-   --r-xs: 6px;    /* 小徽标/行内按钮 */
-   --r-sm: 8px;    /* 输入框/普通按钮/列表项 */
-   --r-md: 12px;   /* 下拉/浮层/卡片 */
-   --r-lg: 16px;   /* 弹窗/@ 选择器 */
-   --r-xl: 20px;   /* 输入卡片 */
+   /* 圆角阶梯 */
+   --r-xs: 6px;
+   --r-sm: 8px;
+   --r-md: 12px;
+   --r-lg: 16px;
+   --r-xl: 18px;
    /* 聊天风格统一变量 */
    --ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei",
          "PingFang SC", "Noto Sans CJK SC", sans-serif;
    --mono: "JetBrains Mono", "JetBrainsMono Nerd Font", "Cascadia Mono", "Cascadia Code",
            Consolas, ui-monospace, monospace;
-   --msg-avatar: 30px;
+   --msg-avatar: 28px;
    --msg-gap: 10px;
-   --msg-radius: 18px;   /* 扁空气泡:DSH radius-xl(20) 略收 */
-   --msg-text: 14px;
-   --pad-x: 22px;
+   --msg-radius: 16px;
+   --msg-text: 14.5px;
+   --pad-x: 20px;
    --gap-msg: 12px;
    --lh-text: 1.7;
-   --aside-w: 280px;     /* 侧栏宽度(DSH 默认 280) */
+   --aside-w: 264px;     /* 侧栏宽度 */
    --head-h: 44px;
-   /* 内容宽度主轴:消息列/输入卡共用同一根脊柱(DSH --dsh-chat-content-width) */
-   --col-w: clamp(680px, 88%, 940px);
- }
- /* ---------- 深色主题(html[data-theme=dark] 覆盖,由 JS 按 浅色/深色/随系统 设置) ---------- */
- /* Qoder 暗色:暖黑 #090A0B → 面板 #171716 → 抬升 #1A1A17,边框带橄榄相,
-    几乎不用投影,靠"每层 +2~3 亮度 + 发丝描边"分层;主色绿 #6AD86C 只点关键处。 */
- html[data-theme="dark"] {
-   color-scheme: dark;
-   --edge: #000000;
-   --bg: #0b0b0a;
-   --surface: #171716;
-   --surface2: #1f1f1d;
-    --surface-a: rgba(23,23,22,.80);
-    --card-a: rgba(23,23,22,.66);      /* 会话列表卡片:暗色下同样比 --surface-a 透一档 */
-   --side: #131312;
-   --side-a: rgba(19,19,18,.86);
-   --glow1: rgba(106,216,108,.05);
-   --glow2: rgba(90,110,95,.04);
-   --border: rgba(236,232,220,.075);
-   --border2: rgba(236,232,220,.15);
-   --text: #eeeeeb;
-   --text2: #c7c8c2;  /* AAA: ≥10:1 */
-   --text3: #b3b4ae;  /* 小字 ≥8.6:1 */
-   --title: #f7f7f4;
-   --title2: #dadcD5;
-   --accent: #6ad86c;    /* Qoder 暗色 primary(对暗底 ≥7:1) */
-   --accent-btn: #3d8c66;/* Qoder 暗色 CTA(白字 4.9:1,13px/600 达标) */
-   --accent-btn-h: #4aa377;/* hover */
-   --accent-t: #a0eb9d;  /* 主色文字(AAA ≥9:1) */
-   --ok-dot: #4ed17e;
-    --accent-l: rgba(106,216,108,.13);
-    --accent-h: rgba(106,216,108,.24);  /* hover:比 --accent-l 深一档 */
-   --accent-b: rgba(106,216,108,.42);
-   --ink: #f2f2ef;       /* 暗色下的主按钮 = 近白墨色 + 深色字(DSH 配方) */
-   --ink-h: #ffffff;
-   --ink-fg: #101110;
-   --blue-l: rgba(77,127,226,.14);
-   --blue-t: #9dc0ff;     /* AAA */
-   --blue-btn: #2f62d8;
-   --amber: #e5b357;
-   --amber-t: #f6e0b0;
-   --amber-l: rgba(229,179,87,.12);
-   --amber-h: #e5b357;
-   --amber-btn: #7a4c07;
-   --red: #f0605a;
-   --red-t: #ffd2cf;
-   --red-l: rgba(219,101,92,.13);
-   --red-b: rgba(219,101,92,.42);
-   --red-btn: #a3272c;
-   --ghost-bg: #212120;
-   --ghost-bg-h: #2b2b29;
-   --ghost-fg: #c2c3bd;
-   --ghost-fg-h: #e9e9e5;
-   --hover: rgba(255,255,255,.07);
-   --hover-2: rgba(255,255,255,.05);
-   --track: #2c2c2a;
-   --code-bg: #0a0a09;
-   --code-fg: #dfe5df;
-   --mask: rgba(0,0,0,.62);
-   --sh1: rgba(0,0,0,.36);
-   --sh2: rgba(0,0,0,.44);
-   --sh3: rgba(0,0,0,.48);
-   --sh4: rgba(0,0,0,.54);
-   --sh5: rgba(0,0,0,.72);
-   --scroll: #2b2b29;
-   --scroll-h: #4a4a46;
-   --ring: rgba(106,216,108,.36);
-   --ring-soft: rgba(106,216,108,.18);
-   --grad: linear-gradient(180deg, #f4f4f1, #e2e2de);
-   --grad-h: linear-gradient(180deg, #ffffff, #ececea);
-   --grad-text: linear-gradient(96deg, #a0eb9d 0%, #6ad86c 48%, #7fd0b0 100%);
-   --hairline: rgba(255,255,255,.05);
- }
+   /* 内容宽度主轴:消息列/输入卡共用同一根脊柱 */
+   --col-w: clamp(620px, 92%, 880px);
+  }
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --edge: #000000;
+    --bg: #101013;
+    --surface: #17171b;
+    --surface2: #1f1f24;
+    --surface-a: rgba(23,23,27,.86);
+    --card-a: #131316;
+    --side: #121215;
+    --side-a: #121215;
+    --glow1: transparent;
+    --glow2: transparent;
+    --border: rgba(255,255,255,.09);
+    --border2: rgba(255,255,255,.17);
+    --text: #ececf1;
+    --text2: #b9b9c2;
+    --text3: #94949e;
+    --title: #f4f4f6;
+    --title2: #d6d6dd;
+    --accent: #6aa6ff;
+    --accent-btn: #3b74d8;
+    --accent-btn-h: #4d84e2;
+    --accent-t: #9cc3ff;
+    --ok-dot: #4ade80;
+    --accent-l: rgba(106,166,255,.13);
+    --accent-h: rgba(106,166,255,.24);
+    --accent-b: rgba(106,166,255,.42);
+    --ink: #ececf1;       /* 暗色下的主按钮 = 近白墨色 + 深色字 */
+    --ink-h: #ffffff;
+    --ink-fg: #121216;
+    --blue-l: rgba(106,166,255,.13);
+    --blue-t: #a7c7ff;
+    --blue-btn: #2f62d8;
+    --amber: #e5b357;
+    --amber-t: #f6e0b0;
+    --amber-l: rgba(229,179,87,.13);
+    --amber-h: #e5b357;
+    --amber-btn: #7a4c07;
+    --red: #f0605a;
+    --red-t: #ffd2cf;
+    --red-l: rgba(219,101,92,.14);
+    --red-b: rgba(219,101,92,.42);
+    --red-btn: #a3272c;
+    --ghost-bg: #212126;
+    --ghost-bg-h: #2a2a30;
+    --ghost-fg: #c3c3cc;
+    --ghost-fg-h: #e9e9ee;
+    --hover: rgba(255,255,255,.06);
+    --hover-2: rgba(255,255,255,.09);
+    --track: #2a2a30;
+    --code-bg: #0b0b0d;
+    --code-fg: #dfe2df;
+    --mask: rgba(0,0,0,.62);
+    --sh1: rgba(0,0,0,.36);
+    --sh2: rgba(0,0,0,.44);
+    --sh3: rgba(0,0,0,.48);
+    --sh4: rgba(0,0,0,.54);
+    --sh5: rgba(0,0,0,.72);
+    --scroll: #2a2a30;
+    --scroll-h: #4a4a52;
+    --ring: rgba(106,166,255,.4);
+    --ring-soft: rgba(106,166,255,.18);
+    --grad: linear-gradient(180deg, #f4f4f1, #e2e2de);
+    --grad-h: linear-gradient(180deg, #ffffff, #ececea);
+    --hairline: rgba(255,255,255,.05);
+  }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 /* 滚动条:跟随主题。mac 式细滚动条——轨道透明、滑块靠内缩变细、hover 才变亮 */
 * { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
@@ -221,7 +198,7 @@ header {
   padding: 9px 16px; z-index: 10;
 }
 .logo { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: .01em; }
-.logo span { color: var(--accent-t); }
+.logo span { color: inherit; }
 .pill {
   font-size: 12px; color: var(--text2); background: var(--bg);
   border: 1px solid var(--border); border-radius: 999px; padding: 3px 11px;
@@ -413,8 +390,8 @@ aside {
 }
 .m-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .m-tag { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 2px 9px; }
-.m-tag.user { background: var(--accent-l); color: var(--accent-t); }
-.m-tag.ai { background: var(--blue-l); color: var(--blue-t); }
+.m-tag.user { background: var(--hover); color: var(--text); }
+.m-tag.ai { background: var(--hover); color: var(--text); }
 .m-text { font-size: var(--msg-text); line-height: var(--lh-text); white-space: pre-wrap; word-break: break-word; color: var(--text); }
 /* 用户气泡:主色极浅底 + 主色描边,圆角胶囊感(参考图右侧那颗) */
 .msg.user .m-card { background: var(--accent-l); border-color: var(--accent-b); padding: 8px 12px; }
@@ -678,11 +655,11 @@ details.m-think[open] summary { margin-bottom: 6px; }
 }
 .token-usage { font-variant-numeric: tabular-nums; }
 .token-usage.warn { color: var(--amber-t); font-weight: 600; }
-#cache-hit { color: var(--accent-t); }
+#cache-hit { color: var(--text2); }
 #cache-hit.nohit { color: var(--text3); }
 /* 输出速度:生成中为字符增量实时估算(≈),任务停止后保留最后一次值
    (最后一次 LLM 调用的实测均值,由后端持久化在会话中) */
-#output-speed { color: var(--blue-t); }
+#output-speed { color: var(--text2); }
 .foot-hint { /* AAA: 不再用 opacity 降低小字对比度 */ cursor: pointer; padding: 2px 6px; margin-left: -6px; border-radius: 4px; user-select: none; }
 .foot-hint:hover { color: var(--accent-t); background: var(--accent-l); }
 .compact-btn {
@@ -846,13 +823,13 @@ details.m-think[open] summary { margin-bottom: 6px; }
   -webkit-appearance: none; appearance: none;
   width: 100%; height: 8px; border-radius: 999px; outline: none; cursor: pointer; margin: 0;
   background: linear-gradient(90deg,
-    var(--accent, #2e7d4f) 0%, var(--accent, #2e7d4f) var(--tp-pct, 0%),
+    var(--accent, #4180e0) 0%, var(--accent, #4180e0) var(--tp-pct, 0%),
     var(--track, #e2e8f0) var(--tp-pct, 0%), var(--track, #e2e8f0) 100%);
 }
 .think-pop input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
   width: 18px; height: 18px; border-radius: 50%;
-  background: var(--surface); border: 2px solid var(--accent, #2e7d4f);
+  background: var(--surface); border: 2px solid var(--accent, #4180e0);
   box-shadow: 0 1px 5px rgba(15,23,42,.28);
   transition: transform .12s ease, box-shadow .12s ease;
 }
@@ -862,7 +839,7 @@ details.m-think[open] summary { margin-bottom: 6px; }
 }
 .think-pop input[type=range]::-moz-range-thumb {
   width: 16px; height: 16px; border-radius: 50%; background: var(--surface);
-  border: 2px solid var(--accent, #2e7d4f); box-shadow: 0 1px 5px rgba(15,23,42,.28);
+  border: 2px solid var(--accent, #4180e0); box-shadow: 0 1px 5px rgba(15,23,42,.28);
 }
 .think-pop .tp-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--text3); margin: 8px 0 0; padding: 0 1px; }
 .think-pop .tp-scale span { flex: 1; text-align: center; }
@@ -1001,12 +978,6 @@ details.m-think[open] summary { margin-bottom: 6px; }
 }
 .mode-btn:hover { border-color: var(--accent); color: var(--accent-t); }
 .mode-btn.cautious { border-color: var(--amber); color: var(--amber-t); background: var(--amber-l); }
-.ctx-toggle {
-  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
-  font-size: 11px; color: var(--text2); user-select: none; white-space: nowrap;
-}
-.ctx-toggle input { margin: 0; cursor: pointer; }
-.ctx-toggle.off { color: var(--text3); }
 .mode-btn.cautious:hover { border-color: var(--amber-h); }
 
 /* ---------- 审批 ---------- */
@@ -1220,5 +1191,5 @@ details.m-think[open] summary { margin-bottom: 6px; }
   color: var(--text3);
 }
  
-/* �Ự��Ŀ¼β����:����ͬ��ʵ�� */ 
+/* 会话卡目录尾段行:区分同名实例 */ 
 .sess-path { font-size: 10.5px; color: var(--text3); opacity: .75; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

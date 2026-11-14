@@ -6,7 +6,7 @@ import { h } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import htm from "htm";
 
-import { AgentAvatar, UserAvatar } from "../lib/avatars.js";
+import { AgentAvatar } from "../lib/avatars.js";
 import { memo } from "../lib/memo.js";
 import { mdToHtml } from "../lib/markdown.js";
 import { noticeOf } from "../lib/transcript.js";
@@ -36,10 +36,10 @@ function NoticeLine({ notice, text }) {
 function UserMessage({ row }) {
   const text = String(row.text || "");
   const images = row.images || [];
+  // 样图:用户气泡 = 右对齐浅灰圆角块,没有头像、没有「你」标签
+  // (头像入口按用户要求整体去掉,设置里仍能换头像)。
   return html`<div class="msg user">
-    <${UserAvatar} cls="c-avatar" />
     <div class="m-card">
-      <div class="m-head"><span class="m-tag user">你</span></div>
       ${text ? html`<div class="m-text">${text}</div>` : null}
       ${images.length ? html`<div class="msg-imgs">
         ${images.map((u, i) => html`<img key=${i} src=${u} alt="截图" title="点击放大" />`)}
@@ -128,7 +128,7 @@ export function PendingMessage() {
 export function Placeholder() {
   const current = useStore((s) => s.current);
   return html`<div class="placeholder" id="placeholder">
-    <div class="big">💬</div>
-    <p>${current ? "这个会话还没有消息" : "发送消息开始对话,新会话将自动创建"}</p>
+    <div class="big">M</div>
+    <p>${current ? "这个会话还没有消息" : "发一条消息开始对话 — 新会话会自动创建"}</p>
   </div>`;
 }

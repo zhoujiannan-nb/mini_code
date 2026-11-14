@@ -8,12 +8,16 @@ import "./bootanim-player.js";
 import { h, render } from "preact";
 import { App } from "./components/App.js";
 import { applyTheme, initThemeListener, readThemeMode } from "./lib/theme.js";
+import { initTitlebar } from "./lib/titlebar.js";
 import { setState } from "./lib/store.js";
 
 // 主题:index.html 不再有内联脚本,这里是"首屏前"最早能应用主题的位置。
 applyTheme();
 setState({ themeMode: readThemeMode() });
 initThemeListener();
+
+// 桌面无边框模式:原生标题栏已被壳去掉,自绘顶条要先挂上(web 模式自动跳过)。
+initTitlebar();
 
 const root = document.getElementById("app");
 render(h(App, {}), root);

@@ -174,8 +174,6 @@ export async function selectSession(id) {
       thinking: s.thinking || "",
       reasoningEffort: s.reasoning_effort || "",
       ctxWindow: data.context_window || st.ctxWindow,
-      // 缺省 = 开(与服务端一致)
-      contextReminders: s.context_reminders !== false,
       childrenActive: !!s.children_active,
       running: !!s.active,
       tokens: data.tokens || 0,
@@ -426,7 +424,6 @@ export async function send(text, images) {
   else {
     body.mode = st.mode;   // 新会话:按当前选择的权限模式创建
     body.model = st.model; // 新会话:按当前选择的模型创建
-    body.context_reminders = st.contextReminders; // 新会话:按当前开关创建
     body.thinking = st.thinking || "";               // 新会话:思考开关(空 = 模型默认)
     body.reasoning_effort = st.reasoningEffort || ""; // 新会话:思考深度(空 = 模型默认)
     // 新会话:侧边栏选中了哪个区就建在哪个区。
@@ -516,23 +513,6 @@ export async function toggleMode() {
     setState({ mode: r.mode });
     toast(next === "cautious" ? "已切换为谨慎模式:危险操作将请求审批" : "已切换为完整模式:直接执行", "ok");
   } catch (e) { toast("切换模式失败:" + e.message, "err"); }
-}
-
-export async function toggleContextReminders(enabled) {
-  setState({ contextReminders: !!enabled });
-  const state = getState();
-  if (!state.current) return; // 新会话:仅记录偏好,创建会话时随消息带上
-  try {
-    await api(ROUTES.reminders(state.current), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: !!enabled }),
-    });
-    toast(enabled ? "上下文占用提醒已开启" : "上下文占用提醒已关闭", "ok");
-  } catch (e) {
-    toast("切换失败:" + e.message, "err");
-    setState({ contextReminders: !enabled });
-  }
 }
 
 export async function pickModel(name) {

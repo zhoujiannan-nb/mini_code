@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -310,58 +311,72 @@ func TestInputBudgetFraction(t *testing.T) {
 	}
 }
 
-// TestUsageReminderStagesFollowTheInputBudget: notices at 80% and 85% of the usable
-// input budget, each announced once, quoting that budget and the absolute
-// compaction point — the same denominator the loop acts on.
-func TestUsageReminderStagesFollowTheInputBudget(t *testing.T) {
-	client, err := provider.NewModelClient(config.ModelConfig{
-		Provider: "vllm", BaseURL: "http://127.0.0.1:1", APIKey: "t",
-		ModelName: "test-model", MaxTokens: 1000, ContextWindow: 100_000,
-	})
-	if err != nil {
-		t.Fatalf("NewModelClient: %v", err)
-	}
+// TestUsageReminderInjectionRemoved: the 80%/85% context-usage notices were removed
+// — they told the model to call compact_context, a tool that is not registered,
+// while the loop compacts on its own at 90% of the usable input budget. So even
+// with the context far past the old first stage, a turn must append no notice:
+// the model sees the conversation and nothing else. The automatic-compaction path
+// (compactionOn) is off here, so a surviving injection would be the only thing
+// that could add a message.
+func TestUsageReminderInjectionRemoved(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeSSEChunk(w, `{"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}`)
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	loop, client := newTestLoop(t, srv.URL)
 	defer client.Close()
-	loop := NewAgentLoop(client, 5, nil, nil, nil, nil, nil, nil)
-
-	budget := client.GetMaxInput() // 100000 - 1000 - 2048
-	limit1 := InputBudgetFraction(budget, usageNoticeStage1)
-	limit2 := InputBudgetFraction(budget, usageNoticeStage2)
-	compactAt := InputBudgetFraction(budget, compactInputFraction)
-	if !(0 < limit1 && limit1 < limit2 && limit2 < compactAt && compactAt <= budget) {
-		t.Fatalf("stages must ascend inside the budget: %d < %d < %d <= %d", limit1, limit2, compactAt, budget)
+	// The old first stage of this model's usable input budget, cleared on purpose.
+	// Built in blocks: re-tokenizing a message that grows one sentence at a time
+	// would cost more than the turn it exists to test.
+	stage1 := InputBudgetFraction(loop.inputBudget(), 0.80)
+	block := strings.Repeat("filler sentence about the ongoing work. ", 50)
+	history := []provider.Message{{Role: "user", Content: block}}
+	cost := countTokens(history[0])
+	if cost <= 0 {
+		t.Fatalf("the filler block should cost tokens, got %d", cost)
+	}
+	history[0].Content = strings.Repeat(block, stage1/cost+2)
+	if got := countTokens(history[0]); got < stage1 {
+		t.Fatalf("the history must clear the old first stage: %d tokens of a %d budget", got, loop.inputBudget())
 	}
 
-	base := []provider.Message{{Role: "system", Content: "SYSTEM"}}
-	if got := loop.maybeInjectUsageReminder(base, limit1-1); len(got) != len(base) {
-		t.Fatalf("below the first stage a notice was injected: %d messages", len(got))
+	res, err := loop.Run(context.Background(), "SYSTEM", "continue", history)
+	if err != nil || res == nil || !res.Success {
+		t.Fatalf("Run: err=%v success=%v", err, res != nil && res.Success)
 	}
-	one := loop.maybeInjectUsageReminder(base, limit1)
-	if len(one) != len(base)+1 || !strings.Contains(one[len(base)].GetText(), usageNoticeMarker(usageNoticeStage1Pct)) {
-		t.Fatalf("the %d%% stage was not announced: %d messages", usageNoticeStage1Pct, len(one))
+	for _, m := range res.Messages {
+		if IsUsageNotice(m) {
+			t.Fatalf("a context-usage notice was still injected: %q", firstN(m.GetText(), 120))
+		}
 	}
-	text := one[len(base)].GetText()
-	if !strings.Contains(text, fmt.Sprintf("%d tokens", budget)) ||
-		!strings.Contains(text, fmt.Sprintf("compacts automatically at %d", compactAt)) {
-		t.Fatalf("notice does not quote the budget and the compaction point: %q", text)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) == 0 {
+		t.Fatal("the model was never called, so the request was never checked")
 	}
-	// Still stage 1 → the marker dedup keeps the context untouched (prefix cache).
-	if again := loop.maybeInjectUsageReminder(one, limit2-1); len(again) != len(one) {
-		t.Fatalf("stage announced twice: %d vs %d messages", len(again), len(one))
-	}
-	two := loop.maybeInjectUsageReminder(one, limit2)
-	if len(two) != len(one)+1 || !strings.Contains(two[len(two)-1].GetText(), usageNoticeMarker(usageNoticeStage2Pct)) {
-		t.Fatalf("the %d%% stage was not announced: %d messages", usageNoticeStage2Pct, len(two))
-	}
-	if after := loop.maybeInjectUsageReminder(two, budget); len(after) != len(two) {
-		t.Fatal("both stages announced and it still injects")
+	for _, b := range bodies {
+		if strings.Contains(b, usageNoticeMarkerPrefix) {
+			t.Fatalf("the request still carries a usage notice: %s", firstN(b, 200))
+		}
 	}
 }
 
 // A model with no configured context window used to have no budget at all: every
-// threshold evaluated to "never", so reminders and automatic compaction were
-// silently dead until the provider rejected a request. The loop now assumes a
-// conservative budget instead, which keeps both alive (and warns once).
+// threshold evaluated to "never", so automatic compaction was silently dead until
+// the provider rejected a request. The loop now assumes a conservative budget
+// instead, which keeps it alive (and warns once).
 func TestUnknownWindowFallsBackToConservativeBudget(t *testing.T) {
 	client, err := provider.NewModelClient(config.ModelConfig{
 		Provider: "vllm", BaseURL: "http://127.0.0.1:1", APIKey: "t",
@@ -382,12 +397,4 @@ func TestUnknownWindowFallsBackToConservativeBudget(t *testing.T) {
 	if limit := loop.autoCompactLimit(); limit <= 0 {
 		t.Fatalf("auto-compaction limit = %d with an unknown window, want > 0", limit)
 	}
-	// And the reminder stages must be reachable.
-	base := []provider.Message{{Role: "system", Content: "SYSTEM"}}
-	limit := InputBudgetFraction(loop.inputBudget(), usageNoticeStage1)
-	got := loop.maybeInjectUsageReminder(base, limit+1)
-	if len(got) != len(base)+1 {
-		t.Fatalf("no reminder above the first stage with a fallback budget: %d messages", len(got))
-	}
 }
-

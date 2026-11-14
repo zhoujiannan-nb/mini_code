@@ -1,13 +1,18 @@
-// worker 下拉(切换)。菜单必须挂在 body 层:aside 带 backdrop-filter,会把自己
+// worker 弹层(「历史会话」行尾的漏斗)。承担两件事:
+//   ① 切换列表按哪个工作区分流;② 当前工作区的管理动作(公约/摘要/改名/删除/新建)。
+// 菜单必须挂在 body 层:aside 带 backdrop-filter,会把自己
 // 变成后代 position:fixed 的包含块 —— 放在侧栏里就会被侧栏右缘剪掉。
 // App 把它渲染成 <aside> 的兄弟节点,这个文件只负责内容与视口夹紧。
 import { h } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
 import htm from "htm";
 
-import { useStore } from "../lib/store.js";
+import { useStore, setState } from "../lib/store.js";
 import { getState } from "../lib/store.js";
-import { switchWorker, workerBuckets, workerBucketId } from "../lib/actions.js";
+import {
+  switchWorker, workerBuckets, workerBucketId, createWorker,
+  openNoteEditor, editSummary, renameWorker, deleteWorker,
+} from "../lib/actions.js";
 
 const html = htm.bind(h);
 
@@ -35,7 +40,6 @@ export function wkDot(b) {
 }
 
 // 摆放下拉:按视口夹一次上下左右,并把上缘的尖角挪回锚点下方。
-// (名字沿用旧实现,行为不变:窄窗口、贴近屏幕底部时都不会被切。)
 export function placeWorkerMenu(menu, anchor) {
   const r = anchor && anchor.getBoundingClientRect
     ? anchor.getBoundingClientRect()
@@ -49,9 +53,14 @@ export function placeWorkerMenu(menu, anchor) {
   menu.style.setProperty("--wk-arrow-x", Math.max(20, Math.min(tip, Math.max(20, w - 32))) + "px");
 }
 
-// openWorkerMenu 生成菜单内容(名字/状态点/数量/勾)。由 WorkerMenu 在渲染时调用。
-// 条上已经写着 worker | 其他 · 3,菜单里不再重复一行"切换 Worker"小标题。
-export function openWorkerMenu(anchor) {
+// 当前分桶对应的 worker 记录(「其他」是服务端常驻的保留档,也有记录)。
+function currentBucket() {
+  const id = workerBucketId();
+  return (getState().workers || []).find((x) => x.worker_id === id) || null;
+}
+
+// 分区列表:点一行就把会话列表切到那个桶。
+function bucketList() {
   const id = workerBucketId();
   return workerBuckets().map((w) => {
     const cur = w.worker_id === id;
@@ -67,6 +76,33 @@ export function openWorkerMenu(anchor) {
   });
 }
 
+// 当前分区的动作行:公约 / 摘要 / 名称 / 删除。保留档「其他」没有目录,
+// 只有公约可改,改名与删除不参与。
+function bucketActions(w) {
+  if (!w) return null;
+  return html`<div class="wk-menu-actions">
+    <button class="wk-act" title="查看/编辑公约(共享给这个工作区的全部会话)"
+      onClick=${() => { setState({ workerMenuOpen: false }); openNoteEditor(w.worker_id); }}>📄 公约</button>
+    <button class="wk-act" title="改写摘要(新会话靠它决定加入哪个工作区)"
+      onClick=${() => { setState({ workerMenuOpen: false }); editSummary(w.worker_id); }}>✎ 摘要</button>
+    ${w.reserved ? null : html`<button class="wk-act" title="改名(只改名字:目录不动,会话里的路径不受影响)"
+      onClick=${() => { setState({ workerMenuOpen: false }); renameWorker(w.worker_id); }}>✎ 名称</button>`}
+    ${w.reserved ? null : html`<button class="wk-act wk-act-danger" title="删除工作区及其全部会话(需手打确认语;目录保留)"
+      onClick=${() => { setState({ workerMenuOpen: false }); deleteWorker(w.worker_id); }}>🗑</button>`}
+  </div>`;
+}
+
+// 菜单内容:分区列表 + 当前分区动作 + 新建入口。
+export function openWorkerMenu() {
+  const w = currentBucket();
+  return html`<div class="wk-menu-body">${bucketList()}</div>
+    ${bucketActions(w)}
+    <button class="wk-menu-add" id="btn-new-worker" title="新建工作区(共享目录 + 公约)"
+      onClick=${() => { setState({ workerMenuOpen: false }); createWorker(); }}>
+      ＋ 新建工作区
+    </button>`;
+}
+
 export function WorkerMenu() {
   const open = useStore((s) => s.workerMenuOpen);
   const anchor = useStore((s) => s.workerMenuAnchor);
@@ -76,6 +112,6 @@ export function WorkerMenu() {
   }, [open, anchor]);
   if (!open) return html`<div class="worker-menu" id="worker-menu"></div>`;
   return html`<div class="worker-menu open" id="worker-menu" ref=${ref}>
-    ${openWorkerMenu(anchor)}
+    ${openWorkerMenu()}
   </div>`;
 }

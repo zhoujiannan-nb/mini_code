@@ -75,7 +75,6 @@ function sessionA(extra) {
     model: "m1",
     work_dir: WORKDIR,
     worker_id: "w-other",
-    context_reminders: true,
     updated_at: new Date(Date.now() - 60000).toISOString(),
     message_count: 2,
     jobs_running: 0,

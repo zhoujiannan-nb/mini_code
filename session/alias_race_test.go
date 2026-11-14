@@ -78,10 +78,6 @@ func TestQueueDuringRunningTaskNoCorruption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSessionRecord: %v", err)
 	}
-	// This test pins the EXACT message sequence, so the context-usage notices
-	// (threshold-dependent extra user messages) are turned off: they are
-	// orthogonal to the aliasing bug under test.
-	sess.SetContextRemindersEnabled(false)
 
 	type promptResult struct {
 		content string

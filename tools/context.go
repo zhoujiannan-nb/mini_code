@@ -86,7 +86,7 @@ func NewContextUsageTool(state *ContextState) *ContextUsageTool {
 
 func (t *ContextUsageTool) Name() string { return "context_usage" }
 func (t *ContextUsageTool) Description() string {
-	return "Query the current context (token) usage of this session: how many tokens the conversation is using, the max input budget, and the percentage. Use it to decide whether to call compact_context to summarize older work."
+	return "Query the current context (token) usage of this session: how many tokens the conversation is using, the max input budget, and the percentage. Read-only: the session compacts its own context automatically when the window fills."
 }
 func (t *ContextUsageTool) IsHidden() bool { return false }
 func (t *ContextUsageTool) Parameters() map[string]interface{} {
@@ -102,9 +102,9 @@ func (t *ContextUsageTool) Execute(ctx context.Context, params map[string]interf
 	}
 	pct := float64(tokens) / float64(maxInput) * 100
 	if at := t.state.CompactionAt(); at > 0 {
-		return NewTextResult(fmt.Sprintf("Context usage: %d / %d input tokens (%.1f%%). This session compacts automatically at %d tokens; you can call compact_context earlier yourself.", tokens, maxInput, pct, at)), nil
+		return NewTextResult(fmt.Sprintf("Context usage: %d / %d input tokens (%.1f%%). This session will compact automatically once it reaches %d tokens; compact_context is disabled for now.", tokens, maxInput, pct, at)), nil
 	}
-	return NewTextResult(fmt.Sprintf("Context usage: %d / %d input tokens (%.1f%%); you can call compact_context any time to summarize older work.", tokens, maxInput, pct)), nil
+	return NewTextResult(fmt.Sprintf("Context usage: %d / %d input tokens (%.1f%%). No automatic compaction point is known for this session, and compact_context is disabled for now.", tokens, maxInput, pct)), nil
 }
 
 // CompactContextTool lets the model actively request a context compaction,

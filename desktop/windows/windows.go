@@ -211,6 +211,8 @@ func (p *platform) NewWindow(opts desktop.WindowOptions) (desktop.Window, error)
 	// go-webview2 tries the icon itself, but has been observed to end up
 	// with a default icon, so we enforce it.
 	applyWindowIcon(w.Handle())
+	// dsh 式无边框:去原生标题栏,页面自绘顶条(见 js/lib/titlebar.js)。
+	installFrameless(w)
 	return w, nil
 }
 

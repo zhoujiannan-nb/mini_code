@@ -315,7 +315,7 @@ export function Settings() {
       <div class="set-head">
         <h2>配置</h2>
         <button class="set-close" id="btn-settings-close" title="关闭(Esc)" aria-label="关闭"
-          onClick=${closeSettingsPanel}>&#10005;</button>
+          onClick=${closeSettingsPanel}>✕</button>
       </div>
       <div class="set-body">
         <nav class="set-nav" id="set-nav">

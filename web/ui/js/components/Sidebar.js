@@ -1,19 +1,23 @@
-// 侧栏:品牌、新建、worker 切换条 + 子栏(公约/摘要/名称/删除)、会话列表。
+// 侧栏(v2 纯白风):品牌、新建会话(⌘K)、设置入口、历史会话(搜索 + 按工作区分流)。
+//
+// 按样图取舍:不放「工作台 / 插件市场」导航、底部宣传卡与在线状态 —— 这些是
+// 用户明确划掉的东西。worker(工作区)不再占用一条常显的切换条,而是收进
+// 「历史会话」行尾的漏斗弹层里:列表按当前工作区过滤,入口只有一个。
+//
 // 列表的三种状态(加载骨架 / 拉取失败 / 空)都画出来 —— 静默空白会让人以为
 // "会话没了"。
 import { h } from "preact";
-import { useRef } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import htm from "htm";
 
 import { useStore, setState, getState } from "../lib/store.js";
 import { AgentAvatar } from "../lib/avatars.js";
 import { relTime } from "../lib/format.js";
+import { openSettings } from "../lib/settings.js";
 import {
-  workerBuckets, workerBucketId, workerEmptyHint, loadSessions,
   selectSession, renameSession, deleteSession, detachWorkerForNewSession, resetToNew,
-  createWorker, editSummary, renameWorker, deleteWorker, openNoteEditor,
+  workerEmptyHint,
 } from "../lib/actions.js";
-import { WorkerMenu } from "./WorkerMenu.js";
 
 const html = htm.bind(h);
 
@@ -24,26 +28,6 @@ export function sessSkeleton() {
       <div class="sk sk-title"></div><div class="sk sk-meta"></div>
     </div>`)}
   </div>`;
-}
-
-// worker 子栏:📄 公约 / ✎ 摘要 / ✎ 名称 / 🗑。
-// 「＋ 会话」小按钮已删:顶部「＋ 新建会话」就落在当前区,语义完全重复。
-export function paintWorkerBar() {
-  const list = getState().workers;
-  const id = workerBucketId();
-  const w = (list || []).find((x) => x.worker_id === id);
-  // 查不到 worker(服务端过旧 / 刚被删)时没有共享目录,子栏整行留空。
-  if (!w || (!w.work_dir && !w.reserved)) return null;
-  return html`<span>
-    <button class="wk-sub-btn" id="wk-note-btn" title="查看/编辑公约(共享给这个 worker 的全部会话)"
-      onClick=${() => openNoteEditor(w.worker_id)}>📄 公约</button>
-    <button class="wk-sub-btn" id="wk-summary-btn" title="改写摘要(新会话靠它决定加入哪个 worker)"
-      onClick=${() => editSummary(w.worker_id)}>✎ 摘要</button>
-    ${w.reserved ? null : html`<button class="wk-sub-btn" id="wk-rename-btn" title="改名(只改名字:目录不动,会话里的路径不受影响)"
-      onClick=${() => renameWorker(w.worker_id)}>✎ 名称</button>`}
-    ${w.reserved ? null : html`<button class="wk-sub-btn wk-sub-danger" id="wk-del-btn" title="删除工作区及其全部会话(需手打确认语;目录保留)"
-      onClick=${() => deleteWorker(w.worker_id)}>🗑</button>`}
-  </span>`;
 }
 
 // 目录尾段:取工作目录最后两级,用来区分名字相同的实例
@@ -69,14 +53,14 @@ function SessionItem({ s }) {
     <div class="sess-title-row">
       <${AgentAvatar} cls="sess-ava" tag="span" />
       <div class="sess-title">${s.title || "未命名会话"}</div>
+      <span class="sess-time">${relTime(s.updated_at)}</span>
     </div>
-    ${tailPath(s.work_dir) ? html`<div class="sess-path" title=${s.work_dir}>🗂 ${tailPath(s.work_dir)}</div>` : null}
     <div class="sess-meta">
       <span class=${"s " + dotClass}></span>
       ${s.mode === "cautious" ? html`<span title="谨慎模式">🛡</span>` : null}
       ${statusText ? html`<span>${statusText}</span>` : null}
-      <span>${relTime(s.updated_at)}</span>
-      <span>${s.message_count} 条</span>
+      <span>${s.message_count || 0} 条</span>
+      ${tailPath(s.work_dir) ? html`<span class="sess-path" title=${s.work_dir}>🗂 ${tailPath(s.work_dir)}</span>` : null}
     </div>
     <button class="rename-btn" title="重命名会话"
       onClick=${(e) => { e.stopPropagation(); renameSession(s.session_id, s.title); }}>✎</button>
@@ -85,20 +69,24 @@ function SessionItem({ s }) {
   </div>`;
 }
 
+// 品牌徽标:墨色圆角方块 + M。与 agent 默认头像同一张"脸",
+// 颜色走 --ink,暗色主题自动翻近白,不用写 dark 分支。
+function BrandMark() {
+  return html`<span class="brand-mark" aria-hidden="true">M</span>`;
+}
+
 export function Sidebar() {
   const sessions = useStore((s) => s.sessions);
   const loading = useStore((s) => s.sessionsLoading);
   const error = useStore((s) => s.sessionsError);
-  const workers = useStore((s) => s.workers);
-  const workerId = useStore((s) => s.worker);
+  const menuOpen = useStore((s) => s.workerMenuOpen);
+  const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const pickRef = useRef(null);
+  const searchRef = useRef(null);
 
-  const bucket = (workerId === "" || workerId === "*" || workerId == null) ? "w-other" : workerId;
-  const w = (workers || []).find((x) => x.worker_id === bucket);
-  const wkName = (w ? w.name : (workers || []).find((x) => x.worker_id === bucket)?.name || "未知 worker")
-    + (w && w.sessions ? " · " + w.sessions : "");
-
-  const openMenu = (e) => {
+  // 漏斗 = 按工作区分流(打开 worker 弹层);行尾的放大镜 = 标题搜索。
+  const openFilter = (e) => {
     e.stopPropagation();
     const el = pickRef.current;
     const st = getState();
@@ -106,50 +94,72 @@ export function Sidebar() {
     const r = el ? el.getBoundingClientRect() : { left: 12, bottom: 120, width: 200 };
     setState({ workerMenuOpen: true, workerMenuAnchor: { left: r.left, bottom: r.bottom, width: r.width } });
   };
+  const toggleSearch = () => {
+    setSearchOpen((v) => {
+      if (!v) requestAnimationFrame(() => searchRef.current && searchRef.current.focus());
+      return !v;
+    });
+  };
+
+  const q = query.trim().toLowerCase();
+  const shown = q ? (sessions || []).filter((s) => String(s.title || "").toLowerCase().includes(q)) : (sessions || []);
 
   let list;
   if (loading) list = sessSkeleton();
   else if (error) {
-    list = html`<div class="empty-hint">会话列表没刷出来：${error}<br />30s 轮询会自动重试,切一下 worker 也能立刻重来</div>`;
-  } else if (!sessions.length) {
-    const hint = workerEmptyHint();
-    const [line1, line2] = hint.split("\n");
-    list = html`<div class="empty-hint">${line1}${line2 ? html`<br />${line2}` : null}</div>`;
+    list = html`<div class="empty-hint">会话列表没刷出来：${error}<br />30s 轮询会自动重试,换个工作区也能立刻重来</div>`;
+  } else if (!shown.length) {
+    if (q) list = html`<div class="empty-hint">没有标题含「${query.trim()}」的会话</div>`;
+    else {
+      const hint = workerEmptyHint();
+      const [line1, line2] = hint.split("\n");
+      list = html`<div class="empty-hint">${line1}${line2 ? html`<br />${line2}` : null}</div>`;
+    }
   } else {
-    list = sessions.map((s) => html`<${SessionItem} key=${s.session_id} s=${s} />`);
+    list = shown.map((s) => html`<${SessionItem} key=${s.session_id} s=${s} />`);
   }
 
   return html`<aside>
     <div class="brand">
-      <span class="brand-mark">
-        <svg class="mk" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true">
-          <defs><linearGradient id="mc-mark-g" x1="0" y1="0" x2="1" y2="1">
-            <stop class="s1" offset="0" /><stop class="s2" offset=".55" /><stop class="s3" offset="1" />
-          </linearGradient></defs>
-          <rect x=".6" y=".6" width="30.8" height="30.8" rx="9" fill="url(#mc-mark-g)" />
-          <rect x=".6" y=".6" width="30.8" height="30.8" rx="9" fill="none" stroke="rgba(0,0,0,.22)" />
-          <path d="M9.6 11.4 5.4 16l4.2 4.6" fill="none" stroke="#fff" stroke-opacity=".95" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M18.6 9.8 13.4 22.2" fill="none" stroke="#fff" stroke-opacity=".95" stroke-width="2.1" stroke-linecap="round" />
-          <path d="M22.4 11.4 26.6 16l-4.2 4.6" fill="none" stroke="#fff" stroke-opacity=".95" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-      </span>
-      <div class="logo">Mini <span>Code</span></div>
-      <span class="brand-sub">agent</span>
+      <${BrandMark} />
+      <div class="logo">Mini Code</div>
     </div>
-    <button class="new-btn" id="btn-new" title="新建会话（落在当前选中的工作区；没选过就是「其他」）"
+    <button class="new-btn" id="btn-new" title="新建会话（落在当前选中的工作区;快捷键 Ctrl/⌘+K）"
       onClick=${() => { detachWorkerForNewSession(); resetToNew(); }}>
-      ＋ 新建会话
+      <span class="nb-plus">＋</span><span class="nb-label">新建会话</span><kbd class="nb-kbd">K</kbd>
     </button>
-    <div class="worker-bar" id="worker-bar">
-      <button class="wk-pick" id="wk-pick" title="切换 worker / 查看它的目录与公约"
-        ref=${pickRef} onClick=${openMenu}>
-        <span class="wk-label">worker</span><span class="wk-div"></span>
-        <span class="wk-name" id="wk-name">${wkName}</span><span class="wk-caret">⌄</span>
+    <button class="nav-btn" id="btn-settings" title="打开设置" onClick=${openSettings}>
+      <svg class="nb-ico" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 8.5h8M16.6 8.5H20M4 15.5h3.4M11.6 15.5H20" />
+        <circle cx="14" cy="8.5" r="2.4" /><circle cx="9.6" cy="15.5" r="2.4" />
+      </svg>
+      设置
+    </button>
+    <div class="sess-head">
+      <span class="sh-label">历史会话</span>
+      <span class="sh-count">${(sessions || []).length}</span>
+      <span class="sh-flex"></span>
+      <button class="sh-btn" id="btn-search-toggle" title=${searchOpen ? "收起搜索" : "搜索会话标题"}
+        onClick=${toggleSearch}>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+          stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" />
+        </svg>
       </button>
-      <button class="wk-add" id="btn-new-worker" title="新建 worker(工作大类:共享目录 + 公约)"
-        onClick=${(e) => { e.stopPropagation(); createWorker(); }}>＋</button>
+      <button class=${"sh-btn" + (menuOpen ? " on" : "")} id="btn-wk-filter"
+        ref=${pickRef} title="按工作区分流 / 管理工作区" onClick=${openFilter}>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+          stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 5.5h16l-6.2 7.2v5.3l-3.6-1.8v-3.5Z" />
+        </svg>
+      </button>
     </div>
-    <div class="worker-sub" id="worker-sub">${paintWorkerBar()}</div>
+    ${searchOpen ? html`<div class="sess-search">
+      <input ref=${searchRef} type="text" value=${query} placeholder="搜索会话标题…"
+        onInput=${(e) => setQuery(e.target.value)}
+        onKeyDown=${(e) => { if (e.key === "Escape") { setQuery(""); setSearchOpen(false); } }} />
+      ${query ? html`<button class="ss-clear" title="清空" onClick=${() => setQuery("")}>✕</button>` : null}
+    </div>` : null}
     <div class="sess-list" id="sess-list">${list}</div>
   </aside>`;
 }

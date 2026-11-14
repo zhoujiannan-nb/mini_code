@@ -31,7 +31,6 @@ export const initialState = {
   ctxWindow: 0,
   port: 0,               // /api/status 的 web_port(顶栏状态胶囊)
   workDir: "",
-  contextReminders: true,
   thinking: "",
   reasoningEffort: "",
   running: false,        // 本会话自己有任务在跑(只此项上锁输入框)
@@ -61,6 +60,7 @@ export const initialState = {
   agentAvatar: "",
   toast: null,
   themeMode: "system",
+  railOpen: readRailPref(),   // 右侧「执行摘要」栏:偏好存 localStorage,默认展开
   settingsOpen: false,
   settingsPage: "page-appearance",
   avatarOpen: false,
@@ -73,6 +73,20 @@ export const initialState = {
     tab: "installed", filter: "", catalogKind: "", busy: null, sel: "", mSel: "",
   },
 };
+
+/* ---------------- 执行摘要栏开关 ---------------- */
+// railOpen 是唯一带持久化偏好的 UI 开关:关不关右侧「执行摘要」由用户定,
+// 存 localStorage(隐私模式读失败就默认展开)。
+const LS_RAIL_KEY = "mc-rail-open";
+function readRailPref() {
+  try { return localStorage.getItem(LS_RAIL_KEY) !== "0"; } catch (e) { return true; }
+}
+export function toggleRail() {
+  const next = !state.railOpen;
+  try { localStorage.setItem(LS_RAIL_KEY, next ? "1" : "0"); } catch (e) {}
+  setState({ railOpen: next });
+  return next;
+}
 
 /* ---------------- 订阅 ---------------- */
 // `state` 以 live binding 导出:少数纯模块(markdown 的 openFilePath 要读 workDir)
@@ -177,7 +191,6 @@ export function reduce(st, action) {
         speedAccurate: false,
         mode: "full",
         model: st.defaultModel || "",
-        contextReminders: true,
         thinking: "",
         reasoningEffort: "",
         ctxWindow: st.defaultCtxWindow,

@@ -24,6 +24,7 @@ import { WorkerMenu } from "./WorkerMenu.js";
 import { Topbar, ChatHead } from "./Topbar.js";
 import { Chat } from "./Chat.js";
 import { Composer } from "./Composer.js";
+import { SummaryPanel } from "./SummaryPanel.js";
 import { Settings } from "./Settings.js";
 import { ApprovalModal } from "./panels/ApprovalModal.js";
 import { UserAvatarModal } from "./panels/UserAvatarModal.js";
@@ -73,7 +74,7 @@ export function App() {
     const onDocClick = (e) => {
       const st = getState();
       const t = e.target;
-      if (st.workerMenuOpen && !t.closest("#worker-menu") && !t.closest("#wk-pick")) {
+      if (st.workerMenuOpen && !t.closest("#worker-menu") && !t.closest("#btn-wk-filter")) {
         setState({ workerMenuOpen: false });
       }
       if (st.tasksOpen && !t.closest("#tasks-panel") && !t.closest("#btn-tasks")) {
@@ -82,8 +83,8 @@ export function App() {
       if (st.jobsOpen && !t.closest("#jobs-panel") && !t.closest("#btn-jobs")) {
         setState({ jobsOpen: false });
       }
-      // 点任意位置的用户头像 → 打开用户头像弹窗
-      if (t.closest("[data-uav]")) setState({ avatarOpen: true });
+      // (样图划掉了聊天区头像)点用户头像开弹窗的全局委托已移除:
+      // 聊天区不再有用户头像,头像入口只在「设置 → 外观」。
 
       // 点击聊天里的截图放大查看(简易全屏遮罩,再点关闭)
       const img = t.closest && t.closest(".msg-imgs img");
@@ -98,9 +99,20 @@ export function App() {
     };
     document.addEventListener("click", onDocClick);
 
+    // 快捷键:Ctrl/⌘+K = 新建会话(样图上「新建会话」按钮旁的 K 角标就是它)。
+    const onHotkey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && String(e.key).toLowerCase() === "k") {
+        e.preventDefault();
+        detachWorkerForNewSession();
+        resetToNew();
+      }
+    };
+    window.addEventListener("keydown", onHotkey);
+
     return () => {
       clearInterval(slow);
       document.removeEventListener("click", onDocClick);
+      window.removeEventListener("keydown", onHotkey);
       disconnectEvents();
     };
   }, []);
@@ -110,11 +122,14 @@ export function App() {
     <${WorkerMenu} />
     <main>
       <${Topbar} />
-      <section class="chat">
-        <${ChatHead} />
-        <${Chat} />
-        <${Composer} />
-      </section>
+      <div class="workspace">
+        <section class="chat">
+          <${ChatHead} />
+          <${Chat} />
+          <${Composer} />
+        </section>
+        <${SummaryPanel} />
+      </div>
     </main>
     <${UserAvatarModal} />
     <${Settings} />

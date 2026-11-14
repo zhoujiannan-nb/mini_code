@@ -40,7 +40,7 @@ export function del(path) {
 // GET    /api/status
 // GET    /api/sessions?worker=<id>          GET /api/sessions/{id}
 // DELETE /api/sessions/{id}                 GET /api/sessions/{id}/events?tail_run=1
-// POST   /api/sessions/{id}/compact|mode|context-reminders|model|reasoning|rename|cancel
+// POST   /api/sessions/{id}/compact|mode|model|reasoning|rename|cancel
 // GET    /api/sessions/{id}/children        GET /api/sessions/{id}/jobs
 // GET    /api/sessions/{id}/jobs/output?job=<id>
 // POST   /api/sessions/{id}/jobs/kill|jobs/clear
@@ -81,7 +81,6 @@ export const ROUTES = Object.freeze({
   mode: (id) => "/api/sessions/" + encodeURIComponent(id) + "/mode",
   model: (id) => "/api/sessions/" + encodeURIComponent(id) + "/model",
   reasoning: (id) => "/api/sessions/" + encodeURIComponent(id) + "/reasoning",
-  reminders: (id) => "/api/sessions/" + encodeURIComponent(id) + "/context-reminders",
   compact: (id) => "/api/sessions/" + encodeURIComponent(id) + "/compact",
   fsSearch: (q, limit) => "/api/fs/search?q=" + encodeURIComponent(q) + "&limit=" + (limit || 20),
   fsOpen: "/api/fs/open",

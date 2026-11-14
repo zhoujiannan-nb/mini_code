@@ -28,7 +28,10 @@ const (
 	// NoticeWorker is a worker (工作大类) broadcast: the 公约 delivery or the
 	// join reminder (worker.go).
 	NoticeWorker = "worker"
-	// NoticeContext is a context-usage reminder at 80%/85% (loop.go usageNotice).
+	// NoticeContext is a context-usage reminder (80%/85% of the usable input
+	// budget). The injector is gone — it told the model to call compact_context,
+	// which is not registered — but the exact marker bytes stay registered here so
+	// rows written into older sessions still render as runtime notices.
 	NoticeContext = "context"
 	// NoticeSubagent is a background sub-agent's settlement notice (subagent.go).
 	NoticeSubagent = "subagent"

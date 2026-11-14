@@ -10,7 +10,7 @@ import htm from "htm";
 import { useStore, setState, getState, toast } from "../lib/store.js";
 import { ROUTES, api } from "../lib/api.js";
 import {
-  send, stop, toggleMode, toggleContextReminders, compactSession,
+  send, stop, compactSession,
   pickModel, persistReasoning, thinkScale, thinkIndex, thinkingSupported,
   reasoningLabel, currentProvider,
 } from "../lib/actions.js";
@@ -45,8 +45,6 @@ export function Composer() {
   const speed = useStore((s) => s.speed);
   const speedAccurate = useStore((s) => s.speedAccurate);
   const current = useStore((s) => s.current);
-  const mode = useStore((s) => s.mode);
-  const contextReminders = useStore((s) => s.contextReminders);
   const thinking = useStore((s) => s.thinking);
   const reasoningEffort = useStore((s) => s.reasoningEffort);
   const seed = useStore((s) => s.composerSeed);
@@ -304,6 +302,14 @@ export function Composer() {
             <path d="M8 2.5v11M2.5 8h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>
         </button>
+        <button class="chip-btn" id="btn-file-pick" title="选择文件夹路径插入输入框(也可直接输入 @)"
+          onClick=${() => { openFs(""); taRef.current && taRef.current.focus(); }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7.2A2.2 2.2 0 0 1 6.2 5h3.4l1.8 2.2H17.8A2.2 2.2 0 0 1 20 9.4v7.4A2.2 2.2 0 0 1 17.8 19H6.2A2.2 2.2 0 0 1 4 16.8V7.2Z" />
+          </svg>
+          选择文件
+        </button>
         <span class="row-flex"></span>
         <div class="model-menu-wrap">
           <button class="model-inline-btn" id="btn-model" title=${modelTitle} onClick=${onModelClick}>
@@ -333,7 +339,13 @@ export function Composer() {
               : "当前模型(" + (provider || "未知 provider") + ")不支持思考强度调整,仅 deepseek / sglang / vllm 支持。"}</div>
           </div>
         </div>
-        <button class="send-btn" id="btn-send" style=${running ? "display:none" : ""} onClick=${doSend}>发送</button>
+        <button class="send-btn" id="btn-send" style=${running ? "display:none" : ""} onClick=${doSend}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3.5 12 20 4.5 15 20.5l-3.4-6.2L3.5 12Z" />
+          </svg>
+          发送
+        </button>
         <button class="stop-btn" id="btn-stop" style=${(running || childrenActive) ? "display:inline-block" : "display:none"}
           onClick=${stop}>停止</button>
       </div>
@@ -345,14 +357,6 @@ export function Composer() {
       <span class=${cacheClass} id="cache-hit" title="上一轮 LLM 调用的 KV 前缀缓存命中(cached / prompt tokens)。n/a = 该部署未上报缓存命中(如 SGLang 未开 --enable-cache-report);0% = 已上报但本轮无命中。">${cacheText}</span>
       <span class="token-usage" id="output-speed" title="输出速度(token/秒)。生成中为实时估算(≈);任务停止后保留最后一次的展示值(最后一次 LLM 调用的实测均值,已存入数据库)">${speedText}</span>
       <div class="u-flex u-gap10">
-        <label class=${"ctx-toggle" + (contextReminders ? "" : " off")} id="ctx-toggle" title="上下文占用达窗口 80%/85% 时提醒模型主动压缩;90% 强制兜底压缩(提醒按 context window 计算,并以模型输入上限兜底)">
-          <input type="checkbox" id="ctx-reminders" checked=${contextReminders}
-            onChange=${(e) => toggleContextReminders(e.target.checked)} /> 上下文提醒
-        </label>
-        <button class=${"mode-btn" + (mode === "cautious" ? " cautious" : "")} id="btn-mode" title=${current
-          ? "点击切换权限模式:完整=直接执行;谨慎=危险操作(删文件/危险命令)需审批,立即生效"
-          : "新会话的权限模式:完整=直接执行;谨慎=危险操作需审批"}
-          onClick=${toggleMode}>${(mode === "cautious" ? "🛡 谨慎模式" : "⚡ 完整模式") + (current ? "" : "(新会话)")}</button>
         <button class="compact-btn" id="btn-compact" title="手动压缩当前会话上下文(立即调用模型总结旧对话)"
           disabled=${!current || running} onClick=${compactSession}>⚡ 压缩</button>
         <span class="foot-hint" id="foot-hint" title="点击切换发送快捷键:Enter 发送 ↔ Shift+Enter 发送"

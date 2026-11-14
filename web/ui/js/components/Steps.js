@@ -115,7 +115,10 @@ export function StepsCard({ steps }) {
 
 // LiveSteps 是「正在执行」卡:还没收进折叠条的步骤住在这里,跑完才搬走。
 // 每 1 秒刷新一次计时,并顺手结算"快工具最短展示时间"到期的步骤。
+// 按样图(过程清单默认收起):头部一行"正在执行 · N 步 · 最近 xx",点开才见清单 ——
+// 正在跑什么由头部一行说清楚,不必摊一整列步骤抢聊天区的版面。
 export function LiveSteps({ steps, running }) {
+  const [open, setOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
   const visible = (steps || []).filter((s) => !s.folded);
   const ticking = (steps || []).some((s) => !s.folded && (s.phase === "run" || s.phase === "prep" || s.holdUntil));
@@ -131,11 +134,17 @@ export function LiveSteps({ steps, running }) {
 
   if (!visible.length) return null;
   const parallel = visible.filter((s) => s.phase === "run").length;
-  return html`<div class="msg steps">
+  const last = visible[visible.length - 1];
+  const lastHint = last.kind === "think" ? "思考中" : String(last.name || "tool");
+  return html`<div class=${"msg steps ms-live-wrap" + (open ? "" : " collapsed")}>
     <${AgentAvatar} cls="c-avatar" />
     <div class="m-card ms-live">
-      <div class="ms-live-hd"><span class="spin"></span>正在执行${parallel > 1
-        ? html`<span class="ms-live-n">${parallel} 个并行</span>` : null}</div>
+      <div class="ms-live-hd" onClick=${() => setOpen((v) => !v)}>
+        <span class="spin"></span>正在执行<span class="ms-live-n">${visible.length} 步</span>${parallel > 1
+          ? html`<span class="ms-live-n">${parallel} 个并行</span>` : null}
+        <span class="ms-last">最近 ${lastHint}</span>
+        <span class="ms-hint">${open ? "收起" : "展开"}</span>
+      </div>
       <div class="ms-live-body">
         ${visible.map((s) => html`<${Step} key=${s.key} step=${s} running=${running} now=${s.phase === "run" ? now : 0} />`)}
       </div>
