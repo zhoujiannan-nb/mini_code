@@ -557,3 +557,411 @@ test("render: create_goal / update_goal 步骤各给一行状态文案", async (
   assert.match(lines[1].textContent, /标记完成/);
   assert.equal(document.querySelectorAll("#messages .goal-panel").length, 0, "就一行字,别做面板");
 });
+
+/* ================= v4 底栏三件套 + 上下文管理抽屉 + 摘要抽屉 ================= */
+const CTX_SNAPSHOT = {
+  window: 100000, tokens: 12345, pct: 12,
+  sections: [
+    { key: "system", label: "系统提示词", tokens: 5000 },
+    { key: "tools", label: "工具定义", tokens: 3000 },
+    { key: "user", label: "用户消息", tokens: 1000 },
+    { key: "assistant", label: "助手回复", tokens: 2000 },
+    { key: "tool", label: "工具结果", tokens: 1345 },
+  ],
+  totals: { requests: 6, input: 1500, output: 70, cached: 800, uncached: 700, reported: true },
+  stats: { model_ms: 3262000, tool_ms: 4132000, ttft_avg_ms: 1800 },
+  steps: 6,
+  rounds: [
+    { round: 1, steps: 3, first_turn: 1, last_turn: 1, peak_tokens: 8000, reclaimed: 1200, compacted: true, at: "2026-01-01T10:00:00Z" },
+    { round: 2, steps: 2, first_turn: 2, last_turn: 2, peak_tokens: 9000, reclaimed: 0, compacted: true, at: "2026-01-01T10:30:00Z" },
+    { round: 3, steps: 1, first_turn: 3, last_turn: 3, peak_tokens: 11000, reclaimed: 0, compacted: false, at: "" },
+  ],
+  events: [{ kind: "compact", round: 1, turn: 1, tokens: 1200, detail: "auto压缩:2.0K → 0.8K tokens", at: "2026-01-01T10:00:00Z" }],
+};
+const CTX_DETAIL = {
+  system: {
+    part: "system", text: "你是编程智能体 SYSTEM 全文", note: "",
+    parts: [
+      { label: "人设", injected: false, tokens: 2000, text: "你是编程智能体 SYSTEM 全文" },
+      { label: "插件记忆", injected: true, tokens: 300, text: "记忆内容 INJECTED" },
+    ],
+  },
+  tools: { part: "tools", tools: [{ name: "pwsh", description: "执行命令", tokens: 900 }], total: 900 },
+  message: { part: "message", index: 15, role: "user", tokens: 100, text: "完整的用户消息全文" },
+};
+// 消息详情分页 mock:16 条消息默认每页 4 条,role 过滤在"服务端"。
+function detailPage(role, before) {
+  const all = [];
+  for (let i = 0; i < 16; i++) {
+    all.push({ index: i, role: ["user", "assistant", "tool"][i % 3], tokens: 100 + i,
+      chars: 200, preview: "消息 " + i, est: i >= 14 });
+  }
+  const end = before == null ? 16 : before;
+  const start = Math.max(0, end - 4);
+  const page = all.slice(start, end);
+  const msgs = role ? page.filter((m) => m.role === role) : page;
+  return { part: "messages", total: 16, returned: page.length, has_more: start > 0, role: role || "", messages: msgs };
+}
+
+async function mountWithCtx(extraCtx) {
+  const ctxRoute = [/\/context$/, () => jsonResponse(extraCtx || CTX_SNAPSHOT)];
+  const detailRoute = [/\/context\/detail/, (url) => {
+    const u = new URL(String(url), "http://test");
+    const part = u.searchParams.get("part");
+    if (part === "messages") {
+      if (u.searchParams.has("i")) return jsonResponse(CTX_DETAIL.message);
+      const before = u.searchParams.get("before");
+      return jsonResponse(detailPage(u.searchParams.get("role"), before == null ? null : Number(before)));
+    }
+    return jsonResponse(CTX_DETAIL[part] || { part: "?" });
+  }];
+  const fetchMock = await resetAll({ extra: [ctxRoute, detailRoute] });
+  mountApp();
+  await settle();
+  document.querySelector("#sess-list .sess-item").click();
+  await settle();
+  return fetchMock;
+}
+
+test("render: 底栏 = dsh 三件套(轮步速度 | 总tok·缓存 | 百分比);旧弹层全退役", async () => {
+  await mountWithCtx();
+  const meter = document.querySelector("#token-usage");
+  assert.ok(meter, "占用仪表还在(id 不变)");
+  assert.match(meter.textContent, /%/, "只显示百分比");
+  assert.equal(document.querySelector("#btn-compact"), null, "手动压缩按钮已移除");
+  assert.equal(document.querySelector("#foot-hint"), null, "tips 行已移除");
+  assert.equal(document.querySelector(".meter-pop, .meter-chip"), null, "v2 弹层/芯片整体退役");
+
+  const stats = document.querySelector("#sess-stats");
+  assert.match(stats.textContent, /3 轮 · 6 步 · —/, "轮次 · 步数 · 速度合体(无速度=—)");
+
+  const ctxChip = document.querySelector("#ctx-total");
+  assert.match(ctxChip.textContent, /tok · 缓存命中 53%/, "累计 tok + 缓存命中率合体(800/1500≈53%)");
+
+  stats.click();
+  await settle();
+  const pop = document.querySelector("#sess-pop");
+  assert.ok(pop, "点轮步芯片弹会话统计");
+  assert.match(pop.textContent, /模型用时\s*54分22秒/);
+  assert.match(pop.textContent, /工具调用用时\s*68分52秒/);
+  assert.match(pop.textContent, /首 token 平均\(TTFT\)\s*1\.8秒/);
+  stats.click();
+  await settle();
+  assert.equal(document.querySelector("#sess-pop"), null, "再点收起");
+});
+
+test("render: 底栏「上下文」芯片直接打开管理抽屉,摘要抽屉互斥关闭", async () => {
+  const fetchMock = await mountWithCtx();
+  document.querySelector("#btn-summary").click();
+  await settle();
+  assert.ok(document.querySelector("#summary-panel.open"), "摘要先开着");
+  document.querySelector("#ctx-total").click();
+  await settle();
+  assert.ok(document.querySelector("#ctx-panel.open"), "芯片一点就开上下文抽屉");
+  assert.ok(!document.querySelector("#summary-panel.open"), "开上下文必关摘要");
+  assert.ok(fetchMock.callsTo("/context").length >= 1, "拉了快照");
+
+  document.querySelector("#btn-summary").click();
+  await settle();
+  assert.ok(document.querySelector("#summary-panel.open"), "摘要能再开");
+  assert.ok(!document.querySelector("#ctx-panel.open"), "开摘要必关上下文");
+});
+
+test("render: 「上下文」抽屉含组成/累计/轮次审计/事件,轮次可过滤事件", async () => {
+  const fetchMock = await mountWithCtx();
+  const panel = document.querySelector("#ctx-panel");
+  assert.ok(panel, "抽屉常驻 DOM(滑动开合)");
+  assert.ok(!panel.classList.contains("open"), "默认收起");
+
+  document.querySelector("#btn-rail").click();
+  await settle();
+  assert.ok(document.querySelector("#ctx-panel.open"), "点击滑入");
+  const body = document.querySelector("#ctx-panel .ctx-body").textContent;
+  assert.match(body, /系统提示词/);
+  assert.match(body, /工具定义/);
+  assert.match(body, /总上下文/, "累计小节");
+  assert.match(body, /命中率/);
+  assert.match(body, /3 轮 · 6 步/, "轮次审计汇总");
+  assert.match(body, /第3轮[\s\S]*进行中/, "未压缩的轮标进行中");
+  assert.match(body, /第2轮[\s\S]*已压缩(?! −)/, "回收为 0 的压缩轮写「已压缩」不写 −0K");
+  assert.match(body, /第1轮[\s\S]*压缩 −1\.2K/, "轮里能看回收量");
+  assert.ok(document.querySelectorAll("#ctx-panel .ctx-stack .cs-seg").length >= 5, "五段堆叠条");
+
+  // 点第 3 轮(最新,列表第一行)→ 事件按 turn 范围过滤(turn=1 的那条被滤掉)。
+  document.querySelector("#ctx-panel .ctx-rounds li.cr-row").click();
+  await settle();
+  assert.match(document.querySelector("#ctx-panel .ctx-body").textContent, /这一轮没有/, "过滤生效");
+  document.querySelector("#ctx-panel .rs-filter").click();
+  await settle();
+  assert.match(document.querySelector("#ctx-panel .ctx-body").textContent, /auto压缩/, "过滤可清除");
+
+  document.querySelector("#ctx-close").click();
+  await settle();
+  assert.ok(!document.querySelector("#ctx-panel.open"), "再点收起");
+});
+
+test("render: 组成段详情 —— 系统提示词分段(基础/注入) / 工具定义 / 消息分页与全文", async () => {
+  const fetchMock = await mountWithCtx();
+  document.querySelector("#btn-rail").click();
+  await settle();
+
+  const rows = document.querySelectorAll("#ctx-panel .ctx-legend li.cl-row");
+  assert.equal(rows.length, 5, "五段图例都可点");
+
+  rows[0].click(); // 系统提示词:基础 vs 注入分段
+  await settle();
+  let det = document.querySelector("#ctx-detail").textContent;
+  assert.match(det, /人设/, "基础段");
+  assert.match(det, /插件记忆/, "注入段");
+  assert.match(det, /系统/, "「系统」标");
+  assert.match(det, /注入/, "「注入」标");
+  assert.ok(fetchMock.callsTo("/context/detail").length >= 1);
+  const part = document.querySelector("#ctx-detail .cd-part summary");
+  part.click(); // 展开一段看正文
+  await settle();
+  assert.match(document.querySelector("#ctx-detail").textContent, /SYSTEM 全文/);
+
+  rows[1].click(); // 工具定义
+  await settle();
+  assert.match(document.querySelector("#ctx-detail").textContent, /pwsh/);
+  assert.match(document.querySelector("#ctx-detail").textContent, /执行命令/);
+  assert.doesNotMatch(document.querySelector("#ctx-detail").textContent, /插件记忆/, "同一时间只展开一段");
+
+  // 用户消息:服务端按 role 分页,首屏一页 + 「加载更早」;超长条带 ≈ 估算标。
+  rows[2].click();
+  await settle();
+  let msgs = document.querySelectorAll("#ctx-detail .cd-msg");
+  assert.equal(msgs.length, 2, "首屏一页(user 角色过滤后 2 条)");
+  assert.match(document.querySelector("#ctx-detail").textContent, /消息 15/);
+  assert.match(document.querySelector("#ctx-detail .cm-n").textContent, /≈/, "估算条带 ≈");
+  const more = document.querySelector("#cd-more");
+  assert.ok(more, "还有更早的分页入口");
+  more.click();
+  await settle();
+  msgs = document.querySelectorAll("#ctx-detail .cd-msg");
+  assert.equal(msgs.length, 3, "加载更早后 3 条");
+  assert.match(document.querySelector("#ctx-detail").textContent, /消息 9/);
+
+  document.querySelector("#ctx-detail .cd-msg").click();
+  await settle();
+  assert.match(document.querySelector("#ctx-detail").textContent, /完整的用户消息全文/, "点预览出全文");
+
+  rows[2].click(); // 再点同一行收起
+  await settle();
+  assert.equal(document.querySelector("#ctx-detail"), null, "详情可收起");
+});
+
+test("render: totals 为 null 时抽屉显示空态而不是 0", async () => {
+  await mountWithCtx(Object.assign({}, CTX_SNAPSHOT, { totals: null, events: [], rounds: [], steps: 0 }));
+  document.querySelector("#btn-rail").click();
+  await settle();
+  const body = document.querySelector("#ctx-panel .ctx-body").textContent;
+  assert.match(body, /还没有/, "无用量数据走空态文案");
+  assert.doesNotMatch(body, /命中率/);
+  assert.match(body, /仍在第 1 轮/, "没有轮次就说还在第 1 轮");
+});
+
+test("render: 「摘要」抽屉 = 执行结果/相关文件/性能指标,运行中可点开看目的", async () => {
+  await mountWithCtx();
+  assert.ok(document.querySelector("#btn-summary"), "聊天头有摘要按钮(右上角四颗之一)");
+  document.querySelector("#btn-summary").click();
+  await settle();
+  const panel = document.querySelector("#summary-panel");
+  assert.ok(panel && panel.classList.contains("open"), "摘要抽屉滑入");
+  const body = panel.textContent;
+  assert.match(body, /执行结果/, "待办清单小节(agent 的目标在这)");
+  assert.match(body, /性能指标/);
+  assert.match(body, /缓存命中/);
+  document.querySelector("#sum-close").click();
+  await settle();
+  assert.ok(!document.querySelector("#summary-panel.open"), "× 收起摘要");
+});
+
+test("render: 聊天头右上角恰好四颗按钮,文案精简", async () => {
+  await mountWithCtx();
+  const ids = ["btn-tasks", "btn-jobs", "btn-summary", "btn-rail"];
+  for (const id of ids) {
+    const b = document.querySelector("#" + id);
+    assert.ok(b, id + " 常驻可点");
+    assert.ok(b.classList.contains("show"), id + " 默认可见");
+  }
+  const headText = document.querySelector(".chat-head").textContent;
+  assert.doesNotMatch(headText, /个子智能体|个后台任务/, "长文案已精简");
+});
+
+test("render: 聊天区用户头像回来了,点头像开「用户头像」弹窗", async () => {
+  await mountWithCtx();
+  const userMsg = document.querySelector(".msg.user");
+  assert.ok(userMsg, "有用户消息");
+  const ava = userMsg.querySelector("[data-uav]");
+  assert.ok(ava, "用户消息右侧带头像(未设置时是「你」字回退)");
+  // .msg.user 是 row-reverse:第一个 DOM 子元素才贴右。头像必须在卡片之前。
+  assert.equal(userMsg.firstElementChild, ava, "头像是行首元素(row-reverse 下贴右)");
+  ava.click();
+  await settle();
+  assert.ok(document.querySelector("#user-avatar-mask.open"), "点击开头像弹窗");
+});
+
+/* ================= v5 轨迹抽屉(TrajPanel) ================= */
+const TRAJ_PAGE = {
+  steps: 6, rounds: 2, has_more: true,
+  rows: [
+    { seq: 11, kind: "task", turn: 1, round: 1, title: "任务: 跑一下测试", sub: "", tokens: 0, dur_ms: 0, at: "2026-01-01T10:00:00Z" },
+    { seq: 12, kind: "assistant", turn: 1, round: 1, title: "好的,先看 package", sub: "先确认脚本", tokens: 210, dur_ms: 1800, at: "2026-01-01T10:00:05Z" },
+    { seq: 13, kind: "tool", turn: 1, round: 1, title: 'pwsh {"command":"npm test"}', sub: "输出: OK 59 tests", tokens: 900, dur_ms: 4132000, at: "2026-01-01T10:01:05Z" },
+    { seq: 14, kind: "compact", turn: 1, round: 1, title: "auto压缩 205.2K → 13.4K tokens", sub: "", tokens: 191800, dur_ms: 0, at: "2026-01-01T10:02:00Z" },
+    { seq: 15, kind: "assistant", turn: 2, round: 2, title: "测试全绿", sub: "npm test 通过", tokens: 150, dur_ms: 2400, at: "2026-01-01T10:03:00Z" },
+    { seq: 16, kind: "tool", turn: 2, round: 2, title: 'read {"file_path":"x.log"}', sub: "log 内容摘要", tokens: 80, dur_ms: 300, at: "2026-01-01T10:03:10Z" },
+  ],
+};
+const TRAJ_OLD = {
+  steps: 2, rounds: 1, has_more: false,
+  rows: [{ seq: 5, kind: "task", turn: 1, round: 1, title: "更早的任务", sub: "", tokens: 0, dur_ms: 0, at: "2026-01-01T09:00:00Z" }],
+};
+
+test("render: 顶栏「完整模式」旁有轨迹按钮,点开轨迹抽屉:时间线+事件流+互斥", async () => {
+  const trajRoute = [/\/trajectory/, (url) => {
+    const u = new URL(String(url), "http://test");
+    return jsonResponse(u.searchParams.has("before") ? TRAJ_OLD : TRAJ_PAGE);
+  }];
+  await resetAll({ extra: [[/\/context$/, () => jsonResponse(CTX_SNAPSHOT)], trajRoute] });
+  mountApp();
+  await settle();
+  document.querySelector("#sess-list .sess-item").click();
+  await settle();
+
+  const btn = document.querySelector("header #btn-traj");
+  assert.ok(btn, "顶栏有轨迹按钮");
+  assert.equal(btn.previousElementSibling && btn.previousElementSibling.id, "btn-mode", "紧贴完整模式按钮");
+
+  btn.click();
+  await settle();
+  const panel = document.querySelector("#traj-panel");
+  assert.ok(panel && panel.classList.contains("open"), "点顶栏按钮滑出轨迹抽屉");
+  assert.match(panel.textContent, /6 步 · 2 轮/, "头部汇总");
+  const blks = panel.querySelectorAll(".tr-tl .tr-blk");
+  assert.ok(blks.length >= 5, "时间线小块");
+  const rowEls = panel.querySelectorAll(".tr-rows .tr-row");
+  assert.equal(rowEls.length, 6, "六行轨迹");
+  assert.match(rowEls[0].textContent, /工具/, "最新在前(read)");
+  assert.match(panel.textContent, /auto压缩 205\.2K → 13\.4K/, "压缩行原文");
+
+  // 展开一行看详情 sub。
+  const toolRow = [...rowEls].find((r) => r.className.includes("k-tool"));
+  toolRow.querySelector(".tr-main").click();
+  await settle();
+  assert.match(toolRow.textContent, /log 内容摘要/, "点行展开 sub 详情");
+
+  // 过滤 + 搜索(纯客户端)。
+  const chips = panel.querySelectorAll(".tr-chip");
+  chips[3].click(); // 工具
+  await settle();
+  assert.equal(panel.querySelectorAll(".tr-rows .tr-row").length, 2, "只看工具两行");
+  chips[0].click(); // 全部
+  await settle();
+  const search = panel.querySelector(".tr-search");
+  search.value = "pwsh";
+  search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await settle();
+  assert.equal(panel.querySelectorAll(".tr-rows .tr-row").length, 1, "搜索 pwsh 只剩一行");
+
+  // 与上下文抽屉互斥。
+  document.querySelector("#btn-rail").click();
+  await settle();
+  assert.ok(!document.querySelector("#traj-panel.open"), "开上下文必关轨迹");
+
+  // 清除过滤后重开抽屉翻更早。
+  search.value = "";
+  search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await settle();
+  document.querySelector("#btn-traj").click();
+  await settle();
+  const more = document.querySelector("#traj-more");
+  assert.ok(more, "has_more → 加载更早入口");
+  more.click();
+  await settle();
+  assert.equal(document.querySelectorAll("#traj-panel .tr-rows .tr-row").length, 7, "并入更早一行");
+  assert.equal(document.querySelector("#traj-more"), null, "更早到底后入口消失");
+});
+
+/* ================= 13) 点会话必须落到最新一条 ================= */
+// 回归:上滑回看过历史(stick 解锁)之后点会话,视口停在旧滚动位置不跳底。
+// 病根是切换 effect 用 useEffect(rAF 才跑)而本地 fetch 早于它带回 rows;
+// 现在切换 effect 改 useLayoutEffect,并由 jumpTick 覆盖"重点击当前会话"。
+test("render: 上滑后点会话(含重点击当前会话)跳回最新内容", async () => {
+  await resetAll();
+  mountApp();
+  await settle();
+
+  // jsdom 没有布局,scrollHeight/clientHeight 恒为 0 → 任何位置都算"在底部",
+  // 必须伪造几何才测得出"上滑解锁"和"跳底"。
+  const box = document.querySelector("#messages");
+  Object.defineProperty(box, "scrollHeight", { value: 5000, configurable: true });
+  Object.defineProperty(box, "clientHeight", { value: 600, configurable: true });
+
+  // 打开会话 A,滚到底(打开时本就该在底部)。
+  document.querySelectorAll("#sess-list .sess-item")[0].click();
+  await settle();
+  assert.equal(box.scrollTop, 5000, "刚打开会话就在最新一条");
+
+  // 用户上滑回看 → 吸底解锁,追加内容不该抢视角。
+  box.scrollTop = 500;
+  box.dispatchEvent(new window.Event("scroll"));
+  await settle();
+  assert.equal(box.scrollTop, 500, "上滑后没有被迫跳走");
+
+  // 点另一个会话:必须跳到底部(旧 bug:停在 500)。
+  document.querySelectorAll("#sess-list .sess-item")[1].click();
+  await settle();
+  assert.equal(box.scrollTop, 5000, "切换会话后跳到最新");
+
+  // 再上滑,然后重击"当前会话":current 没变,靠 jumpTick 也要跳底。
+  box.scrollTop = 500;
+  box.dispatchEvent(new window.Event("scroll"));
+  await settle();
+  document.querySelectorAll("#sess-list .sess-item")[1].click();
+  await settle();
+  assert.equal(box.scrollTop, 5000, "重点击当前会话同样跳到最新");
+});
+
+/* ================= 14) 运行中插话 ================= */
+// 打字即解锁:运行中的「停止」让位给「插话」,发送走注入(POST 带 session_id,
+// 后端回 mode:"steer"),消息立刻出现在聊天流里;清空输入后按钮换回「停止」。
+test("render: 运行中打字把停止换成插话,点击注入运行中的任务", async () => {
+  const fetchMock = await resetAll({
+    extra: [[/^\/api\/messages$/, () => jsonResponse({ mode: "steer", session_id: "s1" }, 202, "Accepted")]],
+  });
+  mountApp();
+  await settle();
+  document.querySelector("#sess-list .sess-item").click();
+  await settle();
+
+  // 任务开跑、输入为空:只有「停止」。
+  setState({ running: true });
+  await settle();
+  assert.match(document.querySelector("#btn-send").style.display, /none/, "运行中空输入没有发送键");
+  assert.equal(document.querySelector("#btn-stop").style.display, "inline-block", "运行中显示停止");
+
+  // 打字 → 发送键回来且写着「插话」,停止让位。
+  const ta = document.querySelector("#input");
+  ta.value = "等等,先别删那个文件";
+  ta.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await settle();
+  assert.doesNotMatch(document.querySelector("#btn-send").style.display, /none/, "打字后发送键出现");
+  assert.match(document.querySelector("#btn-send").textContent, /插话/, "运行中标签是插话");
+  assert.match(document.querySelector("#btn-stop").style.display, /none/, "有草稿时停止让位");
+
+  // 点发送 → POST 带 session_id,聊天流立刻出现这句话,toast 提示注入成功。
+  document.querySelector("#btn-send").click();
+  await settle();
+  const posts = fetchMock.callsTo("/api/messages");
+  assert.equal(posts.length, 1, "发了一次插话");
+  assert.deepEqual(JSON.parse(posts[0].opts.body), { content: "等等,先别删那个文件", session_id: "s1" });
+  assert.match(document.querySelector("#messages").textContent, /等等,先别删那个文件/, "立刻回显在聊天流");
+  assert.match(JSON.stringify(getState().toast), /插话/, "toast 说明注入成功");
+
+  // 输入清空 → 又只剩「停止」。
+  await settle();
+  assert.match(document.querySelector("#btn-send").style.display, /none/, "清空后发送键收起");
+  assert.equal(document.querySelector("#btn-stop").style.display, "inline-block", "清空后恢复停止");
+});

@@ -37,12 +37,12 @@ func TestHitTestFrame(t *testing.T) {
 		{"拖拽条贴底部", 300, tbLogicalH - 1, false, htCaption},
 		{"拖拽条下方一格", 300, tbLogicalH, false, 0},
 		{"拖拽条左起点", tbAppW, 20, false, htCaption},
-		{"窗口按钮区", w - 20, 20, false, 0}, // 右侧 138 逻辑px 留给窗口三颗图标钮
-		{"右侧带左界外", w - tbControlsW - 1, 20, false, htCaption},
-		// 应用侧两颗文字钮活在左边 0~144px 这一段:tbAppW 要是退回 0(漏了
-		// 左排除),这两颗会被判进 HTCAPTION,点了只拖窗 —— 回归哨兵。
-		{"应用侧设置那颗", 36, 20, false, 0},
-		{"应用侧主题那颗", 100, 20, false, 0},
+		{"右侧顶角(右钮组已移除)", w - 20, 20, false, htCaption}, // v2:右侧不再有按钮
+		{"右上角内", w - 1, 0, false, htCaption},
+		// 左侧三点窗控(close/min/max)活在 0~70px 这一段:tbAppW 要是退回 0
+		// (漏了左排除),三点会被判进 HTCAPTION,点了只拖窗 —— 回归哨兵。
+		{"应用侧三点左", 20, 20, false, 0},
+		{"应用侧三点右", 50, 20, false, 0},
 		{"应用带右界外", tbAppW + 1, 20, false, htCaption},
 		{"正文", 640, 400, false, 0},
 		{"底部边缘", 640, h - 1, false, 0}, // 缩放是系统 NC 的事,hitTest 一律不管
@@ -52,7 +52,7 @@ func TestHitTestFrame(t *testing.T) {
 		// 最大化:同一套 client 坐标语义(隐形边框已在 frameHitTest 里扣掉)
 		{"最大化左上(应用带里)", 0, 0, true, 0},
 		{"最大化拖拽条", 300, 10, true, htCaption},
-		{"最大化按钮区", w - 20, 10, true, 0},
+		{"最大化右上(右钮组已移除)", w - 20, 10, true, htCaption},
 		{"最大化正文", 640, 400, true, 0},
 	} {
 		if got := hitTestFrame(c.x, c.y, w, h, c.zoom); got != c.want {
@@ -152,9 +152,9 @@ func TestFrameHitTestClientMapping(t *testing.T) {
 		{"左上角边框", rc.l + 1, rc.t + 1, 0},
 		{"拖拽带中点", capProbeX, top20, htCaption},
 		{"拖拽带贴client顶", capProbeX, rc.t + borderY + 1, htCaption},
-		{"窗口按钮区", rc.r - borderX - px(20), top20, 0},
-		{"应用按钮设置位", rc.l + borderX + px(36), top20, 0},   // 左侧带里的按钮必须可点
-		{"应用按钮主题位", rc.l + borderX + px(108), top20, 0}, //
+		{"右上角(右钮组已移除)", rc.r - borderX - px(20), top20, htCaption},
+		{"三点红点位", rc.l + borderX + px(20), top20, 0},   // 三点带里的按钮必须可点
+		{"三点绿点位", rc.l + borderX + px(52), top20, 0},    //
 		{"client顶之上(边框里)", capProbeX, rc.t + borderY/2, 0},
 		{"正文中心", cxPhys, cyPhys, 0},
 	}

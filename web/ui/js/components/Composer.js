@@ -1,5 +1,7 @@
-// 输入区:发送/停止、权限模式、模型选择(单击)、思考强度(双击)、截图、
-// @ 文件夹选择器、token/缓存/速度、发送快捷键切换。
+// 输入区:发送/停止、模型选择(单击)、思考强度(双击)、截图、@ 文件夹选择器。
+// 底栏(v4,学 dsh 三件套):「N 轮 · M 步 · X tok/s」点击弹会话统计浮层;
+// 「总 tok · 缓存命中%」点击开上下文管理抽屉;右侧百分比小仪表(占用)。
+// 手动压缩按钮与 tips 行已移除,发送快捷键/提示语在设置里改。
 //
 // 和旧实现最大的不同:输入框内容、待发图片、下拉开合都是组件 state,
 // 不再有 $("#input").value / innerHTML 这类跨模块的命令式补丁。
@@ -7,31 +9,19 @@ import { h } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import htm from "htm";
 
-import { useStore, setState, getState, toast } from "../lib/store.js";
+import { useStore, setState, getState, toast, toggleCtxPanel } from "../lib/store.js";
 import { ROUTES, api } from "../lib/api.js";
 import {
-  send, stop, compactSession,
+  send, sendSteer, stop, loadContext,
   pickModel, persistReasoning, thinkScale, thinkIndex, thinkingSupported,
   reasoningLabel, currentProvider,
 } from "../lib/actions.js";
 import { fsTokenAt, fsRecent, fsRemember } from "../lib/files.js";
 import { fileToDataURL, MAX_IMAGES, MAX_IMAGE_BYTES } from "../lib/images.js";
-import { fmtK, fmtK2, paintCacheHit, paintSpeed } from "../lib/format.js";
+import { fmtK, fmtK2, fmtTok, fmtDurMs, paintSpeed } from "../lib/format.js";
 import { FsPicker } from "./FsPicker.js";
 
 const html = htm.bind(h);
-
-const LS_SEND_MODE_KEY = "mc-send-mode";
-
-function readSendMode() {
-  try { return localStorage.getItem(LS_SEND_MODE_KEY) === "shift" ? "shift" : "enter"; }
-  catch (e) { return "enter"; }
-}
-
-function inputPlaceholder(sendMode) {
-  return (sendMode === "shift" ? "输入任务,Shift+Enter 发送,Enter 换行" : "输入任务,Enter 发送,Shift+Enter 换行")
-    + ",粘贴截图,@ 插入文件夹路径";
-}
 
 export function Composer() {
   const running = useStore((s) => s.running);
@@ -41,7 +31,6 @@ export function Composer() {
   const defaultModel = useStore((s) => s.defaultModel);
   const ctxWindow = useStore((s) => s.ctxWindow);
   const tokens = useStore((s) => s.tokens);
-  const cacheHit = useStore((s) => s.cacheHit);
   const speed = useStore((s) => s.speed);
   const speedAccurate = useStore((s) => s.speedAccurate);
   const current = useStore((s) => s.current);
@@ -53,7 +42,8 @@ export function Composer() {
   const [images, setImages] = useState([]);
   const [modelMenu, setModelMenu] = useState(false);
   const [thinkPop, setThinkPop] = useState(false);
-  const [sendMode, setSendMode] = useState(readSendMode);
+  const sendMode = useStore((s) => s.sendMode);
+  const inputTip = useStore((s) => s.inputTip);
   const [fs, setFs] = useState({ open: false, q: "", hits: [], sel: 0, indexing: false, err: "" });
 
   const taRef = useRef(null);
@@ -90,11 +80,21 @@ export function Composer() {
     return () => document.removeEventListener("click", onDoc);
   }, []);
 
-  /* ---------------- 发送 ---------------- */
+  /* ---------------- 发送 / 插话 ---------------- */
+  const hasDraft = value.trim() !== "" || images.length > 0;
   const doSend = async () => {
     const text = value.trim();
     const imgs = images.slice();
-    if ((!text && imgs.length === 0) || running) return;
+    if (!text && imgs.length === 0) return;
+    if (running) {
+      // 插话:运行中只注入纯文本。图要等任务结束走普通发送。
+      if (!text) return;
+      if (imgs.length) { toast("插话不能带图片,请等任务结束后再发", "err"); return; }
+      setValue("");
+      closeFs();
+      await sendSteer(text);
+      return;
+    }
     // 先清输入框(旧行为):发送失败时错误会以消息卡出现,不会把同一段话留在框里。
     setValue("");
     setImages([]);
@@ -218,21 +218,14 @@ export function Composer() {
     closeFs();
   };
 
-  const toggleSendMode = () => {
-    const next = sendMode === "shift" ? "enter" : "shift";
-    setSendMode(next);
-    try { localStorage.setItem(LS_SEND_MODE_KEY, next); } catch (e) {}
-    toast(next === "shift" ? "已切换: Shift+Enter 发送, Enter 换行" : "已切换: Enter 发送, Shift+Enter 换行", "ok");
-  };
-
   /* ---------------- 模型 / 思考 ---------------- */
   const modelName = (models.find((m) => m.name === model) || {}).name || model || "默认";
   const cap = ctxWindow || 0;
-  const tokenText = !current
-    ? "Token 0K / " + fmtK(cap)
-    : "Token " + fmtK2(tokens) + " / " + (cap ? fmtK2(cap) : "—") +
-      (cap ? " · " + Math.min(999, Math.round((tokens || 0) * 100 / cap)) + "%" : "");
+  // 需求④:token 不再报"多少 K / 多少 K",只画一个百分比小仪表。
+  const ctxPct = cap > 0 ? Math.min(999, Math.round((tokens || 0) * 100 / cap)) : 0;
   const tokenWarn = cap > 0 && (tokens || 0) / cap >= 0.8;
+  const meterTitle = "上下文占用:" + (tokens ? fmtK2(tokens) : "0") + (cap ? " / " + fmtK2(cap) : "")
+    + "(" + ctxPct + "%),接近上限时自动压缩";
 
   // 双击模型按钮打开思考强度浮层(单击延迟 230ms 才切换模型下拉)。
   const openThinkingPop = () => {
@@ -240,11 +233,37 @@ export function Composer() {
     setModelMenu(false);
   };
 
-  const cacheInfo = paintCacheHit(cacheHit && cacheHit.prompt, cacheHit && cacheHit.cached, cacheHit && cacheHit.reported);
-  const cacheText = cacheInfo.text;
-  const cacheClass = cacheInfo.className;
-
+  // 底栏芯片要显示累计用量:每轮任务结束(running true→false)刷新一次快照,
+  // 抽屉开没开都刷 —— 芯片数字要跟得上。
+  const ctxInfo = useStore((s) => s.ctxInfo);
+  const prevRun = useRef(false);
+  useEffect(() => {
+    if (prevRun.current && !running && getState().current) loadContext();
+    prevRun.current = running;
+  }, [running]);
+  useEffect(() => {
+    if (current && !getState().ctxInfo) loadContext();
+  }, [current]);
+  const totals = ctxInfo && ctxInfo.totals;
+  const stats = (ctxInfo && ctxInfo.stats) || {};
   const speedText = paintSpeed(speed, speedAccurate);
+  const speedShort = speed > 0 ? (speed >= 100 ? Math.round(speed) : Math.round(speed * 10) / 10) + " tok/s" : "—";
+  const roundsN = ((ctxInfo && ctxInfo.rounds) || []).length;
+  const stepsN = (ctxInfo && ctxInfo.steps) || 0;
+  // 缓存命中率:供应商不报就明说"未上报",不拿 0% 冒充。
+  const hitPct = totals && totals.reported && totals.input > 0
+    ? Math.round(totals.cached * 100 / totals.input) + "%" : null;
+
+  // 「会话统计」浮层(dsh 风):轮次/步/模型用时/工具调用用时/TTFT/输出速度。
+  const [sessPop, setSessPop] = useState(false);
+  useEffect(() => {
+    if (!sessPop) return undefined;
+    const onDoc = (e) => {
+      if (!e.target || !e.target.closest || !e.target.closest(".sess-pop-wrap")) setSessPop(false);
+    };
+    document.addEventListener("click", onDoc, true);
+    return () => document.removeEventListener("click", onDoc, true);
+  }, [sessPop]);
 
   const scale = thinkScale();
   const idx = thinkIndex();
@@ -290,7 +309,7 @@ export function Composer() {
         </div>`)}
       </div>
       <textarea id="input" rows="1" ref=${taRef} value=${value}
-        placeholder=${inputPlaceholder(sendMode)}
+        placeholder=${running ? "插话一句,下一步生效…(Enter 注入)" : (inputTip || "输入任务…")}
         onInput=${(e) => { setValue(e.target.value); fsCheckInput(); }}
         onKeyDown=${onKeyDown}
         onPaste=${onPaste}
@@ -339,29 +358,41 @@ export function Composer() {
               : "当前模型(" + (provider || "未知 provider") + ")不支持思考强度调整,仅 deepseek / sglang / vllm 支持。"}</div>
           </div>
         </div>
-        <button class="send-btn" id="btn-send" style=${running ? "display:none" : ""} onClick=${doSend}>
+        <button class="send-btn" id="btn-send" style=${running && !hasDraft ? "display:none" : ""} onClick=${doSend}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M3.5 12 20 4.5 15 20.5l-3.4-6.2L3.5 12Z" />
           </svg>
-          发送
+          ${running ? "插话" : "发送"}
         </button>
-        <button class="stop-btn" id="btn-stop" style=${(running || childrenActive) ? "display:inline-block" : "display:none"}
+        <button class="stop-btn" id="btn-stop" style=${(running || childrenActive) && !(running && hasDraft) ? "display:inline-block" : "display:none"}
           onClick=${stop}>停止</button>
       </div>
       <input type="file" id="file-shot" accept="image/*" multiple hidden ref=${fileRef}
         onChange=${(e) => { addImageFiles(Array.from(e.target.files || [])); e.target.value = ""; }} />
     </div>
     <div class="composer-foot">
-      <span class=${"token-usage" + (tokenWarn ? " warn" : "")} id="token-usage">${tokenText}</span>
-      <span class=${cacheClass} id="cache-hit" title="上一轮 LLM 调用的 KV 前缀缓存命中(cached / prompt tokens)。n/a = 该部署未上报缓存命中(如 SGLang 未开 --enable-cache-report);0% = 已上报但本轮无命中。">${cacheText}</span>
-      <span class="token-usage" id="output-speed" title="输出速度(token/秒)。生成中为实时估算(≈);任务停止后保留最后一次的展示值(最后一次 LLM 调用的实测均值,已存入数据库)">${speedText}</span>
-      <div class="u-flex u-gap10">
-        <button class="compact-btn" id="btn-compact" title="手动压缩当前会话上下文(立即调用模型总结旧对话)"
-          disabled=${!current || running} onClick=${compactSession}>⚡ 压缩</button>
-        <span class="foot-hint" id="foot-hint" title="点击切换发送快捷键:Enter 发送 ↔ Shift+Enter 发送"
-          onClick=${toggleSendMode}>${sendMode === "shift" ? "Shift+Enter 发送 · Enter 换行" : "Enter 发送 · Shift+Enter 换行"} · Ctrl+V 粘贴截图 · @ 选文件夹</span>
-      </div>
+      <span class="sess-pop-wrap">
+        <button class=${"foot-chip" + (sessPop ? " on" : "")} id="sess-stats"
+          title="会话统计:轮次 / 步 / 模型用时 / 工具调用用时 / 首 token 平均"
+          onClick=${() => setSessPop(!sessPop)}>${roundsN} 轮 · ${stepsN} 步 · ${speedShort}</button>
+        ${sessPop ? html`<div class="foot-pop" id="sess-pop">
+          <div class="fp-title">会话统计</div>
+          <div class="fp-row"><span>轮次</span><b>${roundsN}</b></div>
+          <div class="fp-row"><span>步数</span><b>${stepsN}</b></div>
+          <div class="fp-row"><span>模型用时</span><b>${stats.model_ms ? fmtDurMs(stats.model_ms) : "—"}</b></div>
+          <div class="fp-row"><span>工具调用用时</span><b>${stats.tool_ms ? fmtDurMs(stats.tool_ms) : "—"}</b></div>
+          <div class="fp-row"><span>首 token 平均(TTFT)</span><b>${stats.ttft_avg_ms ? fmtDurMs(stats.ttft_avg_ms) : "未测"}</b></div>
+          <div class="fp-row"><span>输出速度(TPS)</span><b>${speedText || "—"}</b></div>
+        </div>` : null}
+      </span>
+      <button class="foot-chip" id="ctx-total"
+        title="本会话累计用掉的上下文(历次请求输入之和)· 点击打开上下文管理"
+        onClick=${() => toggleCtxPanel()}>${totals ? (fmtTok(totals.input) || "0 tok") : "—"} · 缓存命中 ${hitPct || "未上报"}</button>
+      <span class="row-flex"></span>
+      <span class=${"ctx-meter" + (tokenWarn ? " warn" : "")} id="token-usage" title=${meterTitle}>
+        <i class="cm-bar"><i style=${{ width: Math.min(100, ctxPct) + "%" }}></i></i><b>${ctxPct}%</b>
+      </span>
     </div>
   </div>`;
 }

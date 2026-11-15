@@ -38,9 +38,10 @@ func TestIndexServesComposerThinkingUI(t *testing.T) {
 		`id="think-badge"`,
 		`id="think-pop"`,
 		`id="tp-effort"`,
-		`id="cache-hit"`,
+		`id="ctx-total"`,   // v4:「总 tok · 缓存命中」芯片(点开管理抽屉)
+		`id="sess-stats"`, // v4:「N 轮 · M 步 · X tok/s」芯片(弹会话统计)
 		"openThinkingPop",
-		"paintCacheHit",
+		"toggleCtxPanel", // 底栏直连抽屉
 	}
 	for _, m := range want {
 		if !strings.Contains(page, m) {

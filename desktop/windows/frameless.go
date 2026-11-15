@@ -19,7 +19,7 @@
 //     直接回落 DefWindowProc,四周留下一圈【真】的 NC 缩放边框 —— 光标、角、
 //     size loop 全是系统原生逻辑,浏览器子窗口(按 GetClientRect 铺)天然盖不到
 //     这条边框。WM_NCHITTEST 从此只负责一件事:client 顶部 40px 拖拽带返回
-//     HTCAPTION(右侧留出按钮组)。最大化时维持原方案:整窗皆 client,
+//     HTCAPTION(左侧让出三点窗控带)。最大化时维持原方案:整窗皆 client,
 //     NCCALCSIZE 内缩掉屏幕外的隐形缩放边框。
 //
 //  3. 坐标/缩放:WM_NCHITTEST 的 lParam 是【物理】屏幕坐标,而 40/282 这些
@@ -78,18 +78,18 @@ const (
 	smCxSizeFrame = 32 // SM_CXSIZEFRAME
 	smCxPadBorder = 92 // SM_CXPADDEDBORDER
 
-	// 逻辑像素,与页面 CSS 严格同步(layers.css v7 段):
+	// 逻辑像素,与页面 CSS 严格同步(layers.css v2 标题条段):
 	//   tbLogicalH = --tb-h        拖拽条高 40px(自 client 顶起算)
-	//   tbAppW     = --tb-app-w    左侧应用按钮组宽 = 2×72px(设置 / 主题)= 144px
-	//   tbControlsW = --tb-ctl-w   右侧窗口按钮组宽 = 3×46px(min / max / close)= 138px
-	// 顶部 40px 里【两侧按钮组之间】才判 HTCAPTION,那里的页面 DOM 收不到鼠标
-	// 事件:带算宽了会把按钮判进拖拽带(点了只拖窗),算窄了按钮正常但空档拖不
-	// 动。按钮文字/数量/宽度一改,这里和 layers.css 要一起改。
+	//   tbAppW     = --tb-app-w    左侧三点窗控带宽(macOS 红/黄/绿,close/min/max)
+	//   tbControlsW = --tb-ctl-w   右侧窗口按钮组 —— v2 起右侧不再放按钮,宽度 0
+	// 顶部 40px 里【三点带以右】才判 HTCAPTION,那里的页面 DOM 收不到鼠标
+	// 事件:带算宽了会把三点判进拖拽带(点了只拖窗),算窄了三点和空档都正常。
+	// 按钮文字/数量/宽度一改,这里和 layers.css 要一起改。
 	// (四边缩放是真 NC 边框,系统处理;主拖动路径另有 JS 的 mousedown→
 	// mcWinDrag,见 titlebar.js,这条命中带只是兜底。)
 	tbLogicalH  = 40
-	tbAppW      = 144
-	tbControlsW = 138
+	tbAppW      = 70
+	tbControlsW = 0
 
 	// WebView2 的 controller 是异步初始化的,子窗口要等一会儿才出现,
 	// 所以先用定时器兜底扫,挂上就停表(之后靠 WM_PARENTNOTIFY / WM_SIZE 复查)。
@@ -431,8 +431,8 @@ func hitTestFrame(x, y, w, h float64, zoomed bool) uintptr {
 	if x < 0 || y < 0 || x >= w || y >= h {
 		return 0 // 点不在 client 里(缩放边框/窗外),交回原始判定
 	}
-	// 拖拽带:client 顶部 tbLogicalH 高,左侧让出应用按钮组(设置/主题),
-	// 右侧让出窗口按钮组(min/max/close)—— 两边的按钮都要能点。
+	// 拖拽带:client 顶部 tbLogicalH 高,左侧让出三点窗控带(close/min/max),
+	// 右侧 v2 起不再放按钮 —— 三点带的按钮要能点。
 	if y < tbLogicalH && x >= tbAppW && x < w-tbControlsW {
 		return htCaption
 	}

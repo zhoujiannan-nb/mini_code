@@ -6,7 +6,7 @@
 import { h } from "preact";
 import htm from "htm";
 
-import { useStore, setState, getState, toast, toggleRail } from "../lib/store.js";
+import { useStore, setState, getState, toast, toggleCtxPanel, toggleSummaryPanel, toggleTrajPanel } from "../lib/store.js";
 import { cycleThemeMode, themeLabel } from "../lib/theme.js";
 import { selectSession, renameSession, loadChildren, loadJobs, toggleMode } from "../lib/actions.js";
 import { isFrameless } from "../lib/titlebar.js";
@@ -46,7 +46,24 @@ export function Topbar() {
     <button class=${"mode-btn" + (mode === "cautious" ? " cautious" : "")} id="btn-mode" title=${current
       ? "点击切换权限模式:完整=直接执行;谨慎=危险操作(删文件/危险命令)需审批,立即生效"
       : "新会话的权限模式:完整=直接执行;谨慎=危险操作需审批"}
-      onClick=${toggleMode}>${(mode === "cautious" ? "🛡 谨慎模式" : "⚡ 完整模式") + (current ? "" : "(新会话)")}</button>
+      onClick=${toggleMode}>
+      <svg class="mb-ico" viewBox="0 0 24 24" aria-hidden="true">
+        ${mode === "cautious"
+          ? html`<path d="M12 3 5 6v5c0 4.4 3 8.4 7 10 4-1.6 7-5.6 7-10V6l-7-3Z" />`
+          : html`<path d="M13 3 5.5 13.5H11L10 21l7.5-10.5H12L13 3Z" />`}
+      </svg>
+      ${(mode === "cautious" ? "谨慎模式" : "完整模式") + (current ? "" : "(新会话)")}
+    </button>
+    <button class=${"mode-btn traj-btn" + (useStore((s) => s.trajOpen) ? " on" : "")} id="btn-traj"
+      title="轨迹:本会话逐步执行流(任务/助手/工具/压缩),含时间线与搜索"
+      onClick=${toggleTrajPanel}>
+      <svg class="mb-ico" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 16.5 8 10l4 4.5L16 6l5 7.5" />
+        <circle cx="8" cy="10" r="1.5" fill="currentColor" stroke="none" />
+        <circle cx="16" cy="6" r="1.5" fill="currentColor" stroke="none" />
+      </svg>
+      轨迹
+    </button>
     <div class="spacer"></div>
     <button class=${"approval-badge" + (count ? " show" : "")} id="btn-approval-badge"
       title="有待审批的危险操作"
@@ -70,7 +87,8 @@ export function ChatHead() {
   const children = useStore((s) => s.children);
   const tasksOpen = useStore((s) => s.tasksOpen);
   const jobsOpen = useStore((s) => s.jobsOpen);
-  const railOpen = useStore((s) => s.railOpen);
+  const ctxOpen = useStore((s) => s.ctxOpen);
+  const summaryOpen = useStore((s) => s.summaryOpen);
 
   const cur = (sessions || []).find((s) => s.session_id === current);
   const parentId = cur && cur.parent_id;
@@ -88,8 +106,7 @@ export function ChatHead() {
       onDblClick=${() => { if (current) renameSession(current, cur ? cur.title : ""); }}>${title}</span>
     <span id="chat-sub">${sub}</span>
     <span class="spacer"></span>
-    <button class=${"tasks-btn" + (current && (children || []).length ? " show" : "")} id="btn-tasks"
-      title="查看该会话派遣的子代理任务"
+    <button class="tasks-btn show" id="btn-tasks" title="子代理:该会话派遣的子任务"
       onClick=${() => { const open = !getState().tasksOpen; setState({ tasksOpen: open }); if (open) loadChildren(); }}>
       <svg class="tb-ico" viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="9" cy="8" r="3.2" />
@@ -97,26 +114,32 @@ export function ChatHead() {
         <circle cx="17" cy="9" r="2.4" />
         <path d="M15.5 14.4c2.3.3 3.9 1.9 4.4 4.3" />
       </svg>
-      <span class=${"tb-n" + (runningKids ? " hot" : "")} id="tasks-count">${runningKids > 0 ? runningKids : (children || []).length}</span> 个子智能体
+      <span class=${"tb-n" + (runningKids ? " hot" : "")} id="tasks-count">${runningKids > 0 ? runningKids : (children || []).length}</span> 子代理
     </button>
-    <button class=${"tasks-btn" + (current && jobsTotal ? " show" : "")} id="btn-jobs"
-      title="该会话的后台命令(运行中/已完成,可停止)"
+    <button class="tasks-btn show" id="btn-jobs" title="后台命令:运行中/已完成,可停止"
       onClick=${() => { const open = !getState().jobsOpen; setState({ jobsOpen: open }); if (open) loadJobs(); }}>
       <svg class="tb-ico" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M12 3.5 21 8l-9 4.5L3 8Z" />
         <path d="M3 12.5 12 17l9-4.5" />
         <path d="M3 16.5 12 21l9-4.5" />
       </svg>
-      <span class=${"tb-n" + (jobsRunning ? " hot" : "")} id="jobs-count">${jobsRunning > 0 ? jobsRunning : jobsTotal}</span> 个后台任务
+      <span class=${"tb-n" + (jobsRunning ? " hot" : "")} id="jobs-count">${jobsRunning > 0 ? jobsRunning : jobsTotal}</span> 后台
     </button>
-    <button class=${"tasks-btn show" + (railOpen ? " on" : "")} id="btn-rail"
-      title="右侧执行摘要栏:任务状态 / 结果 / 相关文件 / 性能指标"
-      onClick=${toggleRail}>
+    <button class=${"tasks-btn show" + (summaryOpen ? " on" : "")} id="btn-summary"
+      title="执行摘要:agent 的目标 / 待办 / 动过的文件" onClick=${toggleSummaryPanel}>
       <svg class="tb-ico" viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
-        <path d="M14.5 4.5v15" />
+        <path d="M5 4.5h14" /><path d="M5 9.5h10" /><path d="M5 14.5h14" /><path d="M5 19.5h8" />
       </svg>
-      执行摘要
+      摘要
+    </button>
+    <button class=${"tasks-btn show" + (ctxOpen ? " on" : "")} id="btn-rail"
+      title="上下文管理:占用 / 组成 / 轮次步 / 事件" onClick=${toggleCtxPanel}>
+      <svg class="tb-ico" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3.5" y="4.5" width="17" height="4.2" rx="1.6" />
+        <rect x="3.5" y="10.4" width="17" height="4.2" rx="1.6" />
+        <rect x="3.5" y="16.3" width="10" height="4.2" rx="1.6" />
+      </svg>
+      上下文
     </button>
     <div class=${"tasks-panel" + (tasksOpen ? " open" : "")} id="tasks-panel">
       ${tasksOpen ? html`<${TasksPanel} />` : null}

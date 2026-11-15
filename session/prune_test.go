@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -78,16 +79,56 @@ func TestPruneToolTextSpillPathInMarker(t *testing.T) {
 	}
 }
 
-func TestPruneExemptTools(t *testing.T) {
-	for _, n := range []string{"read", "list_dir", "glob", "read_file"} {
-		if !pruneExempt(n) {
-			t.Errorf("%s must be exempt from pruning", n)
+func TestPruneExemptCall(t *testing.T) {
+	spill := filepath.Join(t.TempDir(), "spill")
+	under := filepath.Join(spill, "s1-call1.txt")
+	near := spill + "_old" + string(filepath.Separator) + "x.txt" // sibling prefix, not inside
+
+	// Listing tools: unconditional exemption (own caps + footers).
+	for _, n := range []string{"glob", "list_dir"} {
+		if !pruneExemptCall(n, "", spill) {
+			t.Errorf("%s must be exempt", n)
 		}
 	}
-	for _, n := range []string{"exec", "search_files", "write_file"} {
-		if pruneExempt(n) {
+	// Read tools: exemption is the spill folder, not the name.
+	for _, n := range []string{"read", "read_file"} {
+		if !pruneExemptCall(n, under, spill) {
+			t.Errorf("%s of a spill file must be exempt (loop guard)", n)
+		}
+		if pruneExemptCall(n, `D:\project\js\world.js`, spill) {
+			t.Errorf("%s of a project file must NOT be exempt", n)
+		}
+		if pruneExemptCall(n, near, spill) {
+			t.Errorf("%s escaped the folder boundary: %s", n, near)
+		}
+		if pruneExemptCall(n, "relative\\spill\\x.txt", spill) {
+			t.Errorf("%s relative path must NOT be exempt (only marker-absolute re-reads qualify)", n)
+		}
+	}
+	// Everything else never exempts.
+	for _, n := range []string{"exec", "search_files", "write_file", "web_fetch"} {
+		if pruneExemptCall(n, under, spill) {
 			t.Errorf("%s must NOT be exempt", n)
 		}
+	}
+	// Missing spill dir disables the read exemption (nothing could loop).
+	if pruneExemptCall("read", under, "") {
+		t.Error("empty spillDir must disable the read exemption")
+	}
+}
+
+func TestToolCallPath(t *testing.T) {
+	if p := toolCallPath(`{"file_path":"C:\\a\\b.txt","offset":1}`); p != `C:\a\b.txt` {
+		t.Fatalf("file_path not read: %q", p)
+	}
+	if p := toolCallPath(`{"path":"x.go"}`); p != `x.go` {
+		t.Fatalf("path fallback not read: %q", p)
+	}
+	if p := toolCallPath(`not json`) ; p != "" {
+		t.Fatalf("malformed args must yield empty path: %q", p)
+	}
+	if p := toolCallPath(""); p != "" {
+		t.Fatalf("empty args: %q", p)
 	}
 }
 
@@ -221,17 +262,20 @@ func (bigReadTool) Execute(ctx context.Context, params map[string]interface{}) (
 	return tools.NewTextResult(strings.Repeat("R", 40000)), nil
 }
 
-// TestLoopExemptsReadFile pins the dsh spill-policy read exemption: a huge
-// read_file result must reach the history intact. Cutting it would force the
-// model to re-read the spill file through read_file, which would be pruned
-// again — the read→spill→read loop dsh explicitly tests against.
+// TestLoopExemptsReadFile pins the spill-folder half of the read exemption:
+// a huge re-read of a spill file must reach the history intact, or the
+// model's recovery step would prune again and spawn another spill file —
+// the read→spill→read loop dsh explicitly tests against.
 func TestLoopExemptsReadFile(t *testing.T) {
+	spillRoot := t.TempDir()
+	argsEsc := escapeArgs(map[string]string{"file_path": filepath.ToSlash(filepath.Join(spillRoot, "seed.txt"))})
+
 	var requests int
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		w.Header().Set("Content-Type", "text/event-stream")
 		if requests == 1 {
-			writeSSEChunk(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_r1","type":"function","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)
+			writeSSEChunk(w, fmt.Sprintf(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_r1","type":"function","function":{"name":"read_file","arguments":"%s"}}]},"finish_reason":"tool_calls"}]}`, argsEsc))
 		} else {
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}`)
 		}
@@ -246,7 +290,7 @@ func TestLoopExemptsReadFile(t *testing.T) {
 	loop.compactionOn = false
 	rec := &eventRecorder{}
 	loop.SetEventSink(rec.sink)
-	loop.SetSpillDir(t.TempDir(), "sessR")
+	loop.SetSpillDir(spillRoot, "sessR")
 
 	res, err := loop.Run(context.Background(), "sys", "go", nil)
 	if err != nil || res == nil || !res.Success {
@@ -254,7 +298,7 @@ func TestLoopExemptsReadFile(t *testing.T) {
 	}
 	for _, ty := range rec.types() {
 		if ty == EventCompactionPrune {
-			t.Fatal("read_file result must be exempt from pruning")
+			t.Fatal("spill-file re-read must be exempt from pruning")
 		}
 	}
 	var toolMsg string
@@ -264,7 +308,79 @@ func TestLoopExemptsReadFile(t *testing.T) {
 		}
 	}
 	if len([]rune(toolMsg)) != 40000 || strings.Contains(toolMsg, "middle pruned") {
-		t.Fatalf("read_file result was cut: %d runes", len([]rune(toolMsg)))
+		t.Fatalf("spill re-read was cut: %d runes", len([]rune(toolMsg)))
+	}
+}
+
+// escapeArgs renders an args map as the JSON-escaped string embedded in the
+// tool_call "arguments" field of an SSE chunk (backslashes first, then the
+// quotes — otherwise an embedded Windows path decodes to broken inner JSON
+// and the tool errors out before the prune pass ever sees it).
+func escapeArgs(m map[string]string) string {
+	b, err := json.Marshal(m)
+	if err != nil {
+		panic(err)
+	}
+	s := strings.ReplaceAll(string(b), `\`, `\\`)
+	return strings.ReplaceAll(s, `"`, `\"`)
+}
+
+// TestLoopPrunesWholeFileRead pins the other half: a whole-file read of an
+// ordinary (non-spill) path is ordinary inflow and pays the normal cut —
+// the hole that let five 40k-char game-source reads into a session's
+// attention untouched.
+func TestLoopPrunesWholeFileRead(t *testing.T) {
+	argsEsc := escapeArgs(map[string]string{"file_path": `D:\game\js\world.js`})
+
+	var requests int
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "text/event-stream")
+		if requests == 1 {
+			writeSSEChunk(w, fmt.Sprintf(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_w1","type":"function","function":{"name":"read_file","arguments":"%s"}}]},"finish_reason":"tool_calls"}]}`, argsEsc))
+		} else {
+			writeSSEChunk(w, `{"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}`)
+		}
+		w.Write([]byte("data: [DONE]\n\n"))
+	}
+	client, closeFn := newLedgerClient(t, handler)
+	defer closeFn()
+
+	reg := tools.NewToolRegistry()
+	reg.Register(bigReadTool{})
+	loop := NewAgentLoop(client, 5, reg, []provider.ToolSchema{tools.ToSchema(bigReadTool{})}, nil, nil, nil, nil)
+	loop.compactionOn = false
+	rec := &eventRecorder{}
+	loop.SetEventSink(rec.sink)
+	spillRoot := t.TempDir()
+	loop.SetSpillDir(spillRoot, "sessW")
+
+	res, err := loop.Run(context.Background(), "sys", "go", nil)
+	if err != nil || res == nil || !res.Success {
+		t.Fatalf("Run: err=%v", err)
+	}
+	pruned := false
+	for i, ty := range rec.types() {
+		if ty == EventCompactionPrune && rec.events[i].payload["call_id"] == "call_w1" {
+			pruned = true
+		}
+	}
+	if !pruned {
+		t.Fatal("whole-file read of a project path must be pruned")
+	}
+	var toolMsg string
+	for _, m := range res.Messages {
+		if m.Role == "tool" {
+			toolMsg = m.GetText()
+		}
+	}
+	if !strings.Contains(toolMsg, "middle pruned") {
+		t.Fatal("history must carry the pruned copy")
+	}
+	// Full text reachable again through the spill file.
+	b, err := os.ReadFile(filepath.Join(spillRoot, "sessW-call_w1.txt"))
+	if err != nil || len(b) != 40000 {
+		t.Fatalf("spill file for the read: err=%v len=%d", err, len(b))
 	}
 }
 

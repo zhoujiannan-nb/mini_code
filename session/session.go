@@ -60,6 +60,11 @@ type Session struct {
 	// them at the start of each turn (AgentLoop.SetInjections). Guarded by mu.
 	pendingInjects []string
 
+	// writeAhead counts the user rows QueueUserMessage appended to
+	// record.Messages but that no task start has taken over yet (see
+	// Prompt's reconcile). Guarded by mu.
+	writeAhead int
+
 	// injectWake is wait_agent's doorbell: QueueUserMessage pings it (never
 	// blocks, buffered 1) so a blocked WaitForInput wakes without polling.
 	// Created lazily under mu; waiters re-check pendingInjects first, so an
@@ -371,6 +376,7 @@ func (s *Session) QueueUserMessage(text string) {
 	s.mu.Lock()
 	s.pendingInjects = append(s.pendingInjects, text)
 	s.record.Messages = append(s.record.Messages, provider.Message{Role: "user", Content: text})
+	s.writeAhead++
 	if s.injectWake == nil {
 		s.injectWake = make(chan struct{}, 1)
 	}
@@ -758,6 +764,36 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	s.maybeGenerateTitle([]provider.Message{{Role: "user", Content: goal}})
 	s.mu.Lock()
 	history := s.record.Messages
+	// Reconcile with write-ahead rows (QueueUserMessage): a message that raced
+	// this task start can already sit in the history snapshot. Leave it in the
+	// queue and the loop's turn-one drain would inject the same text a second
+	// time, persisting the row twice when the loop overwrites the record.
+	// Queue entries persist as trailing user rows in queue order, so a
+	// trailing-window match means those rows are exactly those injections.
+	if n := len(s.pendingInjects); n > 0 {
+		m := 0
+		for m < n && m < len(history) {
+			hm := history[len(history)-1-m]
+			if hm.Role != "user" || hm.GetText() != s.pendingInjects[n-1-m] {
+				break
+			}
+			m++
+		}
+		if m > 0 {
+			s.pendingInjects = s.pendingInjects[:n-m]
+			s.writeAhead -= m
+		}
+	}
+	// Same story for the goal itself: if the final save of the previous task
+	// raced a queued message that then persisted behind it (settle-drain
+	// window), the row is already in history; the loop re-adds it as the goal,
+	// so drop the copy. Only rows QueueUserMessage wrote are eligible.
+	if s.writeAhead > 0 && len(history) > 0 {
+		if last := history[len(history)-1]; last.Role == "user" && last.GetText() == goal {
+			history = history[:len(history)-1]
+			s.writeAhead--
+		}
+	}
 	s.mu.Unlock()
 	// The run begins: record the task (and the user message it answers) in
 	// the ledger. The loop records everything after this point; the matching
@@ -782,6 +818,10 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	if len(result.Messages) > 0 {
 		s.mu.Lock()
 		s.record.Messages = append([]provider.Message(nil), result.Messages...)
+		// The conversation now owns the history: any write-ahead rows are by
+		// definition either in result.Messages (drained) or re-dispatched
+		// below, so the count starts over.
+		s.writeAhead = 0
 		s.persistLocked()
 		s.mu.Unlock()
 	}

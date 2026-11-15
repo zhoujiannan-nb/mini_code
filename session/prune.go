@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -57,18 +58,70 @@ func init() {
 	}
 }
 
-// pruneExempt names tools whose results the pass must never cut: they already
-// carry their own caps and continuation footers (read "Showing lines X-Y of
-// TOTAL", glob its 100-result cap), and cutting a read result breaks the
-// spill-recovery loop — the model re-reads a spill file, the read comes back
-// pruned again (and spawns ANOTHER spill file), which is exactly the
-// read→spill→read cycle dsh pins out with an explicit read exemption in its
-// spill-policy plugin. Both the dsh names (read) and the historical mc names
-// (read_file, list_dir) stay exempt so old ledger rows folded through this
-// pass are treated the same way.
-var pruneExemptTools = map[string]bool{"read": true, "glob": true, "read_file": true, "list_dir": true}
+// pruneExemptTools names tools whose results the pass must never cut: they
+// already carry their own caps and continuation footers (glob's 100-result
+// cap with the full-list spill notice, list_dir's listing budget), so a
+// second cut would only break their own recovery contract.
+var pruneExemptTools = map[string]bool{"glob": true, "list_dir": true}
+
+// readTools are the content-read tools, and their exemption is PATH-based,
+// not name-based. Only a re-read of a spill file must survive intact:
+// cutting one would prune the recovery read too (and spawn ANOTHER spill
+// file), the read→spill→read loop dsh pins out with its spill-policy
+// exemption. A whole-file read of an ordinary project file is just inflow —
+// a real game-session ledger showed five exempt-by-name whole-file reads
+// alone cost ~50k tokens of attention — so those now pay the same head/tail
+// cut as every other tool, with the full text spilling to a file the marker
+// names and the original file still re-readable by offset/limit windows.
+// Both the dsh name (read) and the historical mc name (read_file) share the
+// rule so old ledger rows fold the same way.
+var readTools = map[string]bool{"read": true, "read_file": true}
 
 func pruneExempt(name string) bool { return pruneExemptTools[name] }
+
+// pruneExemptCall is the call-site check: unconditional for the capped
+// listing tools, spill-folder-scoped for the read tools, false for
+// everything else. pathArg is the call's file argument ("" when it has none
+// or the args do not parse) and spillDir the loop's spill folder.
+func pruneExemptCall(name, pathArg, spillDir string) bool {
+	if pruneExemptTools[name] {
+		return true
+	}
+	if readTools[name] {
+		return isUnderSpillDir(pathArg, spillDir)
+	}
+	return false
+}
+
+// isUnderSpillDir reports whether path is a file inside the spill folder.
+// Only absolute paths qualify: the prune marker always names the absolute
+// spill path, so a genuine spill re-read arrives absolute while any other
+// read keeps the normal cut. Compared case-insensitively (Windows path
+// casing) and on a cleaned separator boundary, so "spill_old" is not "spill".
+func isUnderSpillDir(path, spillDir string) bool {
+	if path == "" || spillDir == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	p, d := filepath.Clean(path), filepath.Clean(spillDir)
+	if len(p) <= len(d) || !strings.EqualFold(p[:len(d)], d) {
+		return false
+	}
+	c := p[len(d)]
+	return c == filepath.Separator || c == '/' || c == '\\'
+}
+
+// toolCallPath pulls the file argument out of a tool call's raw JSON args
+// ("" when absent or malformed — malformed args then take the normal cut).
+func toolCallPath(args string) string {
+	if args == "" {
+		return ""
+	}
+	var p map[string]interface{}
+	if err := json.Unmarshal([]byte(args), &p); err != nil {
+		return ""
+	}
+	return toolPathArg(p)
+}
 
 // pruneToolText cuts s to head + marker + tail. Returns (pruned, true) when
 // the text is over threshold; ("", false) otherwise, so callers can tell "no

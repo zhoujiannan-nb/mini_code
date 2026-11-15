@@ -79,25 +79,13 @@ export function fmtTaskDur(c, now) {
   return Math.floor(m / 60) + "小时" + (m % 60) + "分";
 }
 
-// 缓存命中率的展示文案。纯函数:Composer 画、测试也能直接断言。
-// `reported` 区分"provider 真的报了 0%"与"这个部署根本不上报缓存命中"(n/a),
-// 这样一次真的 miss 不会被误标成未知。
-export function paintCacheHit(prompt, cached, reported) {
-  if (!prompt || prompt <= 0) return { text: "", className: "token-usage" };
-  if (!reported) return { text: "缓存 n/a", className: "token-usage nohit" };
-  const pct = Math.min(100, Math.round((cached || 0) * 100 / prompt));
-  return {
-    text: "缓存 " + pct + "% (" + fmtK(cached || 0) + "/" + fmtK(prompt) + ")",
-    className: "token-usage",
-  };
-}
-
-// 输出速度的展示文案。accurate=true 为后端实测(完成 token / 首 token→流结束),
-// false 为前端实时估算(带 ≈)。v<=0 清空。
+// 输出速度的展示文案(弹层大字用)。accurate=true 为后端实测(完成 token / 首
+// token→流结束),false 为前端实时估算(带 ≈)。v<=0 空串。
+// (旧的 paintCacheHit 已删:底栏缓存不再内联单次数字,改点击弹层看累计。)
 export function paintSpeed(v, accurate) {
   if (!v || v <= 0) return "";
   const n = v >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
-  return "速度" + (accurate ? "" : " ≈") + " " + n + " token/s";
+  return (accurate ? "" : "≈ ") + n + " token/s";
 }
 
 // jobElapsed:运行中行用当前时刻,结束行用 ended_at;小时封顶。
@@ -116,3 +104,13 @@ export function jobElapsed(j, now) {
 
 // 秒数 → "12s" / "1m20s"(工具步骤计时用,和 fmtRun 同义但保留独立名字便于阅读)
 export const fmtSec = fmtRun;
+
+// fmtDurMs:毫秒 → "1.8秒"(<10s 保留一位小数)/"54分22秒"/"68分52秒"。
+// 会话统计浮层的用时列专用(模型用时/工具调用用时/TTFT)。≥1 小时不进位成
+// "小时"而保持总分秒 —— 与 dsh 的统计浮层一致(它显示 68分52秒 而非 1小时08分)。
+export function fmtDurMs(ms) {
+  ms = Number(ms) || 0;
+  if (ms < 10000) return (Math.round(ms / 100) / 10) + "秒";
+  const sec = Math.round(ms / 1000);
+  return Math.floor(sec / 60) + "分" + (sec % 60) + "秒";
+}

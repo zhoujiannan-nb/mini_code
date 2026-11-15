@@ -619,8 +619,6 @@ details.m-think[open] summary { margin-bottom: 6px; }
 }
 .token-usage { font-variant-numeric: tabular-nums; }
 .token-usage.warn { color: var(--amber-t); font-weight: 600; }
-#cache-hit { color: var(--text2); }
-#cache-hit.nohit { color: var(--text3); }
 /* 输出速度:生成中为字符增量实时估算(≈),任务停止后保留最后一次值
    (最后一次 LLM 调用的实测均值,由后端持久化在会话中) */
 #output-speed { color: var(--text2); }

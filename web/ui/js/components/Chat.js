@@ -5,7 +5,7 @@
 // MessageList(memo)按 rows 数组引用挡在外面 —— 不再有旧实现里"每个 delta 把整条
 // 消息 mdToHtml(全文) 重算一遍"的 O(n²)。
 import { h } from "preact";
-import { useState, useEffect, useLayoutEffect, useRef } from "preact/hooks";
+import { useState, useLayoutEffect, useRef } from "preact/hooks";
 import htm from "htm";
 
 import { useStore } from "../lib/store.js";
@@ -30,15 +30,20 @@ export function Chat() {
   const runSteps = useStore((s) => s.run.steps);
   const running = useStore((s) => s.running);
   const current = useStore((s) => s.current);
+  const jumpTick = useStore((s) => s.jumpTick);
 
   const [visible, setVisible] = useState(HIST_PAGE);
   const boxRef = useRef(null);
   const stickRef = useRef(true); // 用户当前是否"在底部附近"
   const lastScrollHeight = useRef(0);
+  const jumpedTick = useRef(jumpTick);
 
   // 切会话:回到最近一页,并强制跟到底(旧行为:初始视图直接落在最新一条)。
-  useEffect(() => {
+  // 必须是 layout effect:本地 fetch 常在被动 effect(rAF)之前就带回 rows,
+  // 用 useEffect 时滚动 effect 先跑、stick 还没复位,切完会话停在旧滚动位置。
+  useLayoutEffect(() => {
     setVisible(HIST_PAGE);
+    jumpedTick.current = jumpTick; // 同一次 setState 也动了 jumpTick,这里消费掉
     stickRef.current = true;
   }, [current]);
 
@@ -48,9 +53,15 @@ export function Chat() {
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (!el) return;
+    // 点击的就是"当前会话"时 current 不变、上面的切换 effect 不跑,
+    // 靠 jumpTick 兜底:点会话 = 我要看最新,一律跳底。
+    if (jumpTick !== jumpedTick.current) {
+      jumpedTick.current = jumpTick;
+      stickRef.current = true;
+    }
     if (stickRef.current) el.scrollTop = el.scrollHeight;
     lastScrollHeight.current = el.scrollHeight;
-  }, [rows, runSteps, contentKey, pending]);
+  }, [rows, runSteps, contentKey, pending, jumpTick]);
 
   const onScroll = () => {
     const el = boxRef.current;

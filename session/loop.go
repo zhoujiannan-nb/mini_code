@@ -821,6 +821,19 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 				"prompt_tokens": u.PromptTokens, "cached_tokens": cached,
 				"cache_reported": reported, "completion_tokens": u.CompletionTokens,
 				"reasoning_tokens": u.ReasoningTokens, "speed_tok_s": speed,
+				// Wall-clock of this one request/response, so the「上下文」drawer
+				// can total how long the model — as opposed to the tools — was
+				// the one holding the session up. Measured over the whole call
+				// including retries, which is what the user experiences.
+				"call_ms": time.Since(callStart).Milliseconds(),
+			}
+			// Time to first non-empty token, when the stream ever delivered one
+			// (a non-streaming provider or a reply with no text chunk has no
+			// TTFT to report, so the key stays absent rather than lying with 0).
+			if !firstTokAt.IsZero() {
+				if ttft := firstTokAt.Sub(callStart).Milliseconds(); ttft >= 0 {
+					usageEvent["ttft_ms"] = ttft
+				}
 			}
 			if l.onUsage != nil {
 				l.onUsage(u.PromptTokens, cached, u.CompletionTokens, reported, speed)
@@ -1442,7 +1455,7 @@ func (l *AgentLoop) executeToolsConcurrent(ctx context.Context, toolCalls []prov
 			// history carries only the pruned copy: that is the per-turn
 			// token saving this pass exists for. Multimodal results are left
 			// alone (their parts are not plain text).
-			if !results[idx].HasMultimodal() && !pruneExempt(tc.Function.Name) {
+			if !results[idx].HasMultimodal() && !pruneExemptCall(tc.Function.Name, toolCallPath(tc.Function.Arguments), l.spillDir) {
 				if before := len([]rune(text)); before > defaultPrune.Threshold {
 					spillPath := spillToolText(l.spillDir, l.spillID, tc.ID, text)
 					if pruned, ok := pruneToolText(text, spillPath); ok {

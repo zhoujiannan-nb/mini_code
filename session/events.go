@@ -28,7 +28,7 @@ const (
 	EventTaskEnd          = "task/end"          // {status: completed|failed|interrupted, turns, error?, reason?}
 	EventTurnStart        = "turn/start"        // {turn}
 	EventUserMessage      = "user/message"      // {text, source: input|queued|worker_notice|context_usage}
-	EventAssistantMessage = "assistant/message" // {content, reasoning_chars, tool_calls?, usage?}
+	EventAssistantMessage = "assistant/message" // {content, reasoning_chars, tool_calls?, usage?}; usage = {prompt_tokens, completion_tokens, cached_tokens, cache_reported, reasoning_tokens, speed_tok_s, call_ms, ttft_ms?} — call_ms is this one LLM call's whole wall-clock (retries included, that is what the user waited through), ttft_ms is the time to the first non-empty token and is only written when the stream delivered one
 	EventToolCall         = "tool/call"         // {call_id, name, args}
 	EventToolResult       = "tool/result"       // {call_id, name, ok, duration_ms, result | error}; a pruned replacement row repeats the call_id with "replaces" set (see compaction/prune)
 	EventCompactionPrune  = "compaction/prune"  // {call_id, name, chars_before, chars_after, spill?} — shadow event pricing one tool-result prune; the following tool/result row with the same call_id supersedes the full row

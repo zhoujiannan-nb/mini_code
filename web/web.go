@@ -85,6 +85,9 @@ func NewServer(be Backend) http.Handler {
 	// never delays the UI from coming up. A failure is logged and ignored: a
 	// broken plugin must not stop the agent from starting.
 	go plugin.DefaultProcs().StartAutostart()
+	// tiktoken loads a ~1.6MB BPE table on its first encode — pay that at boot,
+	// in the background, so the first「上下文」open isn't the one that waits.
+	go util.WarmTokenizer()
 	mux := http.NewServeMux()
 
 	// --- web UI ---
@@ -131,7 +134,12 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	mux.HandleFunc("GET /api/sessions/{id}/events", s.handleSessionEvents)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
-	mux.HandleFunc("POST /api/sessions/{id}/compact", s.handleCompactSession)
+	mux.HandleFunc("GET /api/sessions/{id}/context", s.handleSessionContext)
+	// The drawer's detail views (system prompt / tool schemas / per-message
+	// tokens or one message's full text): same {id} pattern as above.
+	mux.HandleFunc("GET /api/sessions/{id}/context/detail", s.handleSessionContextDetail)
+	// dsh 式轨迹抽屉的数据源(web/context_api.go 末段)。
+	mux.HandleFunc("GET /api/sessions/{id}/trajectory", s.handleSessionTrajectory)
 	mux.HandleFunc("POST /api/sessions/{id}/mode", s.handleSetMode)
 	mux.HandleFunc("POST /api/sessions/{id}/model", s.handleSetModel)
 	mux.HandleFunc("POST /api/sessions/{id}/reasoning", s.handleSetReasoning)
@@ -812,23 +820,9 @@ func (s *server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "session_id": id})
 }
 
-// handleCompactSession manually compresses a session's conversation with
-// the LLM summarizer (independent of the auto-compaction threshold).
-func (s *server) handleCompactSession(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
-	defer cancel()
-	before, after, err := s.be.Mgr().CompactSession(ctx, id)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"before":     before,
-		"after":      after,
-		"compressed": after < before,
-	})
-}
+// handleCompactSession was the manual-compaction endpoint; it was removed
+// (需求⑦): the loop's auto-compaction stays, the new home for that history is
+// GET /api/sessions/{id}/context (see context_api.go).
 
 // handleSetMode switches a session's permission mode (full / cautious).
 // It takes effect from the next tool call on, even mid-task.
@@ -1074,6 +1068,23 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	msg.Thinking = strings.TrimSpace(req.Thinking)
 	msg.ReasoningEffort = strings.TrimSpace(req.ReasoningEffort)
 	msg.WorkerID = strings.TrimSpace(req.WorkerID)
+	// 插话 (steering): a plain-text message to a session whose task is running is
+	// injected into the live loop (drained at the start of its next turn) instead
+	// of starting a second task — the hub would otherwise serialize it behind the
+	// per-session lock and deliver it only after the run ended. QueueUserMessage
+	// persists the row immediately, so a refresh shows it right away; mode/model
+	// fields on this request are ignored (they only describe new tasks).
+	// Images keep the old path: injection is text-only.
+	if req.SessionID != "" && len(req.Images) == 0 && s.be.Hub().ActiveTask(req.SessionID) {
+		if sess, err := s.be.Mgr().Get(req.SessionID); err == nil {
+			sess.QueueUserMessage(req.Content)
+			writeJSON(w, http.StatusAccepted, map[string]string{
+				"mode":       "steer",
+				"session_id": req.SessionID,
+			})
+			return
+		}
+	}
 	// The hub refuses rather than silently drops when its queue is full (F4), so
 	// the caller has to hear about it: 429 tells the UI "not accepted, retry"
 	// instead of leaving a message in the transcript that never reached the agent.

@@ -150,7 +150,8 @@ export function resetToNew() {
 
 export async function selectSession(id) {
   mcEmit("session");
-  setState({ current: id, live: null, pending: null });
+  // jumpTick 与 current 同批自增:点谁(包括正在看的会话)都要跳回最新消息。
+  setState({ current: id, live: null, pending: null, jumpTick: getState().jumpTick + 1 });
   try {
     const data = await api(ROUTES.session(id));
     if (getState().current !== id) return; // 等待期间又切走了,丢弃过期响应
@@ -449,6 +450,30 @@ export async function send(text, images) {
   }
 }
 
+// 插话(steering):任务运行中追一句话。后端检测会话有活动任务时把消息注入
+// 运行中的循环(下一轮生效),响应带 mode:"steer";如果任务恰好已收尾,后端会
+// 按普通新任务受理(无 mode 字段),这里照实提示。
+export async function sendSteer(text) {
+  text = String(text == null ? "" : text).trim();
+  const st = getState();
+  if (!text || !st.current) return false;
+  dispatch({ type: "userMessage", text, images: [] });
+  mcEmit("send");
+  try {
+    const r = await api(ROUTES.messages, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: text, session_id: st.current }),
+    });
+    if (r && r.mode === "steer") toast("已插话,将在下一步生效", "ok");
+    else toast("任务刚好已结束,已按新消息发送", "");
+    return true;
+  } catch (e) {
+    update((s) => ({ ...s, rows: s.rows.concat([{ key: "err-steer-" + Date.now(), kind: "error", text: "插话失败:" + e.message }] ) }));
+    return false;
+  }
+}
+
 export async function stop() {
   const state = getState();
   if (!state.current) { toast("会话尚未创建,无法停止", "err"); return; }
@@ -572,20 +597,17 @@ export async function persistReasoning() {
   }
 }
 
-export async function compactSession() {
+// 拉取会话的上下文快照(组成 / 累计用量 / 事件账本)。失败静默清空,由面板显示空态。
+export async function loadContext() {
   const state = getState();
-  if (!state.current || state.running) return;
+  if (!state.current) { setState({ ctxInfo: null }); return null; }
   try {
-    const r = await api(ROUTES.compact(state.current), { method: "POST" });
-    if (r.compressed) {
-      toast("上下文已压缩:" + r.before.toLocaleString() + " → " + r.after.toLocaleString() +
-        " tokens(释放 " + (r.before - r.after).toLocaleString() + ")", "ok");
-    } else {
-      toast("无需压缩:对话太短或没有可压缩的部分", "");
-    }
-    updateTokenUsage();
+    const r = await api(ROUTES.context(state.current));
+    setState({ ctxInfo: r });
+    return r;
   } catch (e) {
-    toast("压缩失败:" + e.message, "err");
+    setState({ ctxInfo: null });
+    return null;
   }
 }
 

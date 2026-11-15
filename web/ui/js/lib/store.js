@@ -23,6 +23,7 @@ export const initialState = {
   unassignedActive: 0,
   // ---- 当前会话 ----
   current: null,         // null = 新会话草稿
+  jumpTick: 0,           // selectSession 每点一次 +1:Chat 靠它跳回最新消息(含重点击当前会话)
   mode: "full",          // full | cautious
   model: "",
   models: [],
@@ -60,7 +61,14 @@ export const initialState = {
   agentAvatar: "",
   toast: null,
   themeMode: "system",
-  railOpen: readRailPref(),   // 右侧「执行摘要」栏:偏好存 localStorage,默认展开
+  // 发送快捷键与输入框提示语(需求⑧:tips 行移除,改到设置里配)。
+  // 值存 localStorage(纯客户端偏好),这里只是让设置面板一改、输入框即时生效。
+  sendMode: readLSText("mc-send-mode", "enter") === "shift" ? "shift" : "enter",
+  inputTip: readLSText("mc-input-tip", ""),
+  ctxOpen: readCtxPref(),    // 会话内「上下文」抽屉:偏好存 localStorage,默认收起
+  ctxInfo: null,             // GET /api/sessions/{id}/context 的快照(组成/累计/事件)
+  summaryOpen: readSumPref(),// 「执行摘要」抽屉(与上下文互斥,同一位置滑出)
+  trajOpen: false,           // 「轨迹」抽屉(dsh 式事件流,与上面两个同位互斥)
   settingsOpen: false,
   settingsPage: "page-appearance",
   avatarOpen: false,
@@ -74,17 +82,40 @@ export const initialState = {
   },
 };
 
-/* ---------------- 执行摘要栏开关 ---------------- */
-// railOpen 是唯一带持久化偏好的 UI 开关:关不关右侧「执行摘要」由用户定,
-// 存 localStorage(隐私模式读失败就默认展开)。
-const LS_RAIL_KEY = "mc-rail-open";
-function readRailPref() {
-  try { return localStorage.getItem(LS_RAIL_KEY) !== "0"; } catch (e) { return true; }
+/* ---------------- 上下文抽屉开关 ---------------- */
+// 通用 localStorage 文本读取(纯客户端偏好;隐私模式失败给默认值)。
+function readLSText(key, dflt) {
+  try { const v = localStorage.getItem(key); return v == null ? dflt : v; } catch (e) { return dflt; }
 }
-export function toggleRail() {
-  const next = !state.railOpen;
-  try { localStorage.setItem(LS_RAIL_KEY, next ? "1" : "0"); } catch (e) {}
-  setState({ railOpen: next });
+// ctxOpen 是唯一带持久化偏好的 UI 开关:开不开「上下文」抽屉由用户定,
+// 存 localStorage(隐私模式读失败就默认收起)。
+const LS_CTX_KEY = "mc-ctx-open";
+const LS_SUM_KEY = "mc-summary-open";
+function readCtxPref() {
+  try { return localStorage.getItem(LS_CTX_KEY) === "1"; } catch (e) { return false; }
+}
+function readSumPref() {
+  try { return localStorage.getItem(LS_SUM_KEY) === "1"; } catch (e) { return false; }
+}
+function writePref(key, on) {
+  try { localStorage.setItem(key, on ? "1" : "0"); } catch (e) {}
+}
+// 三个抽屉在同一位置滑出,互斥:开一个必关其余两个。
+export function toggleCtxPanel() {
+  const next = !state.ctxOpen;
+  writePref(LS_CTX_KEY, next);
+  setState(next ? { ctxOpen: true, summaryOpen: false, trajOpen: false } : { ctxOpen: false });
+  return next;
+}
+export function toggleSummaryPanel() {
+  const next = !state.summaryOpen;
+  writePref(LS_SUM_KEY, next);
+  setState(next ? { summaryOpen: true, ctxOpen: false, trajOpen: false } : { summaryOpen: false });
+  return next;
+}
+export function toggleTrajPanel() {
+  const next = !state.trajOpen;
+  setState(next ? { trajOpen: true, ctxOpen: false, summaryOpen: false } : { trajOpen: false });
   return next;
 }
 

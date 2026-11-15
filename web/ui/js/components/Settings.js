@@ -18,6 +18,11 @@ import { PluginCentre } from "./Plugins.js";
 
 const html = htm.bind(h);
 
+// 纯客户端偏好写 localStorage(隐私模式失败静默)。
+function setLS(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) {}
+}
+
 // DeepSeek 官方地址固定,UI 里选了 deepseek 就不用填 base_url。
 export const DS_BASE_URL = "https://api.deepseek.com";
 
@@ -129,6 +134,8 @@ export function Settings() {
   const open = useStore((s) => s.settingsOpen);
   const page = useStore((s) => s.settingsPage);
   const themeMode = useStore((s) => s.themeMode);
+  const sendMode = useStore((s) => s.sendMode);
+  const inputTip = useStore((s) => s.inputTip);
   const userAva = useStore((s) => s.userAvatar);
   const agentAva = useStore((s) => s.agentAvatar);
 
@@ -364,6 +371,26 @@ export function Settings() {
                   <span class="hint">jpg / png / webp,≤4MB,裁成方形;默认 = 墨色 + M</span>
                   <input type="file" id="agent-ava-file" accept="image/jpeg,image/png,image/webp" hidden
                     ref=${agentFileRef} onChange=${onAgentFile} />
+                </div>
+              </div>
+              <div class="pl-sec">
+                <div class="pl-sec-title">输入</div>
+                <div class="frow hinted"><label>发送快捷键</label>
+                  <select id="c-send-mode" value=${sendMode} onChange=${(e) => {
+                    setLS("mc-send-mode", e.target.value);
+                    setState({ sendMode: e.target.value });
+                    toast(e.target.value === "shift" ? "已切换: Shift+Enter 发送, Enter 换行" : "已切换: Enter 发送, Shift+Enter 换行", "ok");
+                  }}>
+                    <option value="enter">Enter 发送,Shift+Enter 换行</option>
+                    <option value="shift">Shift+Enter 发送,Enter 换行</option>
+                  </select>
+                  <span class="hint">立即生效,不用保存</span>
+                </div>
+                <div class="frow hinted"><label>输入框提示语</label>
+                  <input type="text" id="c-input-tip" value=${inputTip} maxlength="60"
+                    placeholder="留空 = 默认「输入任务…」"
+                    onInput=${(e) => { setLS("mc-input-tip", e.target.value); setState({ inputTip: e.target.value }); }} />
+                  <span class="hint">输入框里的占位文案,清空恢复默认</span>
                 </div>
               </div>
               <div class="pl-sec">

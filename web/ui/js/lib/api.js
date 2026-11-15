@@ -40,7 +40,9 @@ export function del(path) {
 // GET    /api/status
 // GET    /api/sessions?worker=<id>          GET /api/sessions/{id}
 // DELETE /api/sessions/{id}                 GET /api/sessions/{id}/events?tail_run=1
-// POST   /api/sessions/{id}/compact|mode|model|reasoning|rename|cancel
+// POST   /api/sessions/{id}/mode|model|reasoning|rename|cancel
+// GET    /api/sessions/{id}/context         (组成/累计用量/轮次步/上下文事件)
+// GET    /api/sessions/{id}/context/detail?part=system|tools|messages[&i=N]
 // GET    /api/sessions/{id}/children        GET /api/sessions/{id}/jobs
 // GET    /api/sessions/{id}/jobs/output?job=<id>
 // POST   /api/sessions/{id}/jobs/kill|jobs/clear
@@ -81,7 +83,26 @@ export const ROUTES = Object.freeze({
   mode: (id) => "/api/sessions/" + encodeURIComponent(id) + "/mode",
   model: (id) => "/api/sessions/" + encodeURIComponent(id) + "/model",
   reasoning: (id) => "/api/sessions/" + encodeURIComponent(id) + "/reasoning",
-  compact: (id) => "/api/sessions/" + encodeURIComponent(id) + "/compact",
+  context: (id) => "/api/sessions/" + encodeURIComponent(id) + "/context",
+  // 轨迹:?before=<seq> 翻更早一页(服务端默认给最新一页),limit 封顶 200。
+  trajectory: (id, opts) => {
+    let q = "/api/sessions/" + encodeURIComponent(id) + "/trajectory";
+    const o = opts || {};
+    if (o.before != null) q += "?before=" + encodeURIComponent(o.before);
+    if (o.limit) q += (q.includes("?") ? "&" : "?") + "limit=" + encodeURIComponent(o.limit);
+    return q;
+  },
+  // opts: {i, role, before, limit} —— i=单条全文;role=角色过滤;
+  // before=只取 index<before 的更早一页;limit=每页条数(后端默认 50、封顶 200)。
+  contextDetail: (id, part, opts) => {
+    let q = "/api/sessions/" + encodeURIComponent(id) + "/context/detail?part=" + encodeURIComponent(part);
+    const o = opts || {};
+    if (o.i != null) q += "&i=" + encodeURIComponent(o.i);
+    if (o.role) q += "&role=" + encodeURIComponent(o.role);
+    if (o.before != null) q += "&before=" + encodeURIComponent(o.before);
+    if (o.limit) q += "&limit=" + encodeURIComponent(o.limit);
+    return q;
+  },
   fsSearch: (q, limit) => "/api/fs/search?q=" + encodeURIComponent(q) + "&limit=" + (limit || 20),
   fsOpen: "/api/fs/open",
   avatar: "/api/avatar",

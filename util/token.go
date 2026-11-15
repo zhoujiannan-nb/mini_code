@@ -21,6 +21,16 @@ func warnTiktokenUnavailable(err error) {
 	})
 }
 
+// WarmTokenizer forces the one-time BPE table load now instead of on the
+// first real count (that first GetEncoding parses a ~1.6MB table and used to
+// cost the unlucky first UI open a second or two). Safe to call concurrently
+// with counting; GetEncoding is internally guarded and cached.
+func WarmTokenizer() {
+	if _, err := tiktoken.GetEncoding("cl100k_base"); err != nil {
+		warnTiktokenUnavailable(err)
+	}
+}
+
 // CountMessagesTokens counts tokens in messages using tiktoken.
 // Image parts are counted with the Qwen2-VL visual-token formula (see
 // image_tokens.go) instead of a fixed estimate, so context budgeting reflects

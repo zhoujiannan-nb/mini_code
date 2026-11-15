@@ -127,8 +127,29 @@ Operating system: Windows. Commands run through PowerShell (pwsh when installed,
 	}
 }
 
-func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string {
-	var parts []string
+// PromptPart is one section of the system prompt: its text plus what it is and
+// where it came from. Injected=false marks the sections that come from the code
+// and the agent role (人设 + 工作约束); everything else is stitched in from the
+// environment — the working directory, the AGENTS.md ancestor chain, the plugin
+// list, plugin memory, the OS block, the caller's extra context. The「上下文」
+// drawer uses this to answer "why is the system prompt this big, and which part
+// of it did my own setup contribute".
+type PromptPart struct {
+	Label    string `json:"label"`
+	Injected bool   `json:"injected"`
+	Text     string `json:"text"`
+}
+
+// BuildSystemPromptParts renders the system prompt as its sections, in send
+// order. It is the single definition of that order: BuildSystemPrompt is only
+// the joiner, so reading the parts can never change what a turn sends — the
+// provider's prefix cache matches bytes, and the bytes are exactly what they
+// were before sections existed.
+func (pb *PromptBuilder) BuildSystemPromptParts(workDir, extraContext string) []PromptPart {
+	var parts []PromptPart
+	add := func(label string, injected bool, text string) {
+		parts = append(parts, PromptPart{Label: label, Injected: injected, Text: text})
+	}
 	if pb.agentConfig.Prompt != "" {
 		// dsh-style persona: the file may name the model via {{model}}. Render it
 		// here (on a copy — the shared AgentConfig must stay untouched) so the
@@ -139,24 +160,24 @@ func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string 
 			name = "default"
 		}
 		persona = strings.ReplaceAll(persona, "{{model}}", name)
-		parts = append(parts, persona)
+		add("人设", false, persona)
 	}
-	parts = append(parts, workConstraints)
+	add("工作约束", false, workConstraints)
 	if workDir != "" {
-		parts = append(parts, "\n# Working Directory\n\nThe current working directory is: "+workDir+"\nAll file operations must be confined to this directory.\n")
+		add("工作目录", true, "\n# Working Directory\n\nThe current working directory is: "+workDir+"\nAll file operations must be confined to this directory.\n")
 	}
 	// Worker content is not part of the system prompt (it would be frozen with
 	// it): see Session.WorkerNotice, which the loop appends as a user message.
 	// Project instructions (AGENTS.md ancestor chain + user globals, dsh's
 	// agent-instructions) load here — statically, so the prefix cache survives.
 	if ins := agentsInstructionsSection(workDir); ins != "" {
-		parts = append(parts, ins)
+		add("项目指令", true, ins)
 	}
 	// User plugins from ~/.mini_code/plugins.md (one per line, optional
 	// "desc:" suffix). Re-read on every task, so edits to the file take
 	// effect from the next task without a restart.
 	if ps := pluginsSection(); ps != "" {
-		parts = append(parts, ps)
+		add("插件清单", true, ps)
 	}
 	// Plugin memory: notes contributed by installed directory plugins
 	// (~/.mini_code/plugins/<id>/memory.md). Placed after the plugin list and
@@ -164,16 +185,30 @@ func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string 
 	// region of the prompt. Each file is static until edited, so the prefix
 	// stays cacheable.
 	if mem := pluginMemorySection(); mem != "" {
-		parts = append(parts, mem)
+		add("插件记忆", true, mem)
 	}
 	// The system prompt is static on purpose: it is the head of the request
 	// prefix the provider's prefix cache matches, so it must not be
 	// re-rendered with fresh content (e.g. a timestamp) on every task.
-	parts = append(parts, "\n"+environmentSection()+"\n")
+	add("环境信息", true, "\n"+environmentSection()+"\n")
 	if extraContext != "" {
-		parts = append(parts, "\n# Additional Context\n\n"+extraContext+"\n")
+		add("附加上下文", true, "\n# Additional Context\n\n"+extraContext+"\n")
 	}
-	return strings.Join(parts, "\n")
+	return parts
+}
+
+// BuildSystemPrompt is the system prompt a turn carries: BuildSystemPromptParts
+// joined by one newline. It must stay the joiner and nothing may reimplement
+// it — these exact bytes are the head of the prefix the provider's cache
+// matches, so a reordered or re-spaced section is a full cache miss and the
+// user pays for the whole conversation again.
+func (pb *PromptBuilder) BuildSystemPrompt(workDir, extraContext string) string {
+	parts := pb.BuildSystemPromptParts(workDir, extraContext)
+	texts := make([]string, 0, len(parts))
+	for _, p := range parts {
+		texts = append(texts, p.Text)
+	}
+	return strings.Join(texts, "\n")
 }
 
 // EnableAgentTools registers the root-only orchestration tools — dsh's root

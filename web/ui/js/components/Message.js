@@ -6,7 +6,7 @@ import { h } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import htm from "htm";
 
-import { AgentAvatar } from "../lib/avatars.js";
+import { AgentAvatar, UserAvatar } from "../lib/avatars.js";
 import { memo } from "../lib/memo.js";
 import { mdToHtml } from "../lib/markdown.js";
 import { noticeOf } from "../lib/transcript.js";
@@ -36,9 +36,11 @@ function NoticeLine({ notice, text }) {
 function UserMessage({ row }) {
   const text = String(row.text || "");
   const images = row.images || [];
-  // 样图:用户气泡 = 右对齐浅灰圆角块,没有头像、没有「你」标签
-  // (头像入口按用户要求整体去掉,设置里仍能换头像)。
+  // 用户气泡 = 右对齐浅灰圆角块,右侧带头像(.msg.user 是 row-reverse,
+  // 第一个 DOM 子元素贴右,所以头像写在卡片之前才落在右边)。点头像开
+  // 「用户头像」弹窗(App.js 委托)。
   return html`<div class="msg user">
+    <${UserAvatar} cls="c-avatar" />
     <div class="m-card">
       ${text ? html`<div class="m-text">${text}</div>` : null}
       ${images.length ? html`<div class="msg-imgs">
