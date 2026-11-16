@@ -126,3 +126,42 @@ test("frameless: v3.7 两框定稿 —— 不透明 + 外框一色 + 聊天卡�
   assert.ok(cssW && goW && cssW[1] === goW[1],
     `--tb-ctl-w(${cssW && cssW[1]}) 与 Go tbControlsW(${goW && goW[1]}) 必须同步`);
 });
+
+// v3.11 背景定稿(用户):浅色主题外框/缝隙/内框一律 #ffffff——色差错位线不
+// 许再出现;水印星环严格按官方 .ico 复刻:左蓝右紫渐变细环 + 发光底层 +
+// 白色发光卫星,居中,带两枚流星。
+test("frameless: v3.11 背景定稿 —— 通体纯白 + .ico 复刻发光星环", () => {
+  const css = readFileSync(new URL("../css/layers.css", import.meta.url), "utf8");
+  const base = readFileSync(new URL("../css/base.css", import.meta.url), "utf8");
+  // 浅色不许再有发灰底或冷灰衬底,通体纯白。
+  assert.doesNotMatch(base, /--side: #fafafa|--side-a: #fafafa|--card-a: #fafafa/,
+    "浅色侧栏/卡片不许再用发灰的 #fafafa");
+  assert.match(base, /--bg: #ffffff/, "浅色聊天区底 = 纯白");
+  assert.match(css, /html\.frameless \{ --frame-outer: #ffffff; --seam: #ffffff; \}/,
+    "浅色外框/缝隙 = #ffffff:内外的色差错位线是不许出现的");
+  // 深色:内框 = 图标黑底,外框保留色差(边界沿圆角矩形,是正的)。
+  assert.match(base, /--bg: #0b0b0e/, "深色聊天区底 = 图标黑底色");
+  assert.match(css, /--frame-outer: #16161a/, "深色外框有独立收边值");
+  // 星环水印:两主题都是 .ico 同款蓝→紫渐变细环(rx236 ry104 rot-16 同几何)。
+  assert.equal((css.match(/--ring-wm: url\("data:image\/svg\+xml/g) || []).length, 2,
+    "明暗主题各有一条水印 data-uri");
+  assert.equal((css.match(/linearGradient id='rg'/g) || []).length, 2, "两条渐变描边");
+  assert.ok((css.match(/stop-color='%237cc7ff'/g) || []).length >= 4,
+    "渐变起笔 = .ico 浅蓝(环 + 流星,两主题共 4 处以上)");
+  assert.ok((css.match(/stop-color='%23b06cff'/g) || []).length >= 4,
+    "渐变收笔 = .ico 紫");
+  assert.equal((css.match(/rx='236' ry='104'/g) || []).length, 4, "环几何与 .ico 同款(两主题×两层)");
+  // "有点发光":每主题环下都垫一条 4 倍粗的低透明光晕层(细环本身是 sw8)。
+  assert.equal((css.match(/stroke-width='30'/g) || []).length, 2, "两主题各有一层光晕环");
+  assert.equal((css.match(/stroke-width='8'/g) || []).length, 2, "两主题各有一层细环");
+  // 卫星 = .ico 同款白色发光点(带蓝晕)。
+  assert.equal((css.match(/circle cx='342' cy='358' r='9' fill='%23ffffff'/g) || []).length, 2,
+    "两主题卫星都是白色发光核");
+  // 流星:一大一小 + 发光头,两主题都在。
+  assert.equal((css.match(/M158 112 L70 172/g) || []).length, 2, "大流星尾迹×2");
+  assert.equal((css.match(/M470 142 L416 182/g) || []).length, 2, "小流星尾迹×2");
+  // 居中引用。
+  assert.match(css, /html\.frameless \.chat \{[^}]*background-image: var\(--ring-wm\)/,
+    "内框引用水印");
+  assert.match(css, /background-position: 50% 52%;/, "水印居中偏下一丢丢");
+});

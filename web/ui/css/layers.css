@@ -1178,3 +1178,30 @@ html.frameless .chat-head { gap: 8px; }
   border: 1px solid var(--line); font-size: 11px; line-height: 1.5; white-space: pre-wrap;
   word-break: break-all; max-height: 260px; overflow: auto; color: var(--ink-2);
 }
+
+/* =====================================================================
+   ===== v3.11 定稿:浅色通体纯白 + 水印严格按 .ico 复刻(发光环+白卫星) =====
+     · v3.10 的冷灰蓝衬底被否:外框和内框之间露出色差歪线。浅色主题现在
+       外框/缝隙/内框全部 #ffffff,整窗一块白,两框只剩圆角几何 + 发丝线。
+       (深色保留色差——那条边界沿圆角矩形走,是正的。)
+     · 水印按官方 .ico 逐要素复刻:浅蓝→紫的渐变细环(左 #7cc7ff 右
+       #b06cff),环下垫一条 4 倍粗的低透明描边模拟"发光";卫星 = 白色
+       发光点 + 蓝色光晕。居中,两枚流星保留。 */
+ html.frameless { --frame-outer: #ffffff; --seam: #ffffff; }
+ html.frameless[data-theme="dark"] { --frame-outer: #16161a; --seam: #20202a; }
+ /* 覆盖 v3.7 那两条 var(--surface):外框色单独可控。 */
+ html.frameless #mc-titlebar { background: var(--frame-outer); border-bottom: none; }
+ html.frameless aside { border-right: none; background: var(--frame-outer); }
+ html.frameless {
+   --ring-wm: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-26 64 564 384'%3E%3Cdefs%3E%3ClinearGradient id='rg' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%237cc7ff' stop-opacity='0.15'/%3E%3Cstop offset='1' stop-color='%23b06cff' stop-opacity='0.15'/%3E%3C/linearGradient%3E%3CradialGradient id='sg'%3E%3Cstop offset='0' stop-color='%239fd4ff' stop-opacity='0.45'/%3E%3Cstop offset='1' stop-color='%239fd4ff' stop-opacity='0'/%3E%3C/radialGradient%3E%3ClinearGradient id='mg' x1='1' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23b06cff' stop-opacity='0'/%3E%3Cstop offset='1' stop-color='%237cc7ff' stop-opacity='0.3'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg transform='rotate(-16 256 278)' fill='none' stroke='url(%23rg)'%3E%3Cellipse cx='256' cy='278' rx='236' ry='104' stroke-width='30' opacity='0.32'/%3E%3Cellipse cx='256' cy='278' rx='236' ry='104' stroke-width='8'/%3E%3C/g%3E%3Cg transform='rotate(-16 256 278)'%3E%3Ccircle cx='342' cy='358' r='26' fill='url(%23sg)'/%3E%3Ccircle cx='342' cy='358' r='9' fill='%23ffffff' fill-opacity='0.9'/%3E%3C/g%3E%3Cg stroke-linecap='round'%3E%3Cpath d='M158 112 L70 172' stroke='url(%23mg)' stroke-width='7'/%3E%3Ccircle cx='64' cy='176' r='7' fill='%237cc7ff' fill-opacity='0.32'/%3E%3Cpath d='M470 142 L416 182' stroke='url(%23mg)' stroke-width='5'/%3E%3Ccircle cx='411' cy='185' r='5' fill='%23b06cff' fill-opacity='0.3'/%3E%3C/g%3E%3C/svg%3E");
+ }
+ html.frameless[data-theme="dark"] {
+   --ring-wm: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-26 64 564 384'%3E%3Cdefs%3E%3ClinearGradient id='rg' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%237cc7ff' stop-opacity='0.2'/%3E%3Cstop offset='1' stop-color='%23b06cff' stop-opacity='0.2'/%3E%3C/linearGradient%3E%3CradialGradient id='sg'%3E%3Cstop offset='0' stop-color='%237cc7ff' stop-opacity='0.55'/%3E%3Cstop offset='1' stop-color='%237cc7ff' stop-opacity='0'/%3E%3C/radialGradient%3E%3ClinearGradient id='mg' x1='1' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23b06cff' stop-opacity='0'/%3E%3Cstop offset='1' stop-color='%239fd4ff' stop-opacity='0.45'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg transform='rotate(-16 256 278)' fill='none' stroke='url(%23rg)'%3E%3Cellipse cx='256' cy='278' rx='236' ry='104' stroke-width='30' opacity='0.38'/%3E%3Cellipse cx='256' cy='278' rx='236' ry='104' stroke-width='8'/%3E%3C/g%3E%3Cg transform='rotate(-16 256 278)'%3E%3Ccircle cx='342' cy='358' r='26' fill='url(%23sg)'/%3E%3Ccircle cx='342' cy='358' r='9' fill='%23ffffff' fill-opacity='0.9'/%3E%3C/g%3E%3Cg stroke-linecap='round'%3E%3Cpath d='M158 112 L70 172' stroke='url(%23mg)' stroke-width='7'/%3E%3Ccircle cx='64' cy='176' r='7' fill='%239fd4ff' fill-opacity='0.5'/%3E%3Cpath d='M470 142 L416 182' stroke='url(%23mg)' stroke-width='5'/%3E%3Ccircle cx='411' cy='185' r='5' fill='%23c4a8ff' fill-opacity='0.45'/%3E%3C/g%3E%3C/svg%3E");
+ }
+ html.frameless .chat {
+   background-color: var(--bg);
+   background-image: var(--ring-wm);
+   background-repeat: no-repeat;
+   background-position: 50% 52%;
+   background-size: min(80%, 760px);
+ }

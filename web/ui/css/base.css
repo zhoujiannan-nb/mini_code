@@ -8,10 +8,10 @@
    --surface: #ffffff;     /* 面板:弹窗/输入框/下拉 */
    --surface2: #f4f4f5;    /* 次级面板:工具卡/@ 选择器头部 */
    --surface-a: rgba(255,255,255,.88);
-   --card-a: #fafafa;      /* 会话列表卡片底色:比纯白沉一档 */
+   --card-a: #ffffff;      /* 会话列表卡片底色:比纯白沉一档 */
    --side-inset: 12px;     /* 侧栏里新建按钮/会话卡片共用的左右内缩 */
-   --side: #fafafa;        /* 侧边栏:近白,靠发丝线分隔 */
-   --side-a: #fafafa;
+   --side: #ffffff;        /* 侧边栏:近白,靠发丝线分隔 */
+   --side-a: #ffffff;
    --glow1: transparent;   /* 纯白风不用光晕;保留变量名兼容旧规则 */
    --glow2: transparent;
    /* 边框:alpha 阶梯,叠在任何底色上都自动协调 */
@@ -98,13 +98,13 @@
   html[data-theme="dark"] {
     color-scheme: dark;
     --edge: #000000;
-    --bg: #101013;
-    --surface: #17171b;
+    --bg: #0b0b0e;      /* v3.9:内框底色 = 官方图标 E7 的黑底,和 ico 同色 */
+    --surface: #16161a;
     --surface2: #1f1f24;
-    --surface-a: rgba(23,23,27,.86);
-    --card-a: #131316;
-    --side: #121215;
-    --side-a: #121215;
+    --surface-a: rgba(22,22,26,.86);
+    --card-a: #121216;
+    --side: #121216;
+    --side-a: #121216;
     --glow1: transparent;
     --glow2: transparent;
     --border: rgba(255,255,255,.09);
