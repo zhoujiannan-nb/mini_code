@@ -34,14 +34,14 @@ func TestIndexServesComposerThinkingUI(t *testing.T) {
 	page = page + jsModulesForTest(t)
 
 	want := []string{
-		`id="btn-model"`,
-		`id="think-badge"`,
+		`id="btn-model"`,   // v3:输入区的模型芯片(单击开菜单,双击开思考浮层)
+		`id="think-badge"`, // v3:思考胶囊内的档位徽标
 		`id="think-pop"`,
 		`id="tp-effort"`,
-		`id="ctx-total"`,   // v4:「总 tok · 缓存命中」芯片(点开管理抽屉)
-		`id="sess-stats"`, // v4:「N 轮 · M 步 · X tok/s」芯片(弹会话统计)
+		`id="ctx-total"`,   // v3:输入区的 token 胶囊(点开管理抽屉)
+		`id="sess-stats"`, // v3:胶囊里的 ⓘ,弹会话统计浮层
 		"openThinkingPop",
-		"toggleCtxPanel", // 底栏直连抽屉
+		"toggleCtxPanel", // 胶囊直连抽屉
 	}
 	for _, m := range want {
 		if !strings.Contains(page, m) {

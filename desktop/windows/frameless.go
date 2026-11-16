@@ -78,18 +78,20 @@ const (
 	smCxSizeFrame = 32 // SM_CXSIZEFRAME
 	smCxPadBorder = 92 // SM_CXPADDEDBORDER
 
-	// 逻辑像素,与页面 CSS 严格同步(layers.css v2 标题条段):
+	// 逻辑像素,与页面 CSS 严格同步(layers.css 标题条段):
 	//   tbLogicalH = --tb-h        拖拽条高 40px(自 client 顶起算)
-	//   tbAppW     = --tb-app-w    左侧三点窗控带宽(macOS 红/黄/绿,close/min/max)
-	//   tbControlsW = --tb-ctl-w   右侧窗口按钮组 —— v2 起右侧不再放按钮,宽度 0
-	// 顶部 40px 里【三点带以右】才判 HTCAPTION,那里的页面 DOM 收不到鼠标
-	// 事件:带算宽了会把三点判进拖拽带(点了只拖窗),算窄了三点和空档都正常。
-	// 按钮文字/数量/宽度一改,这里和 layers.css 要一起改。
+	//   tbAppW     = --tb-app-w    左侧窗控排除区 —— v3.3 起 macOS 三点下线,
+	//                              窗口钮改到右上,左侧不再有排除区,宽度 0
+	//   tbControlsW = --tb-ctl-w   右侧窗口按钮组(v3.8 起 4 颗:主题/min/max/
+	//                              close,4×46=184),与 CSS --tb-ctl-w 一致
+	// 顶部 40px 里【左侧排除区以右、右侧钮组以左】才判 HTCAPTION,那里的页面
+	// DOM 收不到鼠标事件:排除区算宽了会把钮判进拖拽带(点了只拖窗),算窄了
+	// 钮和空档都正常。按钮文字/数量/宽度一改,这里和 layers.css 要一起改。
 	// (四边缩放是真 NC 边框,系统处理;主拖动路径另有 JS 的 mousedown→
 	// mcWinDrag,见 titlebar.js,这条命中带只是兜底。)
 	tbLogicalH  = 40
-	tbAppW      = 70
-	tbControlsW = 0
+	tbAppW      = 0   // v3.3: 三点带下线,左侧整段并入拖拽带
+	tbControlsW = 184 // v3.8: 右上钮组 4×46(主题/min/max/close),与 layers.css --tb-ctl-w 同步
 
 	// WebView2 的 controller 是异步初始化的,子窗口要等一会儿才出现,
 	// 所以先用定时器兜底扫,挂上就停表(之后靠 WM_PARENTNOTIFY / WM_SIZE 复查)。
@@ -173,8 +175,15 @@ func installFrameless(w *window) {
 
 	// Extend the DWM glass over the whole window: keeps Win11 rounded
 	// corners and the shadow even though the client covers everything.
+	// (v3.7:「透视桌面/Mica」实验已回退 —— 用户定稿两框不透明风,不再动背景。)
 	m := [...]int32{-1, -1, -1, -1}
 	procDwmExtendFrame.Call(hwnd, uintptr(unsafe.Pointer(&m[0])))
+
+	// Win11: 显式要求窗口圆角(DWMWCP_ROUND)。摘了 WS_CAPTION 的窗口默认策略
+	// 可能给方角;页面侧(layers.css ⑩)的 body 18px 圆角壳靠这道 OS 裁剪才
+	// 能四角干净。Win10 无此属性,失败就失败 —— 圆弧仍由页面侧负责,不会更糟。
+	pref := uint32(2) // DWMWCP_ROUND
+	procDwmSetWindowAttr.Call(hwnd, dwmwaCornerPref, uintptr(unsafe.Pointer(&pref)), 4)
 
 	// 挂钩渲染子窗口。此时 controller 多半还没建好子窗口,挂不上就靠定时器。
 	hookBrowserChildren(ctx)
@@ -431,8 +440,8 @@ func hitTestFrame(x, y, w, h float64, zoomed bool) uintptr {
 	if x < 0 || y < 0 || x >= w || y >= h {
 		return 0 // 点不在 client 里(缩放边框/窗外),交回原始判定
 	}
-	// 拖拽带:client 顶部 tbLogicalH 高,左侧让出三点窗控带(close/min/max),
-	// 右侧 v2 起不再放按钮 —— 三点带的按钮要能点。
+	// 拖拽带:client 顶部 tbLogicalH 高,左侧整段可用(tbAppW=0),
+	// 右侧让出 Windows 式钮组(min/max/close)—— 钮要能点。
 	if y < tbLogicalH && x >= tbAppW && x < w-tbControlsW {
 		return htCaption
 	}

@@ -44,17 +44,18 @@ header .spacer { flex: 1; }
 .chat { background: var(--bg); }
 
 /* ---------- ③ 侧栏 ---------- */
+/* 品牌徽标:与 .ico 同款 E7「卫星穿环」(墨块+斜 M+穿环+卫星点,见 Sidebar.js)。
+   svg 自身画墨块与环,环在块两侧出界 → 元素 44×30,块体仍是 30px 视觉重量;
+   品牌行 gap 相应收到 6px,字距观感与旧版(30px 块 + 10px gap)持平。 */
 .brand {
-  height: 56px; flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  height: 56px; flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
   padding: 0 var(--side-inset);
 }
-/* 品牌徽标:墨色圆角方块 + M。与 agent 默认头像同一张脸,暗色自动翻白。 */
 .brand-mark {
-  flex: 0 0 30px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
-  border-radius: 9px; background: var(--ink); color: var(--ink-fg);
-  font-size: 16px; font-weight: 800; font-style: italic; letter-spacing: -.02em;
-  box-shadow: 0 1px 3px var(--sh2);
+  flex: 0 0 44px; width: 44px; height: 30px; display: flex; align-items: center; justify-content: center;
+  color: var(--ink-fg);
 }
+.brand-mark svg { width: 100%; height: 100%; display: block; overflow: visible; filter: drop-shadow(0 1px 2px var(--sh2)); }
 .brand .logo { font-size: 16.5px; font-weight: 800; letter-spacing: -.022em; color: var(--title); }
 
 .new-btn {
@@ -78,11 +79,15 @@ html[data-theme="dark"] .new-btn .nb-kbd {
   border-color: rgba(18,18,22,.3); color: var(--ink-fg); background: rgba(18,18,22,.14);
 }
 
-/* 侧栏导航行(设置 = 样图保留的唯一导航项) */
+/* 侧栏导航行(设置 = 样图保留的唯一导航项)。v3.5:入口挪到列的最底部
+   (用户:「设置从新建会话挪到他这一列的最下面,比较合理」)—— sess-list
+   flex:1 已经把它顶到底,margin-top:auto 是列表塌陷时的保险。
+   v3.8:默认态就带一圈连起来的圆角描边(用户圈图:「用一个连起来的框包起来」),
+   不再是 hover 才有的幽灵行。 */
 .nav-btn {
-  margin: 4px var(--side-inset) 0; height: 32px; padding: 0 10px;
+  margin: auto var(--side-inset) 12px; height: 34px; padding: 0 11px;
   display: flex; align-items: center; gap: 9px;
-  background: transparent; border: none; border-radius: 9px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border2); border-radius: 10px; cursor: pointer;
   color: var(--text2); font-size: 13.5px; font-family: inherit; text-align: left;
 }
 .nav-btn:hover { background: var(--hover); color: var(--text); }
@@ -97,7 +102,7 @@ html[data-theme="dark"] .new-btn .nb-kbd {
   display: flex; align-items: center; gap: 6px;
   margin: 14px var(--side-inset) 2px; padding: 0 2px;
 }
-.sh-label { font-size: 12px; font-weight: 700; color: var(--text3); letter-spacing: .02em; }
+.sh-label { font-size: 12px; font-weight: 700; color: var(--text3); letter-spacing: .02em; max-width: 132px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sh-count {
   font-size: 11px; color: var(--text3); background: var(--hover);
   border-radius: 999px; padding: 1px 7px; font-variant-numeric: tabular-nums;
@@ -156,6 +161,8 @@ html[data-theme="dark"] .sess-item.active:hover { background: var(--hover-2); }
 .sess-ava { overflow: hidden; }
 .sess-ava img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .sess-ava.agent-ava { background: var(--ink); color: var(--ink-fg); }
+/* agent 默认"脸":svg 多边形 M 铺满墨色块(消息行 / 侧栏条目 / 设置页共用) */
+.sess-ava .ava-mark, .c-avatar-fallback .ava-mark { width: 100%; height: 100%; display: block; }
 
 .rename-btn { right: 30px; }
 .del-btn { right: 8px; }
@@ -803,62 +810,312 @@ button.foot-chip:hover { background: var(--hover); color: var(--text); }
 }
 
 /* =====================================================================
-   ===== ⑩ 无边框窗口(dsh 式 frameless)—— 自绘标题条 =====
+   ===== ⑪ v3 样图版(2026-11,v3.1 修订):顶栏芯片组 / 标题 tab / 单卡输入区 / 欢迎页 =====
+   按用户样图落版,v3.1 按反馈回摆:顶栏 = 模型芯片 + 轨迹(深度思考撤出顶栏,
+   入口在输入区思考胶囊;「改进」下线);聊天头标题做成
+   下划线 tab,右侧四颗(子代理/后台/排序/上下文);输入区合并成一张卡
+   (＋ / 选择模式 / token 胶囊·带输出速度 | 模型 / 思考模式 / 发送),占用进度条钉在
+   主区右下角(百分数在条子左侧);新会话占位换成 Hero + 示例卡。全部走既有设计变量,暗色自适应。
+   ===================================================================== */
+
+/* ---------- 顶栏芯片族 ---------- */
+.hchip, .hchip-wrap { position: relative; }
+.hchip {
+  height: 28px; display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 11px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--text2);
+  font-family: inherit; font-size: 12.5px; line-height: 1; white-space: nowrap;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+header .hchip:hover, .chat-head .hchip:hover { border-color: var(--border2); color: var(--text); }
+.hchip .hc-ico {
+  width: 14px; height: 14px; flex: 0 0 14px;
+  fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+  opacity: .85;
+}
+.hchip .spin { width: 10px; height: 10px; flex: 0 0 10px; }
+/* 模型芯片:绿点 + 名字 + 上下文窗口小徽标(样图那颗「70B」方块) */
+.model-chip { cursor: default; }
+header .model-chip:hover, .chat-head .model-chip:hover { border-color: var(--border); color: inherit; }
+.mc-dot {
+  flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--ok-dot); box-shadow: 0 0 0 3px var(--ring-soft);
+}
+.model-chip.loading .mc-dot { background: var(--border2); box-shadow: none; }
+.model-chip b { color: var(--text); font-weight: 700; }
+.mc-size {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text3);
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px 5px; line-height: 1;
+}
+/* 思考/模式等下拉的箭头 */
+.think-pill .chev, .chip-btn .chev, .model-inline-btn .chev {
+  font-size: 11px; opacity: .7; margin-left: 1px;
+}
+/* 轨迹芯片:v3.8 起顶栏(web)与聊天头(frameless)两处都有,选择器并行 */
+header .traj-chip, .chat-head .traj-chip { cursor: pointer; }
+header .traj-chip:hover, .chat-head .traj-chip:hover { background: var(--hover); }
+header .traj-chip.on, .chat-head .traj-chip.on { border-color: var(--accent-b); background: var(--accent-l); color: var(--accent-t); }
+header .traj-chip.on .hc-ico, .chat-head .traj-chip.on .hc-ico { stroke: var(--accent-t); }
+
+/* ---------- 聊天头:标题 tab + 副标 + 四颗按钮 ---------- */
+.chat-head .title {
+  height: 100%; display: inline-flex; align-items: center;
+  padding: 0 1px; border-bottom: 2px solid var(--title); margin-bottom: -3px;
+}
+.chat-sub { color: var(--text3); font-size: 12.5px; white-space: nowrap; display: inline-flex; align-items: center; }
+.sub-info {
+  margin-left: 4px; cursor: help; color: var(--text3); font-size: 12px;
+  display: inline-flex; align-items: center;
+}
+#btn-sort .tb-ico { stroke-width: 1.8; }
+
+/* ---------- 侧栏:品牌行主题钮 / ⓘ / 空态插画 ---------- */
+.brand-flex { flex: 1; }
+.brand-theme {
+  width: 28px; height: 28px; border: none; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--text3);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.brand-theme:hover { background: var(--hover); color: var(--text); }
+.sh-info {
+  display: inline-flex; align-items: center; color: var(--text3); cursor: help; padding: 2px;
+}
+.sh-info:hover { color: var(--text); }
+.sess-empty-state {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 34px 10px 20px; text-align: center; user-select: none;
+}
+.sess-empty-state .ses-art { width: 96px; height: 72px; margin-bottom: 10px; }
+.sess-empty-state .ses-title { font-size: 13px; font-weight: 700; color: var(--text2); }
+.sess-empty-state .ses-sub { font-size: 11.5px; color: var(--text3); margin-top: 3px; line-height: 1.6; }
+
+/* ---------- 输入区:模式下拉 / token 胶囊 / 思考胶囊 / 角落进度条 ---------- */
+.mode-menu-wrap { position: relative; display: inline-flex; }
+.mode-menu {
+  position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 45; min-width: 212px;
+  padding: 5px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: 0 3px 8px var(--sh2), 0 8px 24px var(--sh2);
+  animation: ms-fade-in .14s var(--ease) both;
+}
+.mdm-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 9px; border: none; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--text2); font: inherit; font-size: 12.5px; text-align: left;
+}
+.mdm-item:hover { background: var(--hover); color: var(--text); }
+.mdm-item.cur { background: var(--accent-l); color: var(--accent-t); }
+.mdm-item .mb-ico {
+  width: 14px; height: 14px; flex: 0 0 14px;
+  fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+  opacity: .85;
+}
+.mdm-name { font-weight: 600; }
+.mdm-sub { color: var(--text3); font-size: 11.5px; margin-left: 2px; }
+.mdm-tick { margin-left: auto; color: var(--accent); font-weight: 700; }
+
+.token-pill {
+  height: 30px; display: inline-flex; align-items: center; gap: 2px;
+  padding: 0 4px 0 11px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border2); background: transparent;
+  color: var(--text3); font-size: 12px; font-family: inherit;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.token-pill:hover { background: var(--hover); color: var(--text); }
+.token-pill .tp-info {
+  width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; color: var(--text3); font-size: 12.5px;
+}
+.token-pill .tp-info:hover { background: var(--hover-2); color: var(--text); }
+
+/* 思考模式胶囊:蓝调小圆牌(样图右侧那颗) */
+.think-pill {
+  height: 30px; display: inline-flex; align-items: center; gap: 4px;
+  padding: 0 11px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--accent-b); background: var(--accent-l);
+  color: var(--accent-t); font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.think-pill:not(.on) { border-color: var(--border2); background: transparent; color: var(--text3); font-weight: 400; }
+.think-pill:hover { filter: brightness(.97); }
+#think-badge { background: none; border: none; padding: 0; color: inherit; font: inherit; }
+
+/* 输入卡下方一行(v3.4 居中):会话统计胶囊 + 占用% + 进度条 + 速度图标 */
+.tu-line {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 5px 8px 0; font-size: 10.5px; color: var(--text3);
+  font-variant-numeric: tabular-nums; cursor: default;
+}
+.tu-line .cm-bar { width: 72px; height: 3px; border-radius: 999px; background: var(--hover); overflow: hidden; }
+.tu-line .cm-bar i { display: block; height: 100%; border-radius: 999px; background: var(--accent); transition: width .2s var(--ease); }
+.tu-line b { font-weight: 600; color: var(--text3); }
+.tu-line.warn .cm-bar i { background: var(--amber); }
+.tu-line.warn b { color: var(--amber-t); }
+/* 速度图标 + 数字 */
+.tu-line .tu-speed { display: inline-flex; align-items: center; gap: 3px; }
+.tu-line .tu-speed svg { flex: 0 0 auto; opacity: .9; }
+/* 胶囊挪进本行后收小一号,与 10.5px 小字同排不抢戏 */
+.tu-line .token-pill { height: 22px; padding: 0 3px 0 9px; font-size: 11px; gap: 1px; }
+.tu-line .token-pill .tp-info { width: 17px; height: 17px; font-size: 11px; }
+
+/* ---------- 欢迎页 Hero(新会话占位) ---------- */
+.placeholder.hero { gap: 0; padding: 24px 16px 40px; }
+.hero-logo { width: 116px; height: 108px; display: flex; align-items: center; justify-content: center; }
+.hero-logo .hl-svg {
+  width: 106px; height: 106px; display: block;
+  filter: drop-shadow(0 8px 22px var(--sh3));
+}
+.hero-title { margin: 8px 0 0; font-size: 26px; font-weight: 800; letter-spacing: -.02em; color: var(--title); }
+.hero-sub { margin: 8px 0 0; font-size: 13.5px; color: var(--text3); }
+.ex-grid {
+  display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+  margin-top: 26px; max-width: 720px;
+}
+.ex-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 13px 16px; min-width: 148px; border-radius: 14px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text2); font: inherit; font-size: 12.5px; text-align: left; line-height: 1.45;
+  box-shadow: 0 1px 2px var(--sh1);
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.ex-card:hover { border-color: var(--border2); background: var(--hover); color: var(--text); }
+.ex-card:active { transform: translateY(.5px); }
+.ex-card .ex-ico { width: 18px; height: 18px; flex: 0 0 18px; color: var(--text2); display: inline-flex; }
+.ex-card .ex-ico svg { width: 18px; height: 18px; }
+.ex-card .ex-text { white-space: nowrap; }
+.ex-card .ex-arrow { margin-left: 6px; opacity: .7; }
+.ex-more-wrap { position: relative; display: inline-flex; }
+.ex-pop {
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 40;
+  width: 320px; max-height: 292px; overflow-y: auto; padding: 5px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 3px 8px var(--sh2), 0 8px 24px var(--sh2);
+  animation: ms-fade-in .14s var(--ease) both;
+}
+.ex-pop-item {
+  display: block; width: 100%; text-align: left;
+  padding: 8px 10px; border: none; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--text2); font: inherit; font-size: 12.5px; line-height: 1.55;
+}
+.ex-pop-item:hover { background: var(--hover); color: var(--text); }
+
+/* ---------- 抽屉头:摘要/轨迹两颗文字钮 ---------- */
+.rail-view {
+  width: auto; padding: 0 8px; font-size: 11.5px; font-family: inherit; color: var(--text2);
+}
+
+/* 无边框桌面:主题钮现在常驻侧栏品牌行,标题条里那颗(tb-theme)保留不动。 */
+
+/* =====================================================================
+   ===== ⑩ 无边框窗口(dsh 式 frameless)—— 窗口圆角壳(v3.2)+ 自绘标题条 =====
    桌面模式下原生标题栏被 Win32 壳去掉(desktop/windows/frameless.go):
    顶条 40px 是拖拽区(HTCAPTION)。左侧是 macOS 交通灯三点(红=关闭/黄=
    最小化/绿=最大化,经 mcWin* 回调走原生),右侧不再有按钮组。
    html.frameless 由 js/lib/titlebar.js 在检测到桥接函数后加上。
-   三点带宽 70px 与 Go 侧 frameless.go 的 tbAppW 必须一致 —— 那是命中
+   三点带宽 90px 与 Go 侧 frameless.go 的 tbAppW 必须一致 —— 那是命中
    测试的排除区;tbControlsW 恒 0(--tb-ctl-w),保留变量只为语义完整。
    ===================================================================== */
 :root {
   --tb-h: 40px;
-  --tb-app-w: 70px;  /* 左侧三点带,与 Go 侧 tbAppW 一致 */
-  --tb-ctl-w: 0px;   /* 右侧窗口钮组已移除(v2),与 Go 侧 tbControlsW 一致 */
+  --tb-app-w: 0px;   /* 左侧三点带已下线(用户点名:Windows 就配右上角窗口钮),与 Go 侧 tbAppW=0 一致 */
+  --tb-ctl-w: 184px; /* v3.8 右上钮组 4×46=184(主题/min/max/close),与 Go 侧 tbControlsW 一致 */
 }
-html.frameless body { padding-top: var(--tb-h); }
+html.frameless { overflow: hidden; background: var(--bg); }
+ /* v3.4:缝隙色从浅灰 --edge 改成页面底色,并删掉 body 的 1px 描边 ——
+    Win11 的 DWM 已经裁了窗口圆角并自带一条极细边线,原来的「描边 + 灰色缝」
+    叠在 DWM 圆弧里圈,看着就是圆角外面多了一个方框(用户圈图点名去掉)。 */
+html.frameless body {
+  /* 壳:只留圆弧裁切,不再画描边 */
+  border-radius: 18px;
+}
+html.frameless body.mc-maxed { border-radius: 0; }
+/* 白屏回归修复:body 在 layers.css 是 flex-direction:row(侧栏/主区并排),
+   标题条 width:100% 塞进行主轴会独占整行、把 aside/main 挤成 0 宽 —— 桌面
+   白屏零报错就是这么来的。frameless 下 body 改列:标题条一行在上,#app 收回
+   真正的行容器(display:contents 那套只属于无标题条的 web 模式布局)。 */
+html.frameless body { flex-direction: column; }
+html.frameless #app {
+  display: flex; flex-direction: row;
+  flex: 1 1 auto; min-height: 0; width: 100%;
+}
 #mc-titlebar {
-  position: fixed; top: 0; left: 0; right: 0; height: var(--tb-h);
-  display: flex; align-items: center;
+  /* v3.2:常规流里的第一格(旧版 fixed + body padding-top 让位已废弃);
+     v3.3.1:前提是 frameless body 为列方向(见上白屏修复),行方向下这条就是元凶 */
+  position: relative; flex: 0 0 auto; width: 100%; height: var(--tb-h);
+  display: flex; align-items: stretch;
   z-index: 2147483000;                 /* 开机动画也要压在它下面 */
   background: var(--bg); border-bottom: 1px solid var(--border);
   -webkit-user-select: none; user-select: none;
 }
-/* macOS 交通灯:12px 圆点,悬停显符号。带宽(10 + 3×12 + 2×8 + 16 = 66≈70)
-   即 Go 侧 tbAppW 的排除区。 */
+#mc-titlebar .tb-flex { flex: 1 1 auto; }
+/* v3.8 品牌行进标题条:E7 徽标 + Mini Code,坐进侧栏正上方 —— 原侧栏
+   .brand 行隐藏,品牌整体上移一层(用户:「带图标的 Mini Code 可以覆盖上面
+   那个么?整体上移」)。左侧起点与侧栏内容同一根 12px 内缩线。 */
+#mc-titlebar .tb-brand {
+  display: inline-flex; align-items: center; gap: 8px; padding: 0 4px 0 12px;
+  -webkit-user-drag: none; flex: 0 0 auto;
+}
+#mc-titlebar .tb-e7 { width: 38px; height: 26px; display: block; overflow: visible; }
+#mc-titlebar .tb-brand-name {
+  font-size: 13.5px; font-weight: 800; letter-spacing: -.02em; color: var(--title);
+}
+/* Windows 式窗口钮:46px 宽、撑满条高、方块、悬停变灰、关闭悬停红。
+   位置在右上——Windows 用户的肌肉记忆,macOS 交通灯那套在这里行不通。 */
 #mc-titlebar .tb-dots {
-  width: var(--tb-app-w); height: 100%; flex: 0 0 auto;
-  display: flex; align-items: center; gap: 8px; padding: 0 12px 0 14px;
+  width: var(--tb-ctl-w); height: 100%; flex: 0 0 auto;
+  display: flex; align-items: stretch; padding: 0;
 }
 #mc-titlebar .tb-dot {
-  width: 12px; height: 12px; padding: 0; flex: 0 0 auto;
-  border: 1px solid rgba(0,0,0,.15); border-radius: 50%;
-  cursor: default; position: relative;
+  width: 46px; padding: 0; flex: 0 0 auto;
+  border: 0; background: transparent; border-radius: 0;
+  color: var(--text2); cursor: default;
   display: inline-flex; align-items: center; justify-content: center;
 }
-#mc-titlebar .tb-dot span {
-  font-size: 8px; font-weight: 800; line-height: 1; color: rgba(0,0,0,.6);
-  opacity: 0; padding-top: .5px;
-  font-family: var(--ui);
-}
-#mc-titlebar .tb-dots:hover .tb-dot span { opacity: 1; }
-#mc-titlebar .tb-dot-x { background: #ff5f57; }
-#mc-titlebar .tb-dot-n { background: #febc2e; }
-#mc-titlebar .tb-dot-z { background: #28c840; }
-#mc-titlebar .tb-dot:hover { filter: brightness(.92); }
-#mc-titlebar .tb-dot:active { filter: brightness(.82); }
-#mc-titlebar .tb-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-html[data-theme="dark"] #mc-titlebar .tb-dot { border-color: rgba(255,255,255,.22); }
-html[data-theme="dark"] #mc-titlebar .tb-dot span { color: rgba(0,0,0,.55); }
-body.mc-maxed .tb-dot-z { background: #28c840; }
+#mc-titlebar .tb-dot svg { width: 11px; height: 11px; display: block; }
+#mc-titlebar .tb-dot:hover { background: var(--hover); color: var(--text); }
+#mc-titlebar .tb-dot:active { filter: brightness(.9); }
+#mc-titlebar .tb-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#mc-titlebar .tb-dot-x:hover { background: #e81123; color: #fff; }
 
 /* 弹窗层与标题条的边界:遮罩从标题条下沿开始、弹窗高度同步减掉这一条,
    否则定高的配置弹窗上沿会被压在极高分层的标题条底下。 */
-html.frameless .modal-mask { top: var(--tb-h); }
+html.frameless .modal-mask { top: var(--tb-h); border-radius: 0 0 18px 18px; }
 html.frameless .modal.settings-modal {
   height: clamp(460px, calc(100vh - var(--tb-h) - 72px), 960px);
   max-height: calc(100vh - var(--tb-h) - 32px);
 }
+
+/* =====================================================================
+   ===== v3.7 「两框」定稿(用户样图):整个页面就两个圆角框,别的都不要 =====
+     · 外框 = 侧栏 + 标题条 + 卡片四周的衬底,通体一个颜色(--frame);
+     · 内框 = 聊天卡片(聊天头+消息+输入区),另一块颜色(--card);
+     · 只有这两块,都带圆角;无透明、无磨砂、无渐变、无阴影、无切割线。
+   颜色:缝隙那圈 --seam 是"外框"和 OS 圆角之间的一条极细收边,不算第三个框,
+   所以取和 --frame 几乎同色的值。深色主题下 --surface 比 --bg 亮一档,
+   两框靠明暗 + 1px 描边分开。 */
+html.frameless { --seam: #f0f0f3; }
+html.frameless[data-theme="dark"] { --seam: #1b1b1f; }
+html.frameless { background: var(--seam); }
+html.frameless body { background: transparent; }
+html.frameless #mc-titlebar { background: var(--surface); border-bottom: none; }
+html.frameless aside { border-right: none; background: var(--surface); }
+html.frameless main { padding: 10px 14px 14px 14px; } /* 内框四周 = 外框色 */
+html.frameless .chat {
+  border-radius: 18px; overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+html.frameless .chat-head { border-bottom: none; }
+html.frameless .traj-panel { border-radius: 0; } /* 面板铺满内框,圆角由 .chat 裁 */
+
+/* v3.8 桌面布局重排:①模型芯片组从顶栏并进聊天头(Topbar.js 组件级切换,
+   这条兜底把整条 header 顶栏藏掉,标题文本不再显示);②侧栏品牌行上提进
+   标题条(.tb-brand,titlebar.js 渲染),侧栏顶端直接是新建会话。 */
+html.frameless main > header { display: none; }
+html.frameless .brand { display: none; }
+html.frameless .new-btn { margin-top: 12px; }
+/* 聊天头里的芯片组和原顶栏观感一致:左边先芯片、后右侧按钮组 */
+html.frameless .chat-head { gap: 8px; }
 
 /* ---------- 轨迹视图(TrajPanel,dsh 式) ---------- */
 /* 入口芯片选中态见 ⑤ 顶栏区规则(mode-btn.traj-btn.on)。 */

@@ -14,7 +14,7 @@ import { getState, setState } from "../lib/store.js";
 import {
   initWorkerBar, loadSessions, loadWorkers, loadStatus, loadChildren, loadJobs,
   updateTokenUsage, syncApprovals, loadUserAvatar, loadAgentAvatar,
-  readSavedSession, saveSession, selectSession, resetToNew,
+  readSavedSession, saveSession, selectSession, resetToNew, detachWorkerForNewSession,
 } from "../lib/actions.js";
 import { connectEvents, disconnectEvents } from "../lib/sse.js";
 import { bindMarkdownLinks } from "../lib/markdown.js";

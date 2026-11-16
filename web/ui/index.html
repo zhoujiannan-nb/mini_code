@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Mini Code</title>
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
-  <link rel='icon' type='image/svg+xml' href='data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Cdefs%3E%3ClinearGradient%20id=%22g%22%20x1=%220%22%20y1=%220%22%20x2=%221%22%20y2=%221%22%3E%3Cstop%20offset=%220%22%20stop-color=%22%23a5d8ff%22/%3E%3Cstop%20offset=%22.55%22%20stop-color=%22%231d4fae%22/%3E%3Cstop%20offset=%221%22%20stop-color=%22%230d2440%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20x=%221%22%20y=%221%22%20width=%2230%22%20height=%2230%22%20rx=%229%22%20fill=%22url(%23g)%22/%3E%3Cpath%20d=%22M9.6%2011.4%205.4%2016l4.2%204.6%22%20fill=%22none%22%20stroke=%22%23fff%22%20stroke-width=%222.1%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22/%3E%3Cpath%20d=%22M18.6%209.8%2013.4%2022.2%22%20fill=%22none%22%20stroke=%22%23fff%22%20stroke-width=%222.1%22%20stroke-linecap=%22round%22/%3E%3Cpath%20d=%22M22.4%2011.4%2026.6%2016l-4.2%204.6%22%20fill=%22none%22%20stroke=%22%23fff%22%20stroke-width=%222.1%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22/%3E%3C/svg%3E'>
+  <link rel='icon' type='image/svg+xml' href='data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22b%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%231d2029%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%230a0b0f%22%2F%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%22r%22%20x1%3D%2230%22%20y1%3D%22340%22%20x2%3D%22483%22%20y2%3D%22212%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%235ec5ff%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23a06bff%22%2F%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%22r2%22%20x1%3D%2230%22%20y1%3D%22212%22%20x2%3D%22483%22%20y2%3D%22340%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%236fa0ff%22%20stop-opacity%3D%22.5%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23a06bff%22%20stop-opacity%3D%22.3%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Cellipse%20cx%3D%22256%22%20cy%3D%22278%22%20rx%3D%22236%22%20ry%3D%22104%22%20fill%3D%22none%22%20stroke%3D%22url(%23r2)%22%20stroke-width%3D%2218%22%20transform%3D%22rotate(-16%20256%20278)%22%2F%3E%3Crect%20x%3D%2264%22%20y%3D%2264%22%20width%3D%22384%22%20height%3D%22384%22%20rx%3D%2288%22%20fill%3D%22url(%23b)%22%2F%3E%3Cg%20transform%3D%22translate(256%20256)%20scale(0.66)%20skewX(-9)%20translate(-256%20-256)%22%3E%3Cpolygon%20fill%3D%22%23fff%22%20points%3D%22148%2C356%20148%2C156%20212%2C156%20256%2C244%20300%2C156%20364%2C156%20364%2C356%20316%2C356%20316%2C232%20256%2C320%20196%2C232%20196%2C356%22%2F%3E%3C%2Fg%3E%3Cpath%20d%3D%22M482.8%20213%20A236%20104%20-16%200%201%2029.2%20343%22%20fill%3D%22none%22%20stroke%3D%22url(%23r)%22%20stroke-width%3D%2222%22%20stroke-linecap%3D%22round%22%2F%3E%3Ccircle%20cx%3D%22342%22%20cy%3D%22358%22%20r%3D%2219%22%20fill%3D%22%23eaf4ff%22%2F%3E%3C%2Fsvg%3E'>
 
 <!-- 样式表顺序:开机动画(先铺黑) → 三张主题表 → 应用骨架(#app 的布局) -->
 <style>
@@ -15,6 +15,43 @@
 @import url("/css/plugins.css");
 @import url("/css/app.css");
 </style>
+
+<!-- 错误保镖:白屏不能再无声无息。未捕获异常、模块/资源加载失败、未处理的
+     Promise 拒绝,都贴成页面顶部一条红横幅(桌面版按 F12 看堆栈)。
+     这段在任何 module 脚本之前同步装钩,capture=true 连资源级 error 也接住;
+     样式写死在行内,连 css 没加载出来也能显示。 -->
+<script>
+(function () {
+  var seen = 0;
+  function show(msg) {
+    if (seen++ > 3) return; // 刷屏时保留前几条现场
+    var box = document.getElementById("mc-fatal");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "mc-fatal";
+      box.style.cssText = "position:fixed;top:8px;left:50%;transform:translateX(-50%);"
+        + "z-index:2147483647;background:#c62828;color:#fff;font:12px/1.6 system-ui,sans-serif;"
+        + "padding:8px 14px;border-radius:8px;max-width:82%;box-shadow:0 6px 24px rgba(0,0,0,.4);"
+        + "white-space:pre-wrap;word-break:break-all";
+      (document.body || document.documentElement).appendChild(box);
+    }
+    box.textContent = (box.textContent ? box.textContent + "\n" : "") + "⚠ 页面出错: " + msg;
+  }
+  function short(u) { return String(u || "").split(/[\\/]/).pop(); }
+  window.addEventListener("error", function (e) {
+    if (e.target && e.target !== window && (e.target.src || e.target.href)) {
+      show("资源加载失败: " + short(e.target.src || e.target.href));
+      return;
+    }
+    show((e.message || "script error")
+      + (e.filename ? "  (" + short(e.filename) + ":" + e.lineno + ")" : ""));
+  }, true);
+  window.addEventListener("unhandledrejection", function (e) {
+    var r = e.reason;
+    show("Promise 出错: " + ((r && (r.message || r)) || "unknown"));
+  });
+})();
+</script>
 
 <!-- 裸标识符("preact" / "preact/hooks" / "htm")只能靠 import map 解析。
      它必须出现在任何 module 脚本之前,否则浏览器已经先开始抓取模块。 -->

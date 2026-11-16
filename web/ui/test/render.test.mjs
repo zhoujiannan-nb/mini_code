@@ -623,25 +623,29 @@ async function mountWithCtx(extraCtx) {
   return fetchMock;
 }
 
-test("render: 底栏 = dsh 三件套(轮步速度 | 总tok·缓存 | 百分比);旧弹层全退役", async () => {
+test("render: 输入区 v3.4 = 占用行居中:胶囊+ ⓘ 会话统计浮层都在输入卡下方", async () => {
   await mountWithCtx();
   const meter = document.querySelector("#token-usage");
   assert.ok(meter, "占用仪表还在(id 不变)");
-  assert.match(meter.textContent, /%/, "只显示百分比");
+  assert.match(meter.textContent, /\d+%/, "占用百分比仍在");
+  assert.ok(!/预估约/.test(meter.textContent), "v3.4:「预估约」字样已删");
+  assert.ok(meter.querySelector("#ctx-total"), "v3.4:会话统计胶囊挪到输入卡下方一行");
   assert.equal(document.querySelector("#btn-compact"), null, "手动压缩按钮已移除");
   assert.equal(document.querySelector("#foot-hint"), null, "tips 行已移除");
   assert.equal(document.querySelector(".meter-pop, .meter-chip"), null, "v2 弹层/芯片整体退役");
 
+  const pill = document.querySelector("#ctx-total");
+  assert.match(pill.textContent, /tok/, "token 胶囊只剩体量 N tok");
+  assert.match(pill.textContent, /\/\s*\d+(\.\d+)?[km]/i, "v3.8:胶囊带上总上下文量(已用 / 总量)");
+  assert.ok(!/预估约/.test(pill.textContent), "占用% 不挤在胶囊里,归同行左邻");
+
   const stats = document.querySelector("#sess-stats");
-  assert.match(stats.textContent, /3 轮 · 6 步 · —/, "轮次 · 步数 · 速度合体(无速度=—)");
-
-  const ctxChip = document.querySelector("#ctx-total");
-  assert.match(ctxChip.textContent, /tok · 缓存命中 53%/, "累计 tok + 缓存命中率合体(800/1500≈53%)");
-
   stats.click();
   await settle();
   const pop = document.querySelector("#sess-pop");
-  assert.ok(pop, "点轮步芯片弹会话统计");
+  assert.ok(pop, "点 ⓘ 弹会话统计");
+  assert.match(pop.textContent, /执行轮数\s*3/);
+  assert.match(pop.textContent, /执行步数\s*6/);
   assert.match(pop.textContent, /模型用时\s*54分22秒/);
   assert.match(pop.textContent, /工具调用用时\s*68分52秒/);
   assert.match(pop.textContent, /首 token 平均\(TTFT\)\s*1\.8秒/);
@@ -650,21 +654,22 @@ test("render: 底栏 = dsh 三件套(轮步速度 | 总tok·缓存 | 百分比);
   assert.equal(document.querySelector("#sess-pop"), null, "再点收起");
 });
 
-test("render: 底栏「上下文」芯片直接打开管理抽屉,摘要抽屉互斥关闭", async () => {
+test("render: token 胶囊直接打开管理抽屉;摘要入口在抽屉头,与上下文互斥", async () => {
   const fetchMock = await mountWithCtx();
-  document.querySelector("#btn-summary").click();
+  // v3:聊天头只留四颗,「摘要」搬进上下文抽屉头(两颗文字钮)。
+  document.querySelector("#btn-rail").click();
   await settle();
-  assert.ok(document.querySelector("#summary-panel.open"), "摘要先开着");
+  assert.ok(document.querySelector("#ctx-panel.open"), "上下文先开着");
+  document.querySelector("#rail-sum").click();
+  await settle();
+  assert.ok(document.querySelector("#summary-panel.open"), "摘要从抽屉头打开");
+  assert.ok(!document.querySelector("#ctx-panel.open"), "开摘要必关上下文");
+
   document.querySelector("#ctx-total").click();
   await settle();
-  assert.ok(document.querySelector("#ctx-panel.open"), "芯片一点就开上下文抽屉");
+  assert.ok(document.querySelector("#ctx-panel.open"), "token 胶囊一点就开上下文抽屉");
   assert.ok(!document.querySelector("#summary-panel.open"), "开上下文必关摘要");
   assert.ok(fetchMock.callsTo("/context").length >= 1, "拉了快照");
-
-  document.querySelector("#btn-summary").click();
-  await settle();
-  assert.ok(document.querySelector("#summary-panel.open"), "摘要能再开");
-  assert.ok(!document.querySelector("#ctx-panel.open"), "开摘要必关上下文");
 });
 
 test("render: 「上下文」抽屉含组成/累计/轮次审计/事件,轮次可过滤事件", async () => {
@@ -761,10 +766,12 @@ test("render: totals 为 null 时抽屉显示空态而不是 0", async () => {
   assert.match(body, /仍在第 1 轮/, "没有轮次就说还在第 1 轮");
 });
 
-test("render: 「摘要」抽屉 = 执行结果/相关文件/性能指标,运行中可点开看目的", async () => {
+test("render: 「摘要」抽屉(入口=上下文抽屉头)= 执行结果/相关文件/性能指标", async () => {
   await mountWithCtx();
-  assert.ok(document.querySelector("#btn-summary"), "聊天头有摘要按钮(右上角四颗之一)");
-  document.querySelector("#btn-summary").click();
+  document.querySelector("#btn-rail").click();
+  await settle();
+  assert.ok(document.querySelector("#rail-sum"), "抽屉头有摘要入口(v3)");
+  document.querySelector("#rail-sum").click();
   await settle();
   const panel = document.querySelector("#summary-panel");
   assert.ok(panel && panel.classList.contains("open"), "摘要抽屉滑入");
@@ -777,7 +784,7 @@ test("render: 「摘要」抽屉 = 执行结果/相关文件/性能指标,运行
   assert.ok(!document.querySelector("#summary-panel.open"), "× 收起摘要");
 });
 
-test("render: 聊天头右上角恰好四颗按钮,文案精简", async () => {
+test("render: 聊天头右上角恰好四颗按钮(子代理/后台/摘要/上下文),文案精简", async () => {
   await mountWithCtx();
   const ids = ["btn-tasks", "btn-jobs", "btn-summary", "btn-rail"];
   for (const id of ids) {
@@ -785,8 +792,24 @@ test("render: 聊天头右上角恰好四颗按钮,文案精简", async () => {
     assert.ok(b, id + " 常驻可点");
     assert.ok(b.classList.contains("show"), id + " 默认可见");
   }
+  assert.equal(document.querySelector("#btn-sort"), null, "v3.1:排序按钮已移除");
   const headText = document.querySelector(".chat-head").textContent;
   assert.doesNotMatch(headText, /个子智能体|个后台任务/, "长文案已精简");
+});
+
+test("render: 聊天头「摘要」按钮开摘要抽屉,与上下文互斥", async () => {
+  await mountWithCtx();
+  document.querySelector("#btn-rail").click(); // 先开上下文
+  await settle();
+  assert.ok(document.querySelector("#ctx-panel.open"), "上下文先开着");
+  document.querySelector("#btn-summary").click();
+  await settle();
+  assert.ok(document.querySelector("#summary-panel.open"), "点摘要开摘要抽屉");
+  assert.ok(!document.querySelector("#ctx-panel.open"), "开摘要必关上下文");
+  assert.ok(document.querySelector("#btn-summary").classList.contains("on"), "摘要按钮亮着");
+  document.querySelector("#btn-summary").click();
+  await settle();
+  assert.ok(!document.querySelector("#summary-panel.open"), "再点收起摘要");
 });
 
 test("render: 聊天区用户头像回来了,点头像开「用户头像」弹窗", async () => {
@@ -819,7 +842,7 @@ const TRAJ_OLD = {
   rows: [{ seq: 5, kind: "task", turn: 1, round: 1, title: "更早的任务", sub: "", tokens: 0, dur_ms: 0, at: "2026-01-01T09:00:00Z" }],
 };
 
-test("render: 顶栏「完整模式」旁有轨迹按钮,点开轨迹抽屉:时间线+事件流+互斥", async () => {
+test("render: 抽屉头「轨迹」打开轨迹抽屉:时间线+事件流+互斥", async () => {
   const trajRoute = [/\/trajectory/, (url) => {
     const u = new URL(String(url), "http://test");
     return jsonResponse(u.searchParams.has("before") ? TRAJ_OLD : TRAJ_PAGE);
@@ -830,14 +853,16 @@ test("render: 顶栏「完整模式」旁有轨迹按钮,点开轨迹抽屉:时�
   document.querySelector("#sess-list .sess-item").click();
   await settle();
 
-  const btn = document.querySelector("header #btn-traj");
-  assert.ok(btn, "顶栏有轨迹按钮");
-  assert.equal(btn.previousElementSibling && btn.previousElementSibling.id, "btn-mode", "紧贴完整模式按钮");
+  assert.ok(document.querySelector("header #btn-traj"), "v3.1:轨迹按钮回归顶栏");
+  document.querySelector("#btn-rail").click(); // 先开上下文
+  await settle();
+  const btn = document.querySelector("#rail-traj");
+  assert.ok(btn, "上下文抽屉头也保留轨迹入口");
 
   btn.click();
   await settle();
   const panel = document.querySelector("#traj-panel");
-  assert.ok(panel && panel.classList.contains("open"), "点顶栏按钮滑出轨迹抽屉");
+  assert.ok(panel && panel.classList.contains("open"), "点抽屉头按钮滑出轨迹抽屉");
   assert.match(panel.textContent, /6 步 · 2 轮/, "头部汇总");
   const blks = panel.querySelectorAll(".tr-tl .tr-blk");
   assert.ok(blks.length >= 5, "时间线小块");
@@ -874,7 +899,7 @@ test("render: 顶栏「完整模式」旁有轨迹按钮,点开轨迹抽屉:时�
   search.value = "";
   search.dispatchEvent(new window.Event("input", { bubbles: true }));
   await settle();
-  document.querySelector("#btn-traj").click();
+  document.querySelector("#rail-traj").click();
   await settle();
   const more = document.querySelector("#traj-more");
   assert.ok(more, "has_more → 加载更早入口");
@@ -964,4 +989,90 @@ test("render: 运行中打字把停止换成插话,点击注入运行中的任�
   await settle();
   assert.match(document.querySelector("#btn-send").style.display, /none/, "清空后发送键收起");
   assert.equal(document.querySelector("#btn-stop").style.display, "inline-block", "清空后恢复停止");
+});
+
+/* ================= v3 样图版:顶栏芯片 / 欢迎页 / 选择模式 ================= */
+test("render: 新会话欢迎页 = Hero + 示例卡,点示例塞进输入框", async () => {
+  await resetAll();
+  mountApp();
+  await settle();
+  const hero = document.querySelector(".placeholder.hero");
+  assert.ok(hero, "新会话画欢迎页 Hero");
+  assert.match(hero.textContent, /你好，我是 Mini Code/);
+  assert.match(hero.textContent, /写一段代码/);
+  assert.ok(document.querySelector("#btn-more-ex"), "第四颗是「更多示例」");
+  const card = hero.querySelectorAll(".ex-card")[1];
+  card.click();
+  await settle();
+  assert.match(document.querySelector("#input").value, /通读这个项目/, "点示例卡填入提示词");
+});
+
+test("render: 顶栏 = 模型芯片(点+名+窗口) / 轨迹开关;无模式、无改进、无思考芯片", async () => {
+  await resetAll();
+  mountApp();
+  await settle();
+  const chip = document.querySelector("#status-pill");
+  assert.ok(chip.classList.contains("model-chip"), "模型芯片样式");
+  assert.match(chip.textContent, /m1/);
+  assert.match(chip.textContent, /100K/, "上下文窗口徽标");
+  assert.equal(document.querySelector("header #btn-mode"), null, "权限模式按钮已不在顶栏");
+  assert.equal(document.querySelector("#btn-improve"), null, "「改进」已按需求下线");
+  assert.equal(document.querySelector("#btn-think-chip"), null, "深度思考不再有顶栏入口");
+
+  // 轨迹回到顶栏:点开/再点收。
+  const traj = document.querySelector("header #btn-traj");
+  assert.ok(traj, "轨迹按钮回到顶栏");
+  traj.click();
+  await settle();
+  assert.equal(getState().trajOpen, true, "点顶栏轨迹开抽屉");
+  document.querySelector("header #btn-traj").click();
+  await settle();
+  assert.equal(getState().trajOpen, false, "再点收起");
+});
+
+test("render: 深度思考入口 = 输入区思考胶囊(点开强度浮层)", async () => {
+  await resetAll();
+  mountApp();
+  await settle();
+  document.querySelector("#sess-list .sess-item").click();
+  await settle();
+  await new Promise((r) => setTimeout(r, 30)); // 等 loadSession 尾巴,别拿旧快照比
+  const pill = document.querySelector("#think-pill");
+  assert.ok(pill, "思考胶囊在输入区");
+  pill.click();
+  await settle();
+  const pop = document.querySelector("#think-pop");
+  assert.ok(pop && pop.classList.contains("open"), "点开强度滑条浮层");
+  assert.ok(document.querySelector("#tp-effort"), "浮层里有强度滑条");
+});
+
+test("render: 输入区「选择模式」下拉切换完整/谨慎,走 POST /mode", async () => {
+  await resetAll({ extra: [[/\/mode$/, (u, o) => jsonResponse({ mode: JSON.parse(o.body).mode, auto_compressed: false, summary: null })]] });
+  const fetchMock = globalThis.fetch;
+  mountApp();
+  await settle();
+  document.querySelector("#sess-list .sess-item").click();
+  await settle();
+  document.querySelector("#btn-mode").click();
+  await settle();
+  assert.ok(document.querySelector("#mode-menu"), "模式下拉弹出");
+  document.querySelectorAll("#mode-menu .mdm-item")[1].click(); // 谨慎
+  await settle();
+  const post = fetchMock.calls.find((c) => /\/mode$/.test(c[0] || c.url));
+  assert.ok(post, "POST /mode");
+  assert.equal(JSON.parse(post.opts.body).mode, "cautious");
+  assert.equal(getState().mode, "cautious");
+});
+
+test("render: 输出速度显示在输入卡下方一行(有速度才出现,没有就不占位)", async () => {
+  await resetAll();
+  mountApp();
+  await settle();
+  setState({ speed: 42.34, speedAccurate: true });
+  await settle();
+  assert.match(document.querySelector("#token-usage").textContent, /42\.3 tok\/s/, "速度落在占用一行");
+  assert.ok(!/tok\/s/.test(document.querySelector("#token-pill-text").textContent), "胶囊里不再混速度");
+  setState({ speed: 0 });
+  await settle();
+  assert.ok(!/tok\/s/.test(document.querySelector("#token-usage").textContent), "速度归零后撤掉");
 });

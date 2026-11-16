@@ -183,7 +183,7 @@ const compactToolName = "compact_context"
 //     — so no tool result is ever orphaned from the calls that declared it;
 //   - an assistant message left with neither tool calls nor text is dropped.
 func stripCompactionCeremony(history []provider.Message) []provider.Message {
-	// Call ids of every compact_context invocation: the ids are what pair a
+	// Call ids of every compact_context invocation: the ids are what pair ad:\mini_code-work\mini_code.l
 	// tool result with its call, and an id may be empty on an old record, so
 	// the tool message's own Name is checked as well.
 	compactIDs := make(map[string]bool)

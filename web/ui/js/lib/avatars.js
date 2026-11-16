@@ -29,6 +29,13 @@ export function firstChar(name) {
 export const USER_FALLBACK_BG = hashColor("user");
 export const AGENT_DEFAULT_LETTER = "M";
 
+// agent 的默认"脸":与欢迎页 Hero / 侧栏徽标 / 应用图标同一张斜体 M(多边形,不依赖字体)。
+export const AGENT_MARK = html`<svg class="ava-mark" viewBox="0 0 100 100" aria-hidden="true"><g
+  transform="translate(50 51.25) skewX(-8) translate(-50 -51.25)">
+  <polygon fill="currentColor"
+    points="16.25,82.5 16.25,20 36.25,20 50,47.5 63.75,20 83.75,20 83.75,82.5 69,82.5 69,43.8 50,71.2 31.25,43.8 31.25,82.5"/>
+</g></svg>`;
+
 // 用户头像:已上传 → 图片;未设置 → 首字"你"+哈希色回退。
 // data-uav 保留:全局点击委托靠它识别"点的是用户头像 → 打开头像弹窗"。
 export function UserAvatar({ cls = "c-avatar", id }) {
@@ -58,7 +65,7 @@ export function AgentAvatar({ cls = "c-avatar", tag = "div", id }) {
       <img src=${src} alt="agent 头像" /></${Tag}>`;
   }
   const solid = tag === "span" ? cls : cls + "-fallback";
-  return html`<${Tag} id=${id || null} class=${solid + " agent-ava"} data-aav=${mark} title=${title}>${AGENT_DEFAULT_LETTER}</${Tag}>`;
+  return html`<${Tag} id=${id || null} class=${solid + " agent-ava"} data-aav=${mark} title=${title}>${AGENT_MARK}</${Tag}>`;
 }
 
 // 文件 → 256×256 方形 data URL(居中裁切;透明图铺白底;JPEG 0.85)

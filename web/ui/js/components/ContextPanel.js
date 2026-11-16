@@ -13,7 +13,7 @@ import { h } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import htm from "htm";
 
-import { useStore, toggleCtxPanel } from "../lib/store.js";
+import { useStore, toggleCtxPanel, toggleSummaryPanel, toggleTrajPanel } from "../lib/store.js";
 import { loadContext } from "../lib/actions.js";
 import { ROUTES, api } from "../lib/api.js";
 import { fmtK2 } from "../lib/format.js";
@@ -143,6 +143,11 @@ export function ContextPanel() {
       <span class="ctx-title">上下文</span>
       <span class=${"ctx-pct" + (pct >= 80 ? " warn" : "")}>${pct}%</span>
       <span class="sh-flex"></span>
+      <!-- v3 样图:聊天头右上角只留四颗,摘要/轨迹的入口搬进抽屉头。 -->
+      <button class="sh-btn rail-view" id="rail-sum" title="切到执行摘要抽屉"
+        onClick=${() => toggleSummaryPanel()}>摘要</button>
+      <button class="sh-btn rail-view" id="rail-traj" title="切到轨迹抽屉(逐步执行流)"
+        onClick=${() => toggleTrajPanel()}>轨迹</button>
       <button class="sh-btn" id="ctx-refresh" title="重新拉取快照"
         onClick=${() => { setLoading(true); loadContext().finally(() => setLoading(false)); }}>⟳</button>
       <button class="sh-btn" id="ctx-close" title="收起面板"

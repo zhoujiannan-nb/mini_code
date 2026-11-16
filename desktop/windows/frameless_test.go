@@ -37,22 +37,23 @@ func TestHitTestFrame(t *testing.T) {
 		{"拖拽条贴底部", 300, tbLogicalH - 1, false, htCaption},
 		{"拖拽条下方一格", 300, tbLogicalH, false, 0},
 		{"拖拽条左起点", tbAppW, 20, false, htCaption},
-		{"右侧顶角(右钮组已移除)", w - 20, 20, false, htCaption}, // v2:右侧不再有按钮
-		{"右上角内", w - 1, 0, false, htCaption},
-		// 左侧三点窗控(close/min/max)活在 0~70px 这一段:tbAppW 要是退回 0
-		// (漏了左排除),三点会被判进 HTCAPTION,点了只拖窗 —— 回归哨兵。
-		{"应用侧三点左", 20, 20, false, 0},
-		{"应用侧三点右", 50, 20, false, 0},
-		{"应用带右界外", tbAppW + 1, 20, false, htCaption},
+		{"右上钮组内(close 位)", w - 20, 20, false, 0},  // v3.3:右上 Windows 钮组是排除区
+		{"右上角内沿", w - 1, 0, false, 0},
+		// v3.3 换防:左侧三点下线整段并入拖拽带(tbAppW=0),右侧钮组
+		// (min/max/close)占 [w-138, w)。排除区要算漏了(tbControlsW 退回 0),
+		// 钮会被判进 HTCAPTION,点钮变成拖窗 —— 回归哨兵。
+		{"左侧并入拖拽带", 20, 20, false, htCaption},
+		{"右钮组左界外", w - tbControlsW - 1, 20, false, htCaption},
+		{"右钮组左界内", w - tbControlsW + 1, 20, false, 0},
 		{"正文", 640, 400, false, 0},
 		{"底部边缘", 640, h - 1, false, 0}, // 缩放是系统 NC 的事,hitTest 一律不管
 		{"左侧边框上方(负坐标)", -1, 5, false, 0},
 		{"越界右", w, 5, false, 0},
 		{"越界下", 5, h, false, 0},
 		// 最大化:同一套 client 坐标语义(隐形边框已在 frameHitTest 里扣掉)
-		{"最大化左上(应用带里)", 0, 0, true, 0},
+		{"最大化左上(拖拽带起点)", 0, 0, true, htCaption},
 		{"最大化拖拽条", 300, 10, true, htCaption},
-		{"最大化右上(右钮组已移除)", w - 20, 10, true, htCaption},
+		{"最大化右上钮组", w - 20, 10, true, 0},
 		{"最大化正文", 640, 400, true, 0},
 	} {
 		if got := hitTestFrame(c.x, c.y, w, h, c.zoom); got != c.want {
@@ -152,9 +153,9 @@ func TestFrameHitTestClientMapping(t *testing.T) {
 		{"左上角边框", rc.l + 1, rc.t + 1, 0},
 		{"拖拽带中点", capProbeX, top20, htCaption},
 		{"拖拽带贴client顶", capProbeX, rc.t + borderY + 1, htCaption},
-		{"右上角(右钮组已移除)", rc.r - borderX - px(20), top20, htCaption},
-		{"三点红点位", rc.l + borderX + px(20), top20, 0},   // 三点带里的按钮必须可点
-		{"三点绿点位", rc.l + borderX + px(52), top20, 0},    //
+		{"右上钮组 close 位", rc.r - borderX - px(20), top20, 0},      // v3.3:右上钮必须可点
+		{"右上钮组 min 位", rc.r - borderX - px(20) - px(92), top20, 0}, //
+		{"左侧拖拽带(原三点位)", rc.l + borderX + px(20), top20, htCaption}, // v3.3:左侧整段可拖
 		{"client顶之上(边框里)", capProbeX, rc.t + borderY/2, 0},
 		{"正文中心", cxPhys, cyPhys, 0},
 	}

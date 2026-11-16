@@ -15,6 +15,7 @@ export const initialState = {
   sessions: [],
   sessionsLoading: false,
   sessionsError: "",
+  sessSort: readSessSort(), // 历史会话排序:recent | oldest | title(偏好存 localStorage)
   workers: [],
   worker: "",            // 当前分桶;"" 由 workerBucketId() 映射到固定的「其他」
   workerMenuOpen: false,
@@ -86,6 +87,24 @@ export const initialState = {
 // 通用 localStorage 文本读取(纯客户端偏好;隐私模式失败给默认值)。
 function readLSText(key, dflt) {
   try { const v = localStorage.getItem(key); return v == null ? dflt : v; } catch (e) { return dflt; }
+}
+/* ---------------- 历史会话排序 ---------------- */
+// 聊天头「排序」按钮轮转的三种顺序;偏好存 localStorage,列表渲染前在 Sidebar 应用。
+export const SESS_SORTS = ["recent", "oldest", "title"];
+export const SESS_SORT_LABEL = { recent: "最近活跃", oldest: "最早活跃", title: "按标题" };
+const LS_SESS_SORT_KEY = "mc-sess-sort";
+function readSessSort() {
+  try {
+    const v = localStorage.getItem(LS_SESS_SORT_KEY);
+    return SESS_SORTS.includes(v) ? v : "recent";
+  } catch (e) { return "recent"; }
+}
+export function cycleSessSort() {
+  const cur = SESS_SORTS.includes(state.sessSort) ? state.sessSort : "recent";
+  const next = SESS_SORTS[(SESS_SORTS.indexOf(cur) + 1) % SESS_SORTS.length];
+  try { localStorage.setItem(LS_SESS_SORT_KEY, next); } catch (e) {}
+  setState({ sessSort: next });
+  return next;
 }
 // ctxOpen 是唯一带持久化偏好的 UI 开关:开不开「上下文」抽屉由用户定,
 // 存 localStorage(隐私模式读失败就默认收起)。

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Mini Code web UI: zero-build ES modules, Preact + htm, no bundler.",
   "scripts": {
-    "test": "node --import ./test/helpers/register.mjs --test \"test/**/*.test.mjs\""
+    "test": "node --experimental-require-module --import ./test/helpers/register.mjs --test \"test/**/*.test.mjs\""
   },
   "imports": {
     "#preact": "./js/vendor/preact.js",

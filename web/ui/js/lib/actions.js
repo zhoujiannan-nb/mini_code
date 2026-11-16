@@ -1,6 +1,6 @@
 // 所有"会打后端"的动作。组件只调用这里的函数,不直接 fetch ——
 // 路径与协议集中在 lib/api.js,状态写回集中在 lib/store.js。
-import { api, ROUTES, postJSON, putJSON, del } from "./api.js";
+import { api, ROUTES } from "./api.js";
 import { getState, setState, update, dispatch, toast } from "./store.js";
 import { historyRows } from "./transcript.js";
 import { nav } from "./nav.js";
@@ -522,13 +522,16 @@ export async function deleteSession(id, title) {
   } catch (err) { toast("删除失败:" + err.message, "err"); }
 }
 
-export async function toggleMode() {
+export async function setModeTo(next) {
   const state = getState();
-  const next = state.mode === "cautious" ? "full" : "cautious";
+  if (state.mode === next) return;
   if (!state.current) {
     setState({ mode: next });
+    toast(next === "cautious" ? "新会话将用谨慎模式:危险操作请求审批" : "新会话将用完整模式:直接执行", "ok");
     return;
   }
+  const prev = state.mode;
+  setState({ mode: next });
   try {
     const r = await api(ROUTES.mode(state.current), {
       method: "POST",
@@ -537,7 +540,15 @@ export async function toggleMode() {
     });
     setState({ mode: r.mode });
     toast(next === "cautious" ? "已切换为谨慎模式:危险操作将请求审批" : "已切换为完整模式:直接执行", "ok");
-  } catch (e) { toast("切换模式失败:" + e.message, "err"); }
+  } catch (e) {
+    setState({ mode: prev });
+    toast("切换模式失败:" + e.message, "err");
+  }
+}
+
+export async function toggleMode() {
+  const state = getState();
+  return setModeTo(state.mode === "cautious" ? "full" : "cautious");
 }
 
 export async function pickModel(name) {
@@ -682,8 +693,7 @@ export async function syncApprovals() {
 }
 
 /* ---------------- 状态 / token / 缓存 ---------------- */
-export async function loadStatus() {
-  try {
+export async function loadStatus() {  try {
     const s = await api(ROUTES.status);
     const st = getState();
     const models = s.models || [];

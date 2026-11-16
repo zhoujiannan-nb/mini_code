@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mini Code</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel='icon' type='image/svg+xml' href='data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Cdefs%3E%3ClinearGradient%20id=%22g%22%20x1=%220%22%20y1=%220%22%20x2=%221%22%20y2=%221%22%3E%3Cstop%20offset=%220%22%20stop-color=%22%23a5d8ff%22/%3E%3Cstop%20offset=%22.55%22%20stop-color=%22%231d4fae%22/%3E%3Cstop%20offset=%221%22%20stop-color=%22%230d2440%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20x=%221%22%20y=%221%22%20width=%2230%22%20height=%2230%22%20rx=%229%22%20fill=%22url(%23g)%22/%3E%3Cpath%20d=%22M9.6%2011.4%205.4%2016l4.2%204.6%22%20fill=%22none%22%20stroke=%22%23fff%22%20stroke-width=%222.1%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22/%3E%3Cpath%20d=%22M18.6%209.8%2013.4%2022.2%22%20fill=%22none%22%20stroke=%22%23fff%22%20stroke-width=%222.1%22%20stroke-linecap=%22round%22/%3E%3Cpath%20d=%22M22.4%2011.4%2026.6%2016l-4.2%204.6%22%20fill=%22none%22%20stroke=%22%23fff%22%20stroke-width=%222.1%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22/%3E%3C/svg%3E'>
+
+<!-- 样式表顺序:开机动画(先铺黑) → 三张主题表 → 应用骨架(#app 的布局) -->
+<style>
+@import url("/css/boot.css");
+@import url("/css/base.css");
+@import url("/css/layers.css");
+@import url("/css/plugins.css");
+@import url("/css/app.css");
+</style>
+
+<!-- 裸标识符("preact" / "preact/hooks" / "htm")只能靠 import map 解析。
+     它必须出现在任何 module 脚本之前,否则浏览器已经先开始抓取模块。 -->
+<script type="importmap">{"imports":{"preact":"/js/vendor/preact.js","preact/hooks":"/js/vendor/hooks.js","htm":"/js/vendor/htm.js"}}</script>
+
+<!--mc-plugin-assets-->
+<script id="mc-boot-cfg" type="application/json">null</script>
+</head>
+<body>
+
+<!-- 唯一入口。#app 在 css/app.css 里是 display:contents:aside/main 仍然直接
+     参与 body 的 flex 布局,插件 slot 与模后台的 body 级节点也不受影响。 -->
+<div id="app"></div>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

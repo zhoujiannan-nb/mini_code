@@ -25,3 +25,10 @@ html.mc-boot-out::after { opacity: 0; }
 }
 html.mc-boot #mc-boot-skip.show { opacity: .75; }
 #mc-boot-skip:hover { opacity: 1 !important; color: #e6edf3; border-color: rgba(255,255,255,.3); }
+
+/* 桌面无边框(v3.2):开机黑幕/播放器也按 18px 圆弧裁切 —— fixed 层不受
+   body 圆角壳裁切,不补这一条,开机那两秒四角就是方的。 */
+html.frameless.mc-boot::after,
+html.frameless #mc-boot { border-radius: 18px; }
+/* v3.4:frameless 下 html 底色改成了页面底色,开机期间要把缝也铺黑,黑幕才完整。 */
+html.frameless.mc-boot { background: #05070a; }

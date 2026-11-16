@@ -1,86 +1,79 @@
-// 顶栏 + 聊天头(v2 纯白风)。
-//   顶栏:左 = 模型/端口状态芯片 + 权限模式芯片(原输入区上移,输入区只留打字);
-//         右 = 审批徽标;(浏览器还有主题切换 —— 桌面无边框模式这两颗在标题条里)。
-//   聊天头:返回父会话、标题(双击重命名)、子任务/后台命令入口、执行摘要栏开关。
-// 设置入口挪进了侧栏导航(样图保留的唯一导航项);头像芯片按样图去掉。
+// 顶栏 + 聊天头(v3.1:按用户反馈回摆)。
+//   顶栏(左→右):模型芯片(绿点 + 模型名 + 窗口大小徽标)、「轨迹」开关;
+//         右侧只在有审批时出现徽标。深度思考不再有顶栏入口——输入区的思考
+//         胶囊 / 双击模型按钮就是它;「改进」已按需求下线。
+//   聊天头:标题做成下划线 tab;新会话副标「发送后自动保存会话 ⓘ」;
+//         右侧四颗:子代理 / 后台 / 摘要 / 上下文。
 import { h } from "preact";
 import htm from "htm";
 
-import { useStore, setState, getState, toast, toggleCtxPanel, toggleSummaryPanel, toggleTrajPanel } from "../lib/store.js";
-import { cycleThemeMode, themeLabel } from "../lib/theme.js";
-import { selectSession, renameSession, loadChildren, loadJobs, toggleMode } from "../lib/actions.js";
-import { isFrameless } from "../lib/titlebar.js";
+import { useStore, setState, getState, toggleCtxPanel, toggleTrajPanel, toggleSummaryPanel } from "../lib/store.js";
+import { selectSession, renameSession, loadChildren, loadJobs } from "../lib/actions.js";
+import { fmtK } from "../lib/format.js";
 import { TasksPanel } from "./panels/TasksPanel.js";
 import { JobsPanel } from "./panels/JobsPanel.js";
 
 const html = htm.bind(h);
 
-export function Topbar() {
+// v3.8:桌面(frameless)下顶栏整条隐藏,模型芯片组并进聊天头(标题不再显示);
+// web 模式布局不变。frameless 类由 titlebar.js 在 App 渲染前加好(main.js 顺序)。
+export function isFramelessUi() {
+  return typeof document !== "undefined"
+    && document.documentElement.classList.contains("frameless");
+}
+
+/* ---------------- 模型芯片组:模型 + 轨迹 + 审批徽标 ----------------
+   顶栏(web)与聊天头(frameless)共用这一份,DOM id 一致。 */
+export function ModelChips() {
   const approvals = useStore((s) => s.approvals);
-  const themeMode = useStore((s) => s.themeMode);
   const model = useStore((s) => s.model);
   const defaultModel = useStore((s) => s.defaultModel);
   const port = useStore((s) => s.port);
   const models = useStore((s) => s.models);
-  const mode = useStore((s) => s.mode);
-  const current = useStore((s) => s.current);
+  const trajOpen = useStore((s) => s.trajOpen);
   const count = Object.keys(approvals || {}).length;
-  const tmode = themeMode || "system";
-  const icon = { light: "☀", dark: "☾", system: "🖥" }[tmode] || "🖥";
 
-  const onTheme = () => {
-    const next = cycleThemeMode();
-    setState({ themeMode: next });
-    toast("主题:" + themeLabel(next), "ok");
-  };
   const modelName = model || defaultModel || "未配置模型";
-  const statusText = models.length === 0 && !port
-    ? "状态加载中…"
-    : html`<span><b>${modelName}</b> · 端口 ${port}</span>`;
+  const cur = (models || []).find((m) => m.name === (model || defaultModel));
+  const sizeBadge = cur && cur.context_window ? fmtK(cur.context_window) : "";
+  const loading = (models || []).length === 0 && !port;
 
-  // 无边框桌面:主题那颗搬进了标题条(#tb-theme),浏览器(web 模式)没有标题条,
-  // 必须留在顶栏。设置入口在侧栏,两种模式都只有一处。
-  const inTitlebar = isFrameless();
+  return html`<span class=${"hchip model-chip" + (loading ? " loading" : "")} id="status-pill"
+    title=${"当前模型:" + modelName + (port ? " · 本地服务端口 " + port : "")}>
+    <i class="mc-dot"></i>
+    <b id="model-name-top">${loading ? "状态加载中…" : modelName}</b>
+    ${!loading && sizeBadge ? html`<span class="mc-size">${sizeBadge}</span>` : null}
+  </span>
+  <button class=${"hchip traj-chip" + (trajOpen ? " on" : "")} id="btn-traj"
+    title="轨迹:本会话逐步执行流(任务/助手/工具/压缩),含时间线与搜索"
+    onClick=${() => toggleTrajPanel()}>
+    <svg class="hc-ico" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M3 16.5 8 10l4 4.5L16 6l5 7.5" />
+      <circle cx="8" cy="10" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="16" cy="6" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+    轨迹
+  </button>
+  <button class=${"approval-badge" + (count ? " show" : "")} id="btn-approval-badge"
+    title="有待审批的危险操作"
+    onClick=${() => {
+      const ids = Object.keys(getState().approvals || {});
+      if (ids.length) setState({ approvalShown: ids[0] });
+    }}>🔔 审批 <span id="approval-count">${count}</span></button>`;
+}
+
+/* ---------------- 顶栏 ---------------- */
+export function Topbar() {
+  // frameless 下整条不渲染(不是 display:none —— 顶栏和聊天头共用芯片组 DOM,
+  // 两份 id 重复会让 getElementById/querySelector 命中隐藏的那份)。
+  if (isFramelessUi()) return null;
   return html`<header>
-    <span class="pill" id="status-pill" title="当前模型 / 本地服务端口">${statusText}</span>
-    <button class=${"mode-btn" + (mode === "cautious" ? " cautious" : "")} id="btn-mode" title=${current
-      ? "点击切换权限模式:完整=直接执行;谨慎=危险操作(删文件/危险命令)需审批,立即生效"
-      : "新会话的权限模式:完整=直接执行;谨慎=危险操作需审批"}
-      onClick=${toggleMode}>
-      <svg class="mb-ico" viewBox="0 0 24 24" aria-hidden="true">
-        ${mode === "cautious"
-          ? html`<path d="M12 3 5 6v5c0 4.4 3 8.4 7 10 4-1.6 7-5.6 7-10V6l-7-3Z" />`
-          : html`<path d="M13 3 5.5 13.5H11L10 21l7.5-10.5H12L13 3Z" />`}
-      </svg>
-      ${(mode === "cautious" ? "谨慎模式" : "完整模式") + (current ? "" : "(新会话)")}
-    </button>
-    <button class=${"mode-btn traj-btn" + (useStore((s) => s.trajOpen) ? " on" : "")} id="btn-traj"
-      title="轨迹:本会话逐步执行流(任务/助手/工具/压缩),含时间线与搜索"
-      onClick=${toggleTrajPanel}>
-      <svg class="mb-ico" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M3 16.5 8 10l4 4.5L16 6l5 7.5" />
-        <circle cx="8" cy="10" r="1.5" fill="currentColor" stroke="none" />
-        <circle cx="16" cy="6" r="1.5" fill="currentColor" stroke="none" />
-      </svg>
-      轨迹
-    </button>
+    <${ModelChips} />
     <div class="spacer"></div>
-    <button class=${"approval-badge" + (count ? " show" : "")} id="btn-approval-badge"
-      title="有待审批的危险操作"
-      onClick=${() => {
-        const ids = Object.keys(getState().approvals || {});
-        if (ids.length) setState({ approvalShown: ids[0] });
-      }}>🔔 审批 <span id="approval-count">${count}</span></button>
-    ${inTitlebar ? null : html`<button class="icon-btn theme-btn" id="btn-theme" title="切换主题:浅色 / 深色 / 跟随系统" onClick=${onTheme}>
-      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="12" cy="12" r="8" />
-        <path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none" />
-      </svg>
-      <span class="lbl">${icon} ${themeLabel(tmode)}</span>
-    </button>`}
   </header>`;
 }
 
+/* ---------------- 聊天头 ---------------- */
 export function ChatHead() {
   const current = useStore((s) => s.current);
   const sessions = useStore((s) => s.sessions);
@@ -93,18 +86,19 @@ export function ChatHead() {
   const cur = (sessions || []).find((s) => s.session_id === current);
   const parentId = cur && cur.parent_id;
   const title = current ? (cur ? (cur.title || "会话 " + current.slice(0, 8)) : "会话 " + current.slice(0, 8)) : "新会话";
-  const sub = current ? "" : "发送后自动创建会话";
 
   const runningKids = (children || []).filter((c) => c.active).length;
   const jobsRunning = cur ? (cur.jobs_running || 0) : 0;
   const jobsTotal = cur ? (cur.jobs_total || 0) : 0;
 
   return html`<div class="chat-head">
+    ${isFramelessUi() ? html`<${ModelChips} />` : null}
     <button class=${"back-btn" + (parentId ? " show" : "")} id="btn-back-parent" title="返回父会话"
       onClick=${() => { if (parentId) selectSession(parentId); }}>← 父会话</button>
-    <span class="title" id="chat-title" title=${title + "(双击重命名)"}
-      onDblClick=${() => { if (current) renameSession(current, cur ? cur.title : ""); }}>${title}</span>
-    <span id="chat-sub">${sub}</span>
+    ${isFramelessUi() ? null : html`<span class="title" id="chat-title" title=${title + "(双击重命名)"}
+      onDblClick=${() => { if (current) renameSession(current, cur ? cur.title : ""); }}>${title}</span>`}
+    ${current ? null : html`<span id="chat-sub" class="chat-sub">发送后自动保存会话<span class="sub-info"
+      title="第一条消息发出时自动创建会话并保存到左侧历史列表,不用手动保存">ⓘ</span></span>`}
     <span class="spacer"></span>
     <button class="tasks-btn show" id="btn-tasks" title="子代理:该会话派遣的子任务"
       onClick=${() => { const open = !getState().tasksOpen; setState({ tasksOpen: open }); if (open) loadChildren(); }}>
@@ -126,9 +120,9 @@ export function ChatHead() {
       <span class=${"tb-n" + (jobsRunning ? " hot" : "")} id="jobs-count">${jobsRunning > 0 ? jobsRunning : jobsTotal}</span> 后台
     </button>
     <button class=${"tasks-btn show" + (summaryOpen ? " on" : "")} id="btn-summary"
-      title="执行摘要:agent 的目标 / 待办 / 动过的文件" onClick=${toggleSummaryPanel}>
+      title="摘要:本会话执行结果 / 相关文件 / 性能指标" onClick=${() => toggleSummaryPanel()}>
       <svg class="tb-ico" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M5 4.5h14" /><path d="M5 9.5h10" /><path d="M5 14.5h14" /><path d="M5 19.5h8" />
+        <path d="M5 4.5h14" /><path d="M5 9.5h14" /><path d="M5 14.5h9" /><path d="M5 19.5h6" />
       </svg>
       摘要
     </button>

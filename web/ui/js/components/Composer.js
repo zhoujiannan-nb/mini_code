@@ -1,7 +1,9 @@
-// 输入区:发送/停止、模型选择(单击)、思考强度(双击)、截图、@ 文件夹选择器。
-// 底栏(v4,学 dsh 三件套):「N 轮 · M 步 · X tok/s」点击弹会话统计浮层;
-// 「总 tok · 缓存命中%」点击开上下文管理抽屉;右侧百分比小仪表(占用)。
-// 手动压缩按钮与 tips 行已移除,发送快捷键/提示语在设置里改。
+// 输入区(v3 样图版):一张安静的圆角卡,打字在上,工具条在下。
+//   左:＋(加图)、「选择模式」(完整/谨慎,原顶栏的模式按钮搬进来);
+//   右:模型下拉(单击)、思考模式胶囊(开强度滑条浮层)、发送/停止。
+//   v3.4:「N tok」胶囊(点胶囊开上下文抽屉,点 ⓘ 弹会话统计)也挪到输入卡
+//   下方一行(#token-usage):胶囊 + 占用 X% + 细进度条 + 速度图标 tok/s,整体居中。
+// 「选择文件」按钮退役:路径插入仍然直接敲 @(FsPicker 照常弹)。
 //
 // 和旧实现最大的不同:输入框内容、待发图片、下拉开合都是组件 state,
 // 不再有 $("#input").value / innerHTML 这类跨模块的命令式补丁。
@@ -12,7 +14,7 @@ import htm from "htm";
 import { useStore, setState, getState, toast, toggleCtxPanel } from "../lib/store.js";
 import { ROUTES, api } from "../lib/api.js";
 import {
-  send, sendSteer, stop, loadContext,
+  send, sendSteer, stop, loadContext, setModeTo,
   pickModel, persistReasoning, thinkScale, thinkIndex, thinkingSupported,
   reasoningLabel, currentProvider,
 } from "../lib/actions.js";
@@ -37,11 +39,13 @@ export function Composer() {
   const thinking = useStore((s) => s.thinking);
   const reasoningEffort = useStore((s) => s.reasoningEffort);
   const seed = useStore((s) => s.composerSeed);
+  const mode = useStore((s) => s.mode);
 
   const [value, setValue] = useState("");
   const [images, setImages] = useState([]);
   const [modelMenu, setModelMenu] = useState(false);
   const [thinkPop, setThinkPop] = useState(false);
+  const [modeMenu, setModeMenu] = useState(false);
   const sendMode = useStore((s) => s.sendMode);
   const inputTip = useStore((s) => s.inputTip);
   const [fs, setFs] = useState({ open: false, q: "", hits: [], sel: 0, indexing: false, err: "" });
@@ -51,6 +55,8 @@ export function Composer() {
   const clickTimer = useRef(null);
   const fsTimer = useRef(null);
   const fsSeq = useRef(0);
+  const valueRef = useRef("");
+  valueRef.current = value;
 
   // 输入框自增高(最多 160px),旧 autoGrow 的行为。
   useEffect(() => {
@@ -60,7 +66,8 @@ export function Composer() {
     ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
   }, [value]);
 
-  // 「造一个插件」把提示词塞进输入框:由 store 的 composerSeed 驱动,不直接改 DOM。
+  // 「造一个插件」/欢迎页示例卡把提示词塞进输入框:由 store 的 composerSeed
+  // 驱动,不直接改 DOM。
   useEffect(() => {
     if (!seed || !taRef.current) return;
     setValue(seed.text || "");
@@ -69,12 +76,14 @@ export function Composer() {
     taRef.current.setSelectionRange(n, n);
   }, [seed]);
 
-  // 点模型按钮/菜单之外时收起下拉和思考浮层
+  // 点模型按钮/菜单之外时收起下拉、思考浮层与模式下拉
   useEffect(() => {
     const onDoc = (e) => {
-      if (e.target.closest && e.target.closest(".model-menu-wrap")) return;
-      setModelMenu(false);
-      setThinkPop(false);
+      // 排除名单少了 #think-pill 的话:胶囊的 onClick 先开,document 冒泡的
+      // 这个再关 —— 浮层永远闪一下就没了。
+      if (e.target.closest && (e.target.closest(".model-menu-wrap") || e.target.closest("#think-pill"))) { /* keep */ }
+      else { setModelMenu(false); setThinkPop(false); }
+      if (!(e.target.closest && e.target.closest(".mode-menu-wrap"))) setModeMenu(false);
     };
     document.addEventListener("click", onDoc);
     return () => document.removeEventListener("click", onDoc);
@@ -221,11 +230,18 @@ export function Composer() {
   /* ---------------- 模型 / 思考 ---------------- */
   const modelName = (models.find((m) => m.name === model) || {}).name || model || "默认";
   const cap = ctxWindow || 0;
-  // 需求④:token 不再报"多少 K / 多少 K",只画一个百分比小仪表。
+  // v3.3 分工:胶囊只报体量「N tok」,占用% 与输出速度都挪到输入卡下方一行
+  // (用户圈图:「占用百分比和速度统计都挪动输入框下面」),口径仍是同一个仪表。
   const ctxPct = cap > 0 ? Math.min(999, Math.round((tokens || 0) * 100 / cap)) : 0;
   const tokenWarn = cap > 0 && (tokens || 0) / cap >= 0.8;
   const meterTitle = "上下文占用:" + (tokens ? fmtK2(tokens) : "0") + (cap ? " / " + fmtK2(cap) : "")
     + "(" + ctxPct + "%),接近上限时自动压缩";
+  // 输出速度:格式化成一行短文案(≥100 取整,否则留一位小数)。
+  const speedShort = speed > 0 ? (speed >= 100 ? Math.round(speed) : Math.round(speed * 10) / 10) + " tok/s" : "";
+  // v3.8:胶囊报「已用 / 总量」——用户:「下放和速度放一起的上下文统计展示
+  // 总上下文的量」,只写已用的数字看不出窗口一共多大。
+  const tokenPillText = (fmtTok(tokens) || "0 tok")
+    + (cap > 0 ? " / " + fmtK(cap) : " · 窗口未配置");
 
   // 双击模型按钮打开思考强度浮层(单击延迟 230ms 才切换模型下拉)。
   const openThinkingPop = () => {
@@ -244,17 +260,12 @@ export function Composer() {
   useEffect(() => {
     if (current && !getState().ctxInfo) loadContext();
   }, [current]);
-  const totals = ctxInfo && ctxInfo.totals;
   const stats = (ctxInfo && ctxInfo.stats) || {};
   const speedText = paintSpeed(speed, speedAccurate);
-  const speedShort = speed > 0 ? (speed >= 100 ? Math.round(speed) : Math.round(speed * 10) / 10) + " tok/s" : "—";
   const roundsN = ((ctxInfo && ctxInfo.rounds) || []).length;
   const stepsN = (ctxInfo && ctxInfo.steps) || 0;
-  // 缓存命中率:供应商不报就明说"未上报",不拿 0% 冒充。
-  const hitPct = totals && totals.reported && totals.input > 0
-    ? Math.round(totals.cached * 100 / totals.input) + "%" : null;
 
-  // 「会话统计」浮层(dsh 风):轮次/步/模型用时/工具调用用时/TTFT/输出速度。
+  // 「会话统计」浮层(点 token 胶囊右侧的 ⓘ):轮次/步/模型用时/工具调用用时/TTFT/输出速度。
   const [sessPop, setSessPop] = useState(false);
   useEffect(() => {
     if (!sessPop) return undefined;
@@ -296,6 +307,8 @@ export function Composer() {
   const modelTitle = (current
     ? "当前会话模型:" + modelName + "(切换后下次任务生效)"
     : "新会话使用的模型(下一条消息生效)") + " · 单击切换模型,双击调整思考强度";
+  const modeTitle = (mode === "cautious" ? "当前:谨慎模式(危险操作需审批)" : "当前:完整模式(直接执行)")
+    + (current ? "" : "(对新会话生效)");
 
   return html`<div class="composer">
     <${FsPicker} open=${fs.open} q=${fs.q} hits=${fs.hits} sel=${fs.sel}
@@ -321,19 +334,34 @@ export function Composer() {
             <path d="M8 2.5v11M2.5 8h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>
         </button>
-        <button class="chip-btn" id="btn-file-pick" title="选择文件夹路径插入输入框(也可直接输入 @)"
-          onClick=${() => { openFs(""); taRef.current && taRef.current.focus(); }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 7.2A2.2 2.2 0 0 1 6.2 5h3.4l1.8 2.2H17.8A2.2 2.2 0 0 1 20 9.4v7.4A2.2 2.2 0 0 1 17.8 19H6.2A2.2 2.2 0 0 1 4 16.8V7.2Z" />
-          </svg>
-          选择文件
-        </button>
+        <span class="mode-menu-wrap">
+          <button class=${"chip-btn" + (modeMenu ? " open" : "")} id="btn-mode" title=${modeTitle}
+            onClick=${(e) => { e.stopPropagation(); setModeMenu((v) => !v); }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 7.2A2.2 2.2 0 0 1 6.2 5h3.4l1.8 2.2H17.8A2.2 2.2 0 0 1 20 9.4v7.4A2.2 2.2 0 0 1 17.8 19H6.2A2.2 2.2 0 0 1 4 16.8V7.2Z" />
+              <path d="M4 10.5h16" />
+            </svg>
+            选择模式
+            <span class="chev">⌄</span>
+          </button>
+          ${modeMenu ? html`<div class="mode-menu" id="mode-menu">
+            <button class=${"mdm-item" + (mode === "full" ? " cur" : "")} onClick=${() => { setModeMenu(false); setModeTo("full"); }}>
+              <svg class="mb-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3 5.5 13.5H11L10 21l7.5-10.5H12L13 3Z" /></svg>
+              <span class="mdm-name">完整模式</span><span class="mdm-sub">直接执行</span>
+              ${mode === "full" ? html`<span class="mdm-tick">✓</span>` : null}
+            </button>
+            <button class=${"mdm-item" + (mode === "cautious" ? " cur" : "")} onClick=${() => { setModeMenu(false); setModeTo("cautious"); }}>
+              <svg class="mb-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 3 8.4 7 10 4-1.6 7-5.6 7-10V6l-7-3Z" /></svg>
+              <span class="mdm-name">谨慎模式</span><span class="mdm-sub">危险操作需审批</span>
+              ${mode === "cautious" ? html`<span class="mdm-tick">✓</span>` : null}
+            </button>
+          </div>` : null}
+        </span>
         <span class="row-flex"></span>
         <div class="model-menu-wrap">
           <button class="model-inline-btn" id="btn-model" title=${modelTitle} onClick=${onModelClick}>
             <span id="model-name">${modelName}</span>
-            <span id="think-badge" class="think-badge" hidden=${!thinkingSupported()}>${reasoningLabel()}</span>
             <span class="chev">⌄</span>
           </button>
           <div class=${"model-menu" + (modelMenu ? " open" : "")} id="model-menu">
@@ -358,6 +386,12 @@ export function Composer() {
               : "当前模型(" + (provider || "未知 provider") + ")不支持思考强度调整,仅 deepseek / sglang / vllm 支持。"}</div>
           </div>
         </div>
+        <button class=${"think-pill" + (thinkingSupported() ? " on" : "")} id="think-pill"
+          title=${thinkingSupported() ? "思考强度:" + scale[idx].label + "(点开滑条调整)" : "当前模型不支持思考强度调整"}
+          onClick=${openThinkingPop}>
+          <span id="think-badge">${thinkingSupported() ? reasoningLabel() : "思考模式"}</span>
+          <span class="chev">⌄</span>
+        </button>
         <button class="send-btn" id="btn-send" style=${running && !hasDraft ? "display:none" : ""} onClick=${doSend}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -371,28 +405,35 @@ export function Composer() {
       <input type="file" id="file-shot" accept="image/*" multiple hidden ref=${fileRef}
         onChange=${(e) => { addImageFiles(Array.from(e.target.files || [])); e.target.value = ""; }} />
     </div>
-    <div class="composer-foot">
+    <!-- v3.4 输入卡下方一行(居中):会话统计胶囊 + 占用% + 细进度条 + 速度图标。
+         「预估约」字样按用户要求删掉;接近上限 80% 整行变琥珀。 -->
+    <div class=${"tu-line" + (tokenWarn ? " warn" : "")} id="token-usage" title=${meterTitle}>
       <span class="sess-pop-wrap">
-        <button class=${"foot-chip" + (sessPop ? " on" : "")} id="sess-stats"
-          title="会话统计:轮次 / 步 / 模型用时 / 工具调用用时 / 首 token 平均"
-          onClick=${() => setSessPop(!sessPop)}>${roundsN} 轮 · ${stepsN} 步 · ${speedShort}</button>
+        <button class="token-pill" id="ctx-total" title=${meterTitle + " · 点击打开上下文管理"}
+          onClick=${() => toggleCtxPanel()}>
+          <span id="token-pill-text">${tokenPillText}</span>
+          <span class="tp-info" id="sess-stats" role="button"
+            title="会话统计:轮次 / 步 / 模型用时 / 工具调用用时 / 首 token 平均"
+            onClick=${(e) => { e.stopPropagation(); setSessPop(!sessPop); }}>ⓘ</span>
+        </button>
         ${sessPop ? html`<div class="foot-pop" id="sess-pop">
           <div class="fp-title">会话统计</div>
-          <div class="fp-row"><span>轮次</span><b>${roundsN}</b></div>
-          <div class="fp-row"><span>步数</span><b>${stepsN}</b></div>
+          <div class="fp-row"><span>执行轮数</span><b>${roundsN}</b></div>
+          <div class="fp-row"><span>执行步数</span><b>${stepsN}</b></div>
           <div class="fp-row"><span>模型用时</span><b>${stats.model_ms ? fmtDurMs(stats.model_ms) : "—"}</b></div>
           <div class="fp-row"><span>工具调用用时</span><b>${stats.tool_ms ? fmtDurMs(stats.tool_ms) : "—"}</b></div>
           <div class="fp-row"><span>首 token 平均(TTFT)</span><b>${stats.ttft_avg_ms ? fmtDurMs(stats.ttft_avg_ms) : "未测"}</b></div>
           <div class="fp-row"><span>输出速度(TPS)</span><b>${speedText || "—"}</b></div>
         </div>` : null}
       </span>
-      <button class="foot-chip" id="ctx-total"
-        title="本会话累计用掉的上下文(历次请求输入之和)· 点击打开上下文管理"
-        onClick=${() => toggleCtxPanel()}>${totals ? (fmtTok(totals.input) || "0 tok") : "—"} · 缓存命中 ${hitPct || "未上报"}</button>
-      <span class="row-flex"></span>
-      <span class=${"ctx-meter" + (tokenWarn ? " warn" : "")} id="token-usage" title=${meterTitle}>
-        <i class="cm-bar"><i style=${{ width: Math.min(100, ctxPct) + "%" }}></i></i><b>${ctxPct}%</b>
-      </span>
+      <b>${cap > 0 ? ctxPct + "%" : "窗口未配置"}</b><i class="cm-bar"><i style=${{ width: Math.min(100, ctxPct) + "%" }}></i></i>
+      ${speedShort ? html`<span class="tu-speed" title="输出速度(tok/s)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4.5 17.5a9 9 0 1 1 15 0" />
+          <path d="M12 17.5l4-5.2" />
+          <circle cx="12" cy="17.5" r="1.4" fill="currentColor" stroke="none" />
+        </svg>${speedShort}</span>` : null}
     </div>
   </div>`;
 }

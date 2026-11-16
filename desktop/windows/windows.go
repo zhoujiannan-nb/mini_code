@@ -46,6 +46,11 @@ const (
 	gclpHIconSm = -34
 	dwmwaDark20 = 20 // DWMWA_USE_IMMERSIVE_DARK_MODE: Win10 1809+ / Win11
 	dwmwaDark19 = 19 // 早期 Win10 构建的旧属性号
+	// DWMWA_WINDOW_CORNER_PREFERENCE(Win11+):2 = DWMWCP_ROUND。桌面无边框模式
+	// 摘掉 WS_CAPTION 后系统默认可能把四角拉成方的,这里显式要圆角,和页面侧
+	// body 的 18px 圆角壳配套 —— OS 裁掉圆弧以外的像素,四角露出的是桌面而不是
+	// 页面底色。Win10 没有这个属性,调用静默失败,由页面侧圆角壳自行收口。
+	dwmwaCornerPref = 33
 )
 
 // New returns the Windows desktop shell.
@@ -212,6 +217,8 @@ func (p *platform) NewWindow(opts desktop.WindowOptions) (desktop.Window, error)
 	// with a default icon, so we enforce it.
 	applyWindowIcon(w.Handle())
 	// dsh 式无边框:去原生标题栏,页面自绘顶条(见 js/lib/titlebar.js)。
+	// Mica 背后板在 installFrameless 里开;WebView 透明背景走上面的环境变量,
+	// 页面 mc-glass 与 Mica 成对生效(见 transparency.go)。
 	installFrameless(w)
 	return w, nil
 }
