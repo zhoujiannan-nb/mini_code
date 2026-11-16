@@ -9,7 +9,11 @@
 //	           search / browser driver wrapping an external program)
 //	skin       extra stylesheets injected into the UI
 //	wallpaper  a background image for the chat area
-//	memory     a notes file appended to the system prompt
+//	(memory    was a former kind: notes injected into the system prompt. The
+//	           mechanism is GONE — a plugin is a tool, and a tool documents
+//	           itself through its own description. The manifest key, if still
+//	           present in an old plugin.json, parses into nothing and is
+//	           ignored.)
 //	bootanim   handled by the boot animation host (config.BootAnim + web/bootanim.go),
 //	           which already loads themes from a directory
 //
@@ -30,8 +34,7 @@
 //	    "timeout_seconds": 90
 //	  }],
 //	  "styles": ["skin.css"],
-//	  "wallpaper": "bg.webp",
-//	  "memory": "memory.md"
+//	  "wallpaper": "bg.webp"
 //	}
 //
 // Prefix-cache safety is a hard requirement, so the load order is fixed:
@@ -94,7 +97,6 @@ type Manifest struct {
 	Process   *ProcessSpec  `json:"process,omitempty"`
 	Styles    []string      `json:"styles,omitempty"`
 	Wallpaper string        `json:"wallpaper,omitempty"`
-	Memory    string        `json:"memory,omitempty"`
 	// UI declares the third kind: things the browser half renders (skins,
 	// slot fragments, animations). See ui.go for the contract — note that a
 	// desktop pet is NOT part of it, on purpose.
@@ -185,9 +187,6 @@ func (p Plugin) Kinds() []string {
 	}
 	if p.Boot != nil {
 		kinds = append(kinds, "boot")
-	}
-	if p.Memory != "" {
-		kinds = append(kinds, "memory")
 	}
 	return kinds
 }
@@ -324,7 +323,7 @@ func (p Plugin) validate() error {
 	}
 	// Legacy panels are lifted into p.UI by validateUI, so a manifest that only
 	// used "panels" is validated exactly like one that used "ui".
-	for _, rel := range append(append([]string{}, p.Styles...), p.Wallpaper, p.Memory) {
+	for _, rel := range append(append([]string{}, p.Styles...), p.Wallpaper) {
 		if rel == "" {
 			continue
 		}
@@ -391,26 +390,4 @@ func (p Plugin) FilePath(rel string) (string, error) {
 		return "", fmt.Errorf("path %q escapes the plugin directory", rel)
 	}
 	return full, nil
-}
-
-// MemoryText returns the plugin's memory notes ("" when it has none or the file
-// cannot be read). The text is a plain file, so it is identical across tasks
-// until the user edits it — that keeps the prompt prefix cacheable.
-func (p Plugin) MemoryText() string {
-	if p.Memory == "" {
-		return ""
-	}
-	path, err := p.FilePath(p.Memory)
-	if err != nil {
-		return ""
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	text := strings.TrimSpace(string(b))
-	if len(text) > 16*1024 {
-		text = text[:16*1024] + "\n…(truncated)"
-	}
-	return text
 }

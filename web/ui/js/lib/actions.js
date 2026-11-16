@@ -178,6 +178,7 @@ export async function selectSession(id) {
       childrenActive: !!s.children_active,
       running: !!s.active,
       tokens: data.tokens || 0,
+      usageTokens: data.usage_tokens || 0,
       tasksOpen: false,
     });
     // 侧栏跟着会话走:从 mc-session 芯片跳进来的会话可能属于另一个 worker。
@@ -207,6 +208,7 @@ export function adoptNewSession(sid) {
     pendingTask: null,
     rows: st.rows,
     tokens: 0,
+    usageTokens: 0,
     cacheHit: null,
     speed: 0,
     speedAccurate: false,
@@ -717,7 +719,7 @@ export async function updateTokenUsage() {
   try {
     const data = await api(ROUTES.session(state.current));
     if (getState().current !== data.session.session_id) return; // 已切走
-    setState({ tokens: data.tokens || 0 });
+    setState({ tokens: data.tokens || 0, usageTokens: data.usage_tokens || 0 });
   } catch (e) { /* 忽略:会话可能刚被删除 */ }
 }
 

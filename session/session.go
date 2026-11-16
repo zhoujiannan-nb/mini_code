@@ -12,7 +12,6 @@ import (
 	"github.com/user/mini_code/agent"
 	"github.com/user/mini_code/provider"
 	"github.com/user/mini_code/tools"
-	"github.com/user/mini_code/util"
 )
 
 // Permission modes. The mode is a per-session attribute (not a per-agent
@@ -864,77 +863,6 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 func (s *Session) updateStatus(status string) {
 	s.record.Status = status
 	s.persistLocked()
-}
-
-// CompactSession manually compresses a session's persisted conversation with
-// the LLM summarizer, regardless of the auto-compaction threshold. The
-// session must not be running. It returns the token count before and after;
-// after >= before means nothing was compactable (too short or no safe
-// boundary). The compaction is applied to the next LLM call; an in-flight
-// task (if one starts while compacting) keeps its own snapshot and the
-// manual compaction is simply superseded by it — never data corruption.
-func (m *SessionManager) CompactSession(ctx context.Context, sessionID string) (int, int, error) {
-	s, err := m.Get(sessionID)
-	if err != nil || s == nil {
-		return 0, 0, fmt.Errorf("会话不存在: %s", sessionID)
-	}
-	if m.TaskRunning(sessionID) {
-		return 0, 0, fmt.Errorf("会话正在运行中,请等待任务结束后再压缩")
-	}
-	s.mu.Lock()
-	msgs := s.Record().Messages
-	s.mu.Unlock()
-	if len(msgs) == 0 {
-		return 0, 0, fmt.Errorf("会话还没有消息,无需压缩")
-	}
-	before := util.CountMessagesTokens(msgs)
-
-	// Compact with the session's own model, so the summary is produced by
-	// the same model the conversation runs on. The per-session thinking
-	// override is applied here too (as in Prompt): it changes the rendered
-	// template, so omitting it would put the request on a different prefix.
-	s.mu.Lock()
-	client := s.client
-	thinking, _ := s.record.Metadata["thinking"].(string)
-	effort, _ := s.record.Metadata["reasoning_effort"].(string)
-	s.mu.Unlock()
-	if client == nil {
-		return before, before, fmt.Errorf("会话未配置模型,无法压缩")
-	}
-	if thinking != "" || effort != "" {
-		client = client.WithReasoning(thinking, effort)
-	}
-	// The tool schemas must match a normal turn exactly — they are part of the
-	// cached prompt prefix (see preparePromptTools).
-	cfg, pb, _, err := s.preparePromptTools()
-	if err != nil {
-		return before, before, fmt.Errorf("准备压缩上下文失败: %w", err)
-	}
-	defs := pb.GetFilteredDefinitions(cfg)
-	newMsgs, err := NewContextCompactor(client).SummarizeAndRebuild(ctx, msgs, defs, "")
-	if err != nil {
-		return before, before, fmt.Errorf("压缩失败: %w", err)
-	}
-	after := util.CountMessagesTokens(newMsgs)
-	if after >= before {
-		return before, after, nil // nothing compactable
-	}
-	// Re-check: if a task started while the LLM summary was in flight, do
-	// not clobber its working set.
-	if m.TaskRunning(sessionID) {
-		return before, after, fmt.Errorf("压缩完成时会话已开始新任务,未应用(下次压缩生效)")
-	}
-	s.mu.Lock()
-	s.Record().Messages = newMsgs
-	ok := s.persistLocked()
-	s.mu.Unlock()
-	if !ok {
-		return before, after, fmt.Errorf("压缩完成但未能保存到磁盘(详见日志),下次压缩生效")
-	}
-	m.store.AppendEvent(sessionID, EventCompaction, 0, map[string]any{
-		"kind": "manual", "phase": "done", "before_tokens": before, "after_tokens": after,
-	})
-	return before, after, nil
 }
 
 // SessionCallbacks carries the per-session event callbacks. A factory that

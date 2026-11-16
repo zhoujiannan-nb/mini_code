@@ -33,6 +33,7 @@ export function Composer() {
   const defaultModel = useStore((s) => s.defaultModel);
   const ctxWindow = useStore((s) => s.ctxWindow);
   const tokens = useStore((s) => s.tokens);
+  const usageTokens = useStore((s) => s.usageTokens);
   const speed = useStore((s) => s.speed);
   const speedAccurate = useStore((s) => s.speedAccurate);
   const current = useStore((s) => s.current);
@@ -238,10 +239,10 @@ export function Composer() {
     + "(" + ctxPct + "%),接近上限时自动压缩";
   // 输出速度:格式化成一行短文案(≥100 取整,否则留一位小数)。
   const speedShort = speed > 0 ? (speed >= 100 ? Math.round(speed) : Math.round(speed * 10) / 10) + " tok/s" : "";
-  // v3.8:胶囊报「已用 / 总量」——用户:「下放和速度放一起的上下文统计展示
-  // 总上下文的量」,只写已用的数字看不出窗口一共多大。
-  const tokenPillText = (fmtTok(tokens) || "0 tok")
-    + (cap > 0 ? " / " + fmtK(cap) : " · 窗口未配置");
+  // v3.12:胶囊显示**本会话累计消耗**(usage_total:每轮 prompt+completion 全程
+  // 累加),用户口径「一共用了多少 token」;当刻上下文占用与上限在 tooltip、
+  // 占用小环和 ⓘ 浮层里。
+  const tokenPillText = fmtTok(usageTokens) || "0 tok";
 
   // 双击模型按钮打开思考强度浮层(单击延迟 230ms 才切换模型下拉)。
   const openThinkingPop = () => {
@@ -405,8 +406,8 @@ export function Composer() {
       <input type="file" id="file-shot" accept="image/*" multiple hidden ref=${fileRef}
         onChange=${(e) => { addImageFiles(Array.from(e.target.files || [])); e.target.value = ""; }} />
     </div>
-    <!-- v3.4 输入卡下方一行(居中):会话统计胶囊 + 占用% + 细进度条 + 速度图标。
-         「预估约」字样按用户要求删掉;接近上限 80% 整行变琥珀。 -->
+    <!-- v3.12 输入卡下方一行(居中):会话统计(无边框)+ 占用小环% + 速度图标。
+          「预估约」字样按用户要求删掉;接近上限 80% 整行变琥珀。 -->
     <div class=${"tu-line" + (tokenWarn ? " warn" : "")} id="token-usage" title=${meterTitle}>
       <span class="sess-pop-wrap">
         <button class="token-pill" id="ctx-total" title=${meterTitle + " · 点击打开上下文管理"}
@@ -426,7 +427,7 @@ export function Composer() {
           <div class="fp-row"><span>输出速度(TPS)</span><b>${speedText || "—"}</b></div>
         </div>` : null}
       </span>
-      <b>${cap > 0 ? ctxPct + "%" : "窗口未配置"}</b><i class="cm-bar"><i style=${{ width: Math.min(100, ctxPct) + "%" }}></i></i>
+      ${cap > 0 ? html`<span class="ctx-gauge" style=${"--pct:" + Math.min(100, ctxPct)}><i class="gauge-ring"></i><b>${ctxPct + "%"}</b></span>` : html`<b>${"窗口未配置"}</b>`}
       ${speedShort ? html`<span class="tu-speed" title="输出速度(tok/s)">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

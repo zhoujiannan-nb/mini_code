@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"sort"
 	"sync"
 )
 
@@ -60,25 +59,6 @@ func (r *ModelRegistry) Has(name string) bool {
 	defer r.mu.RUnlock()
 	_, ok := r.clients[name]
 	return ok
-}
-
-// DefaultName returns the default model's name ("" when empty).
-func (r *ModelRegistry) DefaultName() string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.defName
-}
-
-// Names returns the configured model names, sorted.
-func (r *ModelRegistry) Names() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]string, 0, len(r.clients))
-	for n := range r.clients {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // ContextWindow returns the context window of the given model (default

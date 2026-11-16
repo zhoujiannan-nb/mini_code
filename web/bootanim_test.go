@@ -128,7 +128,7 @@ func TestBootClipIsAPlugin(t *testing.T) {
 
 // TestBootClipCannotEscapeOrReadNeighbours: the same traversal guard the old
 // theme route had, now applied to a plugin directory (which also holds skins,
-// plugin.json, memory.md…).
+// plugin.json…).
 func TestBootClipCannotEscapeOrReadNeighbours(t *testing.T) {
 	home := pluginHome(t)
 	installBootPlugin(t, home, "boot-demo",

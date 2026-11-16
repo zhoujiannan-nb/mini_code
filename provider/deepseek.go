@@ -44,8 +44,6 @@ func NewDeepSeekProvider(baseURL, apiKey, modelName string, maxTokens, contextWi
 	}
 }
 
-func (p *DeepSeekProvider) ProviderName() string { return "deepseek" }
-
 func (p *DeepSeekProvider) BuildURL() string {
 	return fmt.Sprintf("%s/chat/completions", p.BaseURL)
 }

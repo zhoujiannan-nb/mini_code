@@ -636,7 +636,7 @@ test("render: 输入区 v3.4 = 占用行居中:胶囊+ ⓘ 会话统计浮层都
 
   const pill = document.querySelector("#ctx-total");
   assert.match(pill.textContent, /tok/, "token 胶囊只剩体量 N tok");
-  assert.match(pill.textContent, /\/\s*\d+(\.\d+)?[km]/i, "v3.8:胶囊带上总上下文量(已用 / 总量)");
+  assert.ok(!/\//.test(pill.textContent), "v3.9:胶囊不挂「/ 窗口上限」,只报本会话消耗的上下文总量");
   assert.ok(!/预估约/.test(pill.textContent), "占用% 不挤在胶囊里,归同行左邻");
 
   const stats = document.querySelector("#sess-stats");

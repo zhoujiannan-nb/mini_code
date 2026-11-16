@@ -69,9 +69,6 @@ var bootEntryExts = []string{".html", ".htm"}
 // bootPreviewExts are the image types allowed as a card preview.
 var bootPreviewExts = []string{".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
-// HasBoot reports whether the plugin ships a startup animation.
-func (p Plugin) HasBoot() bool { return p.Boot != nil }
-
 // BootEntryFile is the entry document, defaulted and cleaned, exactly as the
 // asset route will look it up.
 func (p Plugin) BootEntryFile() string {

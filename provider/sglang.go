@@ -51,8 +51,6 @@ func NewSGLangProvider(baseURL, apiKey, modelName string, maxTokens, contextWind
 	}
 }
 
-func (p *SGLangProvider) ProviderName() string { return "sglang" }
-
 func (p *SGLangProvider) BuildURL() string {
 	return fmt.Sprintf("%s/chat/completions", p.BaseURL)
 }

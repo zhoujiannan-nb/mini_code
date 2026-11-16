@@ -350,6 +350,23 @@ func (h *Hub) Attach(mgr *session.SessionManager) {
 			},
 		}
 	})
+	// Delivering a message to an IDLE session starts a task via the hub (a
+	// running session queues it for its next loop turn instead). This lives in
+	// Attach — not in main — so every hub↔manager pair gets the wiring; a test
+	// hub that forgot it silently dropped settle-drain messages (session.go
+	// deliverIdle had no hook to run).
+	mgr.SetDeliverHook(func(sessionID, text string) {
+		msg := NewUserMessage(ChannelWeb, text)
+		msg.SessionID = sessionID
+		if err := h.Submit(msg); err != nil {
+			slog.Warn("deliver: hub submit failed", "session", sessionID, "err", err)
+		}
+	})
+	// Authoritative live-task check: the hub's in-memory registry. Keeps
+	// delivery decisions / status UIs from trusting a persisted "running"
+	// status that is stale after a restart (such a session has no live loop,
+	// so queued messages would sit there forever).
+	mgr.SetActiveTaskCheck(func(sessionID string) bool { return h.ActiveTask(sessionID) })
 }
 
 // channelKeyFor resolves the external conversation key of a session, walking
@@ -703,7 +720,7 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 	// The message does not belong to any session: create a new one.
 	// The title is a placeholder until the session's first finished task gets it a
 	// real one (session/title.go); the length lives with that logic.
-	title := truncateRunes(strings.TrimSpace(m.Content), session.FallbackTitleRunes)
+	title := util.TruncateRunes(strings.TrimSpace(m.Content), session.FallbackTitleRunes)
 	if title == "" {
 		title = "Chat"
 	}
@@ -784,10 +801,3 @@ func (h *Hub) unregisterTask(sessionID string) {
 	h.taskMu.Unlock()
 }
 
-func truncateRunes(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
-}

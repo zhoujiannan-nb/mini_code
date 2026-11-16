@@ -175,7 +175,7 @@ func installFrameless(w *window) {
 
 	// Extend the DWM glass over the whole window: keeps Win11 rounded
 	// corners and the shadow even though the client covers everything.
-	// (v3.7:「透视桌面/Mica」实验已回退 —— 用户定稿两框不透明风,不再动背景。)
+// (v3.7 定稿:页面两框不透明,玻璃只用于 OS 圆角与投影。)
 	m := [...]int32{-1, -1, -1, -1}
 	procDwmExtendFrame.Call(hwnd, uintptr(unsafe.Pointer(&m[0])))
 

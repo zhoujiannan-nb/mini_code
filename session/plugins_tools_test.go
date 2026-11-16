@@ -96,35 +96,35 @@ func TestPluginCannotShadowCoreTool(t *testing.T) {
 	}
 }
 
-// TestPluginMemoryInPrompt: memory notes appear in the system prompt, and a
-// prompt with no plugins is unchanged.
-func TestPluginMemoryInPrompt(t *testing.T) {
+// TestPluginNotesNeverInPrompt: the removed plugin-memory mechanism must stay
+// dead — neither the old "[memory: <id>]" payload block nor the short-lived
+// "[plugin notes]" pointer block may ever reach the system prompt again. A
+// plugin with a stale "memory" key in its manifest (old plugin.json outlives
+// the mechanism) is simply ignored, and the prompt is byte-identical to the
+// no-plugin one.
+func TestPluginNotesNeverInPrompt(t *testing.T) {
 	home := pluginHome(t)
 	pb := NewPromptBuilder(&agent.AgentConfig{}, "C:\\work")
 	plain := pb.BuildSystemPrompt("C:\\work", "")
-	if strings.Contains(plain, "[memory:") {
-		t.Fatal("prompt mentions plugin memory with no plugins installed")
+	for _, forbidden := range []string{"[memory:", "[plugin notes]", "memory.md"} {
+		if strings.Contains(plain, forbidden) {
+			t.Fatalf("no plugins installed, yet the prompt mentions %q", forbidden)
+		}
 	}
 
-	writeTestPlugin(t, home, "notes", `{"id":"notes","memory":"memory.md"}`, map[string]string{
-		"memory.md": "always answer in Chinese",
-	})
-	pb2 := NewPromptBuilder(&agent.AgentConfig{}, "C:\\work")
-	got := pb2.BuildSystemPrompt("C:\\work", "")
-	if !strings.Contains(got, "[memory: notes]") {
-		t.Fatalf("prompt is missing the plugin memory block:\n%s", got)
+	// A manifest still carrying the dead "memory" key (plus real tools).
+	writeTestPlugin(t, home, "legacy", `{"id":"legacy","memory":"memory.md","tools":[{"name":"t_leg","command":"x"}]}`,
+		map[string]string{"memory.md": "always answer in Chinese"})
+	got := NewPromptBuilder(&agent.AgentConfig{}, "C:\\work").BuildSystemPrompt("C:\\work", "")
+	for _, forbidden := range []string{"[memory:", "[plugin notes]", "always answer in Chinese", "memory.md"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("plugin notes reached the prompt (%q): the mechanism must be gone", forbidden)
+		}
 	}
-	if !strings.Contains(got, "always answer in Chinese") {
-		t.Fatal("prompt is missing the memory text")
-	}
-	// The core part of the prompt must not have shifted: everything before the
-	// memory block is byte-identical to the no-plugin prompt.
-	idx := strings.Index(got, "\n[memory:")
-	if idx < 0 {
-		t.Fatal("memory block not found")
-	}
-	if !strings.HasPrefix(got, plain[:min(len(plain), idx)]) {
-		t.Fatal("plugin memory changed the text before it")
+	// And with no notes section at all, the whole prompt is exactly the
+	// no-plugin prompt: plugins no longer touch it.
+	if got != plain {
+		t.Fatal("a plugin changed the system prompt text; plugins must contribute tools only")
 	}
 }
 
@@ -132,8 +132,8 @@ func TestPluginMemoryInPrompt(t *testing.T) {
 // are byte-identical (that is what makes the prefix cacheable).
 func TestPluginSectionStable(t *testing.T) {
 	home := pluginHome(t)
-	writeTestPlugin(t, home, "b", `{"id":"b","memory":"m.md"}`, map[string]string{"m.md": "b-notes"})
-	writeTestPlugin(t, home, "a", `{"id":"a","memory":"m.md"}`, map[string]string{"m.md": "a-notes"})
+	writeTestPlugin(t, home, "b", `{"id":"b","tools":[{"name":"t_b","command":"x"}]}`, nil)
+	writeTestPlugin(t, home, "a", `{"id":"a","tools":[{"name":"t_a","command":"x"}]}`, nil)
 	cfg := &agent.AgentConfig{}
 	first := NewPromptBuilder(cfg, "C:\\work").BuildSystemPrompt("C:\\work", "")
 	for i := 0; i < 20; i++ {
@@ -142,11 +142,10 @@ func TestPluginSectionStable(t *testing.T) {
 			t.Fatalf("trial %d: prompt is not stable", i)
 		}
 	}
-	// Plugin order is by id: a before b.
-	ia := strings.Index(first, "a-notes")
-	ib := strings.Index(first, "b-notes")
-	if ia < 0 || ib < 0 || ia > ib {
-		t.Fatalf("memory blocks out of order (a=%d, b=%d)", ia, ib)
+	// The prompt mentions plugins only through the user's own plugins.md list;
+	// the tool names must not leak into it.
+	if strings.Contains(first, "t_a") || strings.Contains(first, "t_b") {
+		t.Fatal("plugin tool names leaked into the system prompt text")
 	}
 }
 

@@ -101,8 +101,8 @@ func NewModelClient(cfg config.ModelConfig) (*ModelClient, error) {
 
 // temperaturePtr turns a config/call-site temperature into the request field:
 // 0 means "not set", and the field is then left out so the server's own default
-// (usually the model's recommended value) is used. WithTemperature(0.3) still
-// produces a non-zero value, so an explicit override is always sent.
+// (usually the model's recommended value) is used. A configured provider value
+// is non-zero, so an explicit override is always sent.
 func temperaturePtr(t float64) *float64 {
 	if t <= 0 {
 		return nil
@@ -222,7 +222,7 @@ func ListModels(baseURL, apiKey string) ([]string, error) {
 func (mc *ModelClient) Chat(ctx context.Context, messages []Message, tools []ToolSchema, opts ...ChatOption) (*ChatResponse, error) {
 	// Temperature is left unset (0) by default: the request then omits it and
 	// the serving framework applies the model's own default. A configured value
-	// (the vllm/ollama branches below) or an explicit WithTemperature still wins.
+	// (the vllm/ollama branches below) still wins.
 	o := chatOptions{
 		MaxTokens: 0, // unset: omitted from the request unless configured/passed
 	}

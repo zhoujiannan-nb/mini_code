@@ -24,8 +24,6 @@ func NewOllamaProvider(baseURL, apiKey, modelName string, maxTokens, contextWind
 	}
 }
 
-func (p *OllamaProvider) ProviderName() string { return "ollama" }
-
 func (p *OllamaProvider) BuildURL() string {
 	return fmt.Sprintf("%s/chat/completions", p.BaseURL)
 }

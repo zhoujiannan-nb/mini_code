@@ -33,8 +33,7 @@ const (
 	EventToolResult       = "tool/result"       // {call_id, name, ok, duration_ms, result | error}; a pruned replacement row repeats the call_id with "replaces" set (see compaction/prune)
 	EventCompactionPrune  = "compaction/prune"  // {call_id, name, chars_before, chars_after, spill?} — shadow event pricing one tool-result prune; the following tool/result row with the same call_id supersedes the full row
 	EventCompactionArgAge = "compaction/argage" // {call_id, name, chars_before, chars_after} — shadow event for aging a successful big write/edit call's arguments out of the model history (see argage.go)
-	EventCompaction       = "compaction"        // {before_tokens, after_tokens, kind: auto|manual}
-	EventGuardSteer       = "guard/steer"       // {steer} — legacy: emitted by the removed continue guard (loop_continue.go, deleted)
+	EventCompaction       = "compaction"        // {before_tokens, after_tokens, kind: auto}
 
 	// The background-command ledger (job/jobs.go). A command that outlives its
 	// foreground wait stops being a tool result and becomes a piece of work with

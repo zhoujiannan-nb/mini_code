@@ -5,8 +5,8 @@
 // not messages: the system prompt and the tool schemas. Both only exist once a
 // PromptBuilder has been assembled for this session, so instead of re-deriving
 // them somewhere else (and drifting), the web layer asks the session to render
-// exactly what a turn would send — the same single source of truth Prompt and
-// CompactSession use (see preparePromptTools).
+// exactly what a turn would send — the same single source of truth the agent
+// loop's Prompt uses (see preparePromptTools).
 package session
 
 import "github.com/user/mini_code/provider"

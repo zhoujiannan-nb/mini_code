@@ -198,8 +198,7 @@ func TestPluginsListAPI(t *testing.T) {
 	installPlugin(t, home, "b-skin", `{"id":"b-skin","name":"B Skin","version":"2.0.0","styles":["s.css"]}`,
 		map[string]string{"s.css": "body{}"})
 	installPlugin(t, home, "a-tools", `{"id":"a-tools","name":"A Tools",
-		"tools":[{"name":"z_tool","command":"x"},{"name":"a_tool","command":"x"}],"memory":"m.md"}`,
-		map[string]string{"m.md": "notes"})
+		"tools":[{"name":"z_tool","command":"x"},{"name":"a_tool","command":"x"}]}`, nil)
 	installPlugin(t, home, "disabled", `{"id":"disabled","enabled":false}`, nil)
 
 	srv := httptest.NewServer(NewServer(newTestBackend(t)))
@@ -215,7 +214,7 @@ func TestPluginsListAPI(t *testing.T) {
 	}
 	b, _ := io.ReadAll(resp.Body)
 	body := string(b)
-	for _, want := range []string{`"a-tools"`, `"b-skin"`, `"A Tools"`, `"2.0.0"`, `"a_tool"`, `"z_tool"`, `"skin"`, `"memory"`} {
+	for _, want := range []string{`"a-tools"`, `"b-skin"`, `"A Tools"`, `"2.0.0"`, `"a_tool"`, `"z_tool"`, `"skin"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/api/plugins is missing %s\n%s", want, body)
 		}

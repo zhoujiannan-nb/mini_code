@@ -11,6 +11,7 @@ import (
 
 	"github.com/user/mini_code/provider"
 	"github.com/user/mini_code/tools"
+	"github.com/user/mini_code/util"
 )
 
 // maxConcurrentBg caps the number of simultaneously running background
@@ -303,7 +304,7 @@ func (s *SubagentService) prepare(parentID string, spec tools.AgentSpec, name st
 	}
 	child.record.Metadata["agent_name"] = name
 	child.record.Metadata["agent_description"] = spec.Description
-	child.record.Metadata["agent_goal"] = truncateRunes(spec.Goal, 400)
+	child.record.Metadata["agent_goal"] = util.TruncateRunes(spec.Goal, 400)
 	if spec.Fork {
 		hist := s.mgr.CopyMessages(parentID)
 		if len(hist) > 0 && hist[0].Role == "system" {
@@ -449,13 +450,13 @@ func (s *SubagentService) settleNotice(job *SubagentJob) string {
 	fmt.Fprintf(&b, "<agent name=\"%s\" state=\"%s\" role=\"%s\">\n", job.Name, job.Status, job.Role)
 	b.WriteString("System notice: a sub-agent finished a run. This text was injected by the runtime, ")
 	b.WriteString("it is NOT the user speaking and implies no user approval.\n")
-	fmt.Fprintf(&b, "Task it was given: %q\n", truncateRunes(job.Goal, 160))
+	fmt.Fprintf(&b, "Task it was given: %q\n", util.TruncateRunes(job.Goal, 160))
 	switch job.Status {
 	case "completed":
 		if job.Result == "" {
 			b.WriteString("Result: (it left no closing message)")
 		} else {
-			fmt.Fprintf(&b, "Its closing message:\n%s", truncateRunes(job.Result, 1500))
+			fmt.Fprintf(&b, "Its closing message:\n%s", util.TruncateRunes(job.Result, 1500))
 		}
 		fmt.Fprintf(&b, "\n\nSend it another message with send_message(agent=%q, ...) to follow up; its full conversation stays readable in its own session.", job.Name)
 	case "failed":
@@ -772,10 +773,3 @@ func jobInfo(j *SubagentJob) tools.JobInfo {
 	return info
 }
 
-func truncateRunes(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
-}

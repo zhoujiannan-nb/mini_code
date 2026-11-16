@@ -54,13 +54,6 @@ func (r *ToolRegistry) IsAppended(name string) bool {
 	return ok
 }
 
-// AppendedIsSlash reports whether name is a core tool (used by tests/diagnostics
-// to assert plugin tools never leak into the core segment).
-func (r *ToolRegistry) IsCore(name string) bool {
-	_, ok := r.tools[name]
-	return ok
-}
-
 func (r *ToolRegistry) GetDefinitions(visibleOnly bool) []provider.ToolSchema {
 	var defs []provider.ToolSchema
 	for _, t := range r.tools {

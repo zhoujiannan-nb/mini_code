@@ -197,8 +197,6 @@ func (s *GoalStore) SetOnChanged(f func()) {
 	s.mu.Unlock()
 }
 
-func (s *GoalStore) changedLocked() func() { return s.onChanged }
-
 // fire persists after the mutation landed (never under the store lock).
 func (s *GoalStore) fire() {
 	s.mu.Lock()
@@ -224,21 +222,6 @@ func (s *GoalStore) View() (*goalRecord, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.cur, s.rounds
-}
-
-// NeedsDrive reports whether the driver should start another automatic round
-// now: an active goal with rounds left under its cap.
-func (s *GoalStore) NeedsDrive() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.cur == nil || s.cur.Status != "active" {
-		return false
-	}
-	max := s.cur.MaxGoalRounds
-	if max <= 0 {
-		max = DefaultGoalMaxRounds
-	}
-	return s.rounds < max
 }
 
 // MaxRounds returns the effective automatic-round cap.

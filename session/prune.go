@@ -77,8 +77,6 @@ var pruneExemptTools = map[string]bool{"glob": true, "list_dir": true}
 // rule so old ledger rows fold the same way.
 var readTools = map[string]bool{"read": true, "read_file": true}
 
-func pruneExempt(name string) bool { return pruneExemptTools[name] }
-
 // pruneExemptCall is the call-site check: unconditional for the capped
 // listing tools, spill-folder-scoped for the read tools, false for
 // everything else. pathArg is the call's file argument ("" when it has none

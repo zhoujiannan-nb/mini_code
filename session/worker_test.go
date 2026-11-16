@@ -335,9 +335,6 @@ func TestApplyWorkerNoticeOncePerTask(t *testing.T) {
 	}
 }
 
-// textOf reads a message body (GetText has a pointer receiver).
-func textOf(m provider.Message) string { return m.GetText() }
-
 func countWorkerNotices(messages []provider.Message) int {
 	n := 0
 	for _, m := range messages {

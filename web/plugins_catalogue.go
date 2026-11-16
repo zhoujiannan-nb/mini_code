@@ -39,6 +39,7 @@ import (
 
 	"github.com/user/mini_code/config"
 	"github.com/user/mini_code/plugin"
+	"github.com/user/mini_code/util"
 )
 
 const (
@@ -278,7 +279,7 @@ func (s *server) handlePluginCatalog(w http.ResponseWriter, r *http.Request) {
 			}
 			entries = append(entries, catalogueEntry{
 				ID:          it.ID,
-				Name:        firstNonEmpty(it.Name, it.ID),
+				Name:        util.FirstNonEmpty(it.Name, it.ID),
 				Author:      it.Author,
 				Version:     it.Version,
 				Description: it.Description,
@@ -507,7 +508,7 @@ func catalogueBundleRelPath(itemPath, p string) (string, error) {
 //     /plugins/ route still refuses .js, so nothing gains access to the app's
 //     own origin by this being downloadable.
 //   - audio (.mp3 …) a clip may carry voice cues (see bootanimExtTypes).
-//   - .json / .md    manifests, memory notes and plugin data.
+//   - .json / .md    manifests and plugin data.
 //   - .py / .sh      the implementation of a TOOL plugin (kind 2). Its whole
 //     purpose is to run an external program: the manifest already names the
 //     command ("python") and the host execs it, so refusing to download the

@@ -57,20 +57,6 @@ var pluginAssetExtTypes = map[string]string{
 	".htm":  "text/html; charset=utf-8",
 }
 
-// pluginInfo is the JSON shape of one plugin for GET /api/plugins. The centre's
-// richer shape lives in plugins_centre.go (pluginCentreInfo); this one is kept
-// because the UI's first implementation and its tests read it.
-type pluginInfo struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Version     string   `json:"version,omitempty"`
-	Author      string   `json:"author,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Kinds       []string `json:"kinds"`
-	Tools       []string `json:"tools,omitempty"`
-	Dir         string   `json:"dir"`
-}
-
 // handlePluginAsset: GET /plugins/<id>/<file...>.
 func (s *server) handlePluginAsset(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, pluginBasePath)

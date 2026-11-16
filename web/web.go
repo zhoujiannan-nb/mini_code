@@ -679,9 +679,13 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session":  sum,
 		"messages": messageViews(all),
-		// Token estimate for the composer footer (xx/context_window). Counted
-		// over the full context, worker notices included.
+		// Token estimate for the composer footer's occupancy ring (xx/window).
+		// Counted over the full context, worker notices included.
 		"tokens": util.CountMessagesTokens(all),
+		// Session-wide cumulative LLM consumption (prompt+completion across
+		// every call), the same usage_total the session list shows — the
+		// composer pill reports THIS number ("本会话一共用了多少 token").
+		"usage_tokens": tokensOf(rec.Metadata),
 		// Context window of THIS session's model (the token bar must track
 		// the per-session model, not the global default).
 		"context_window": s.be.Mgr().ContextWindowFor(rec.ModelKey),

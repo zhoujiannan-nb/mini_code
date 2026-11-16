@@ -156,18 +156,8 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 	approvals := approval.NewService(hub, mgr)
 	mgr.SetApprover(approvals)
 
-	// Delivering a message to an IDLE session starts a task via the hub (a
-	// running session queues it for its next loop turn instead).
-	mgr.SetDeliverHook(func(sessionID, text string) {
-		msg := channels.NewUserMessage(channels.ChannelWeb, text)
-		msg.SessionID = sessionID
-		hub.Submit(msg)
-	})
-	// Authoritative live-task check: the hub's in-memory registry. Keeps
-	// delivery decisions / status UIs from trusting a persisted "running"
-	// status that is stale after a restart (such a session has no live
-	// loop, so queued messages would sit there forever).
-	mgr.SetActiveTaskCheck(func(sid string) bool { return hub.ActiveTask(sid) })
+	// Deliver hook + live-task check are wired by hub.Attach (channels.go), so
+	// every hub-and-manager pair, production and tests alike, behaves the same.
 
 	// Workers (工作大类): a shared workspace + a shared 公约 per line of work, and
 	// the switcher the sidebar shows. The rows live in the session store (one

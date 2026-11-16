@@ -158,29 +158,14 @@ func TestToolExecuteReportsFailure(t *testing.T) {
 	}
 }
 
-func TestMemoryText(t *testing.T) {
-	home := setHome(t)
-	writePlugin(t, home, "mem", `{"id":"mem","memory":"memory.md"}`, map[string]string{
-		"memory.md": "  prefer short answers  \n",
-	})
-	plugins := Load()
-	if len(plugins) != 1 {
-		t.Fatalf("want 1 plugin, got %d", len(plugins))
-	}
-	if got := plugins[0].MemoryText(); got != "prefer short answers" {
-		t.Fatalf("MemoryText() = %q", got)
-	}
-}
-
 func TestKinds(t *testing.T) {
 	p := Plugin{Manifest: Manifest{
 		Tools:     []ToolSpec{{Name: "t", Command: "x"}},
 		Styles:    []string{"a.css"},
 		Wallpaper: "w.webp",
-		Memory:    "m.md",
 	}}
 	got := strings.Join(p.Kinds(), ",")
-	if got != "tools,skin,wallpaper,memory" {
+	if got != "tools,skin,wallpaper" {
 		t.Fatalf("Kinds() = %q", got)
 	}
 }

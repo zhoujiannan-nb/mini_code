@@ -566,7 +566,7 @@ func (s *Session) WorkerNotice(messages []provider.Message) provider.Message {
 		return provider.Message{}
 	}
 	text := fmt.Sprintf("<worker_notice>worker「%s」的公约已更新到 v%d,最新全文如下,按它执行:\n<convention>\n%s\n</convention>\n这条消息是应用注入的背景,不是用户的请求,不要回答它。</worker_notice>",
-		firstNonEmpty(name, rec.Name), rec.NoteVer, strings.TrimRight(rec.Note, "\n"))
+		util.FirstNonEmpty(name, rec.Name), rec.NoteVer, strings.TrimRight(rec.Note, "\n"))
 	return BuildWorkerNotice(text, noteMarker(id, rec.NoteVer))
 }
 
@@ -627,7 +627,7 @@ func (a *WorkerToolAPI) WorkerInfo() string {
 	}
 	rec, _ := a.svc.store.GetWorker(id)
 	var b strings.Builder
-	fmt.Fprintf(&b, "本会话属于 worker「%s」(id %s)。\n", firstNonEmpty(name, rec2Name(rec)), id)
+	fmt.Fprintf(&b, "本会话属于 worker「%s」(id %s)。\n", util.FirstNonEmpty(name, rec2Name(rec)), id)
 	workerDir := dir
 	if rec != nil {
 		workerDir = rec.WorkDir
@@ -811,7 +811,7 @@ func (a *WorkerToolAPI) History(limit int) string {
 			continue
 		}
 		n++
-		fmt.Fprintf(&b, "- [%s] %s — %s,%d 条,%s\n", sum.SessionID, firstNonEmpty(sum.Title, "未命名会话"),
+		fmt.Fprintf(&b, "- [%s] %s — %s,%d 条,%s\n", sum.SessionID, util.FirstNonEmpty(sum.Title, "未命名会话"),
 			sum.Status, sum.MessageCount, relTimeShort(sum.UpdatedAt))
 		if sum.WorkDir != "" && sum.WorkDir != rec.WorkDir {
 			fmt.Fprintf(&b, "    (工作目录:%s)\n", sum.WorkDir)
@@ -839,9 +839,9 @@ func (a *WorkerToolAPI) Messages(sessionID string, chars int) string {
 	}
 	msgs := a.svc.mgr.CopyMessages(sessionID)
 	if len(msgs) == 0 {
-		return "会话「" + firstNonEmpty(other.Title, sessionID) + "」还没有消息。"
+		return "会话「" + util.FirstNonEmpty(other.Title, sessionID) + "」还没有消息。"
 	}
-	return renderConversation(firstNonEmpty(other.Title, sessionID), msgs, chars)
+	return renderConversation(util.FirstNonEmpty(other.Title, sessionID), msgs, chars)
 }
 
 func (a *WorkerToolAPI) NoteRead() string {
@@ -849,7 +849,7 @@ func (a *WorkerToolAPI) NoteRead() string {
 	if rec == nil {
 		return "本会话还没有归属 worker,没有公约可读。"
 	}
-	return fmt.Sprintf("公约 v%d\n%s", rec.NoteVer, firstNonEmpty(strings.TrimSpace(rec.Note), "(空的)"))
+	return fmt.Sprintf("公约 v%d\n%s", rec.NoteVer, util.FirstNonEmpty(strings.TrimSpace(rec.Note), "(空的)"))
 }
 
 func (a *WorkerToolAPI) workDirOf() string {
@@ -984,14 +984,6 @@ func readWorkerNote(path string) (string, error) {
 	return strings.TrimRight(string(b), "\r\n"), nil
 }
 
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
-}
 
 func rec2Name(rec *WorkerRecord) string {
 	if rec == nil {

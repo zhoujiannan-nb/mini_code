@@ -45,7 +45,8 @@ export const initialState = {
   live: null,            // 正在生成的那一条 {content, reasoning, startedAt}
   pending: null,         // 等待首 token 的转圈 {startedAt}
   run: { steps: [] },    // 当前这一轮的过程步骤(渲染为折叠条 +「正在执行」卡)
-  tokens: 0,
+  tokens: 0,             // 当刻上下文占用(占用% 小环的分子)
+  usageTokens: 0,        // 本会话累计 LLM 消耗(prompt+completion 全程累加,胶囊显这个)
   cacheHit: null,        // {prompt, cached, reported}
   speed: 0,
   speedAccurate: false,
@@ -236,6 +237,7 @@ export function reduce(st, action) {
         pending: null,
         run: { steps: [] },
         tokens: 0,
+        usageTokens: 0,
         cacheHit: null,
         speed: 0,
         speedAccurate: false,
@@ -467,6 +469,7 @@ export function applyEvent(st, m) {
       patch.pendingTask = null;
       // sending 不清:要等 task_started 才结束发送保护期(与旧 adoptNewSession 一致)。
       patch.tokens = 0;
+      patch.usageTokens = 0;
       patch.cacheHit = null;
       patch.speed = 0;
       patch.speedAccurate = false;
@@ -544,6 +547,9 @@ export function applyEvent(st, m) {
     case "usage": {
       const patch = {
         cacheHit: { prompt: m.prompt_tokens || 0, cached: m.cached_tokens || 0, reported: !!m.cache_reported },
+        // 实时累加本次调用消耗(与后端 addUsageTotal 同一口径);打开会话/轮次
+        // 结束时的 usage_tokens 会用持久值整体校正,事件漏一拍也不会漂。
+        usageTokens: (st.usageTokens || 0) + (m.prompt_tokens || 0) + (m.completion_tokens || 0),
       };
       if (m.speed > 0) {
         patch.speed = m.speed;

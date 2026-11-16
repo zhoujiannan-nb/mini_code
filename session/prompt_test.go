@@ -50,9 +50,6 @@ func TestBuildSystemPromptIsTheJoinOfItsParts(t *testing.T) {
 		if ps := pluginsSection(); ps != "" {
 			want = append(want, ps)
 		}
-		if mem := pluginMemorySection(); mem != "" {
-			want = append(want, mem)
-		}
 		want = append(want, "\n"+environmentSection()+"\n")
 		if extra != "" {
 			want = append(want, "\n# Additional Context\n\n"+extra+"\n")

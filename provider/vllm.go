@@ -39,8 +39,6 @@ func NewVLLMProvider(baseURL, apiKey, modelName string, maxTokens, contextWindow
 	}
 }
 
-func (p *VLLMProvider) ProviderName() string { return "vllm" }
-
 func (p *VLLMProvider) BuildURL() string {
 	return fmt.Sprintf("%s/chat/completions", p.BaseURL)
 }

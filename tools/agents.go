@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/user/mini_code/agent"
+	"github.com/user/mini_code/util"
 )
 
 // RootAgentName is the one name a sub-agent may never take: it always means
@@ -83,10 +84,9 @@ type AgentDispatcher interface {
 	List(parentID string) []JobInfo
 }
 
-// agentToolDocs is shared by every agent tool: one paragraph the model reads
-// once, in the tool that starts agents.
-const agentToolDocs = "A sub-agent is a separate conversation that runs on its own, with the caller's tool permissions (minus the agent tools) and the caller's permission mode. " +
-	"Each one is addressable by `name` for as long as the app runs: send_message reaches it again after it finishes, and list_agents shows what exists."
+// (agentToolDocs, once the shared "what is a sub-agent" paragraph, went unused
+// when each tool's Description moved to the verbatim dsh strings in
+// dsh_tools.json — the model reads it there now.)
 
 // AgentTool starts a sub-agent (the DSH `subagent` shape).
 type AgentTool struct {
@@ -278,12 +278,12 @@ func (t *ListAgentsTool) Execute(ctx context.Context, params map[string]interfac
 			if j.Status != "running" && j.Status != "" && j.Status != "completed" {
 				fmt.Fprintf(&b, "  last=%s", j.Status)
 			}
-			fmt.Fprintf(&b, "  goal: %q", truncateRunes(j.Goal, 120))
+			fmt.Fprintf(&b, "  goal: %q", util.TruncateRunes(j.Goal, 120))
 			if j.FinishedAt != "" {
 				fmt.Fprintf(&b, " (finished %s)", j.FinishedAt)
 			}
 			if j.Result != "" {
-				fmt.Fprintf(&b, "  result: %q", truncateRunes(oneLine(j.Result), 200))
+				fmt.Fprintf(&b, "  result: %q", util.TruncateRunes(oneLine(j.Result), 200))
 			}
 			b.WriteString("\n")
 		}
@@ -391,51 +391,10 @@ func (t *WaitAgentTool) Execute(ctx context.Context, params map[string]interface
 	return NewTextResult(out), nil
 }
 
-// CancelAgentTool stops one running agent.
-type CancelAgentTool struct {
-	parentSessionID string
-	dispatcher      AgentDispatcher
-}
-
-func NewCancelAgentTool(parentSessionID string, dispatcher AgentDispatcher) *CancelAgentTool {
-	return &CancelAgentTool{parentSessionID: parentSessionID, dispatcher: dispatcher}
-}
-
-func (t *CancelAgentTool) Name() string { return "cancel_agent" }
-func (t *CancelAgentTool) Description() string {
-	return "Stop an agent that is running right now. Its conversation and history are kept, so send_message can wake it again later."
-}
-func (t *CancelAgentTool) IsHidden() bool { return false }
-func (t *CancelAgentTool) Parameters() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"agent": map[string]interface{}{
-				"type":        "string",
-				"description": "The agent's name or session id.",
-			},
-		},
-		"required": []string{"agent"},
-	}
-}
-
-func (t *CancelAgentTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
-	agentRef, _ := params["agent"].(string)
-	if strings.TrimSpace(agentRef) == "" {
-		return NewTextResult("Error: 'agent' is required"), nil
-	}
-	if t.dispatcher == nil {
-		return NewTextResult("Error: sub-agent service not available in this session."), nil
-	}
-	childID, name, err := t.dispatcher.Resolve(t.parentSessionID, agentRef)
-	if err != nil {
-		return NewTextResult(fmt.Sprintf("Error: %s%s", err, unknownAgentHint(t.parentSessionID, t.dispatcher))), nil
-	}
-	if !t.dispatcher.Cancel(childID) {
-		return NewTextResult(fmt.Sprintf("Agent %q is not running (idle, already finished, or already stopped).", name)), nil
-	}
-	return NewTextResult(fmt.Sprintf("Stopped agent %q.", name)), nil
-}
+// (CancelAgentTool — a model-facing `cancel_agent` tool — was retired without
+// ever being registered: the dsh 23-tool surface has no cancel tool, and
+// stopping an agent goes through job_kill. dispatcher.Cancel(id) remains the
+// in-process entry the job surface uses.)
 
 // unknownAgentHint names the agents that do exist, so a typo costs one retry
 // instead of a list_agents round trip.
@@ -462,10 +421,3 @@ func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func truncateRunes(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
-}

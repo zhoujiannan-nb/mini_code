@@ -29,9 +29,13 @@ func TestExecInputSchema(t *testing.T) {
 
 // stdinEchoCommand returns a command that reads all of stdin and writes it
 // back to stdout, so the test can observe what the child actually received.
+// On Windows this must NOT be `more`: when pwsh is absent from PATH the tool
+// falls back to powershell.exe, whose `more` alias does not read redirected
+// stdin (it prints a bare newline and eats the payload). [Console]::In reads
+// the pipe identically on both shells.
 func stdinEchoCommand() string {
 	if runtime.GOOS == "windows" {
-		return "more" // reads stdin and echoes it (verified: `echo x | more` -> x)
+		return "[Console]::In.ReadToEnd()"
 	}
 	return "cat"
 }

@@ -499,15 +499,6 @@ func (m *ProcManager) LogTail(id string) []string {
 	return out
 }
 
-// isRunning reports whether the plugin is currently up (used by the control
-// tool to phrase its answer).
-func (m *ProcManager) isRunning(id string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	rp, ok := m.procs[id]
-	return ok && rp.state == procStateRunning
-}
-
 // find looks the plugin up in the directory listing.
 func (m *ProcManager) find(id string) (Plugin, bool) {
 	for _, p := range m.loadFn() {

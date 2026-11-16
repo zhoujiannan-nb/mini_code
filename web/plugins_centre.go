@@ -53,8 +53,7 @@ type pluginCentreInfo struct {
 	UI *uiInfo `json:"ui,omitempty"`
 	// Boot tells the card this plugin also ships a startup animation.
 	Boot *bootInfo `json:"boot,omitempty"`
-	// Memory/Styles/Wallpaper flags let the card say what it brings.
-	HasMemory    bool `json:"has_memory,omitempty"`
+	// Styles/Wallpaper flags let the card say what it brings.
 	HasStyles    bool `json:"has_styles,omitempty"`
 	HasWallpaper bool `json:"has_wallpaper,omitempty"`
 	// Source is "local" (dropped into the directory) or "catalogue" (installed
@@ -102,7 +101,6 @@ func (s *server) handlePluginCentreList(w http.ResponseWriter, r *http.Request) 
 			Reason:      p.ReasonOff(),
 			Dir:          p.Dir,
 			Error:        p.LoadError,
-			HasMemory:    p.Memory != "",
 			HasStyles:    len(p.Styles) > 0,
 			HasWallpaper: p.Wallpaper != "",
 			Source:       p.Source,

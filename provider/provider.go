@@ -239,7 +239,8 @@ type ToolSchemaFunc struct {
 }
 
 type Provider interface {
-	ProviderName() string
+	// ProviderName() was dropped: no caller ever asked a provider its own
+	// name — the registry keys everything by model name instead.
 	BuildURL() string
 	BuildHeaders() map[string]string
 	GetContextWindow() int
@@ -277,12 +278,9 @@ type chatOptions struct {
 	TemperatureExplicit bool
 }
 
-func WithTemperature(t float64) ChatOption {
-	return func(o *chatOptions) {
-		o.Temperature = t
-		o.TemperatureExplicit = true
-	}
-}
+// (There used to be a WithTemperature option: no caller ever set it, so the
+// providers' own sampling defaults always applied. ChatOption itself stays —
+// WithMaxTokens below is the live one.)
 
 func WithMaxTokens(n int) ChatOption {
 	return func(o *chatOptions) { o.MaxTokens = n }

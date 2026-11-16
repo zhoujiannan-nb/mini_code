@@ -15,7 +15,7 @@
 | 类 | `kind` | 它是什么 | 典型字段 | 示例 |
 |---|---|---|---|---|
 | 一 | `process` | mini_code **启动并保活**的一个 exe / 命令（python 服务、本地 mcp 桥……），可以被披露给模型、模型能查到它 | `process` | `process-demo` |
-| 二 | `tool` | 像网络搜索 / skills / mcp 那样，**往工具列表追加**一个工具 | `tools`、`memory` | `web-search` |
+| 二 | `tool` | 像网络搜索 / skills / mcp 那样，**往工具列表追加**一个工具 | `tools` | `web-search` |
 | 三 | `appearance` | **DIY 前端**：皮肤、壁纸、界面插槽、动效，以及**开机动画** | `styles`、`wallpaper`、`ui`、`boot` | `skin-aurora` / `mc-access` |
 
 分类是**推断**的：显式 `kind` 优先，否则按 `process > tools > 外观字段` 的顺序判定
@@ -34,7 +34,7 @@
 | 壁纸（`wallpaper`） | ✅ | 一条 `background-image` |
 | 插槽（`ui.slots`） | ✅ | 只认 6 个白名单位置，**sandbox iframe** 渲染 |
 | 动效（`ui.motion`） | ✅ | 只认 5 个事件 × 一个 class，纯 CSS |
-| 记忆（`memory`） | ✅ | 追加到系统提示的静态文本 |
+| 记忆（`memory`） | ❌ 已移除 | 机制整体删除；使用说明写进工具的 `description` |
 | 开机动画（`boot`） | ✅ | 外观插件的一个字段：静态 HTML 包，走 `/bootanim/` + 沙箱 iframe |
 | **agent 循环** | ❌ | 任务执行、重试、放弃逻辑是核心语义 |
 | **权限 / 闸门** | ❌ | 插件只会让闸门**更严**（谨慎模式必须审批），不能放宽 |
@@ -56,7 +56,7 @@
 ~/.mini_code/plugins/
 └── web-search/                ← 目录名建议和 id 一致（资产路由与安装器都依赖这一点）
     ├── plugin.json            ← 唯一必需的文件
-    ├── memory.md              ← 可选：追加到系统提示
+    ├── README.md              ← 可选：给人看的说明（模型侧的用法写进工具 description）
     ├── skin.css               ← 可选：皮肤
     ├── bar.html               ← 可选：插槽片段（必须在 ui.slots 里声明）
     ├── bg.webp                ← 可选：壁纸
@@ -69,7 +69,7 @@
 
 - `process-demo/` —— 第一类：`python server.py`，带 `/healthz` 健康检查、`restart: on-failure`、
   `expose.tool`，模型可以用 `plugin_proc__process_demo` 查状态 / PID / 日志尾巴
-- `web-search/` —— 第二类：两个工具 + 一段 `memory.md`（包装 `D:\project_ai\web_search`）
+- `web-search/` —— 第二类：两个工具（使用说明就写在工具自己的 `description` 里）
 - `skin-aurora/` —— 第三类：CSS 皮肤 + 输入框下方的插槽 + 强调色 + 两条动效，**零 JavaScript**
 - `skin-night/`、`wallpaper-demo/` —— 更小的外观示例（只皮肤 / 只壁纸）
 
@@ -109,9 +109,7 @@
     "accent": "#6be3b0",
     "slots":  [ { "slot": "composer-bar", "html": "bar.html", "height": 40 } ],
     "motion": [ { "event": "send", "class": "flash" } ]
-  },
-
-  "memory": "memory.md"
+  }
 }
 ```
 
@@ -122,7 +120,7 @@
 | `id` | 必填，缺省取目录名。`^[a-z0-9][a-z0-9-]{0,63}$`（要能当 URL 路径段） |
 | `kind` | 可选，`process` / `tool` / `appearance`。不写就推断 |
 | `enabled` | 缺省 = `true`。`false` 时整个插件不加载 |
-| `styles` / `wallpaper` / `memory` | 必须是插件目录内的**相对路径**，绝对路径和 `..` 会被拒绝 |
+| `styles` / `wallpaper` | 必须是插件目录内的**相对路径**，绝对路径和 `..` 会被拒绝 |
 
 ### 第一类：`process`（程序插件）
 
@@ -346,7 +344,7 @@ html[data-theme="dark"] { --accent: #5fc4e8; --accent-t: #8fd8f2; }
 { "id":"process-demo", "category":"process", "kinds":["process"],
   "enabled":true, "tools":["plugin_proc__process_demo"], "dir":"…",
   "process":{"state":"running","pid":1234,"uptime_seconds":42},
-  "has_memory":false, "has_styles":false, "source":"catalogue" }
+  "has_styles":false, "source":"catalogue" }
 ```
 
 `tools` 里包含**宿主合成**的控制工具（`plugin_proc__<id>`）：它不在 manifest 里，
@@ -416,7 +414,9 @@ set MINICODE_GITHUB_RAW=https://mirror.example.com/gh
    `plugin.ProcTools()` 也走同一个 `RegisterAppended`。
 3. 插件工具若与核心工具重名，直接跳过（`check_plugins.py` 第 4 项）——
    否则那个已缓存名字的语义会被换掉。
-4. 插件记忆是磁盘上的静态文本，不含时间戳/随机数（`check_plugins.py` 第 7 项）。
+4. 插件提示是磁盘文件的**路径指针**（`[plugin notes]` 段，每插件一行），
+   正文不注入；指针列表只在插件装/卸时变化，不含时间戳/随机数
+   （`check_plugins.py` 第 7 项）。
 5. 插件按 id 排序加载，顺序确定；进程状态**不进**提示词（模型查得到，提示词不因此变）。
 
 ### 三类插件同时装：实测（`_work_*/prefix_cache3.py`）
@@ -431,13 +431,15 @@ set MINICODE_GITHUB_RAW=https://mirror.example.com/gh
 | 插件工具不插进核心段 | core=12，appended=3 |
 | 追加段按名字排序（稳定） | `plugin_proc__process_demo web_read web_search` |
 | 每一类贡献的正是它该贡献的 | ✅ 外观类贡献 0 个工具 |
-| 系统提示只增长「记忆块」的大小 | 3884 → 4493 字节（块 608 + 1 个分隔符） |
-| 把记忆块摘掉后，提示词与零插件**逐字节相同** | ✅ |
+| 系统提示不受插件影响 | 装齐三类也是逐字节不变的 3884 字节（记忆机制已删，见下注） |
 | 零插件时没有任何「追加」工具 | 12 个，0 个 appended |
 
-最后两条是关键：它证明插件对提示词的**唯一**影响就是结尾那段 `[memory: …]`
-（`web-search` 自带 `memory.md`）。摘掉它，剩下的字节和不装插件完全一样——
-所以哪怕提示词变长了，**前缀照样命中**。
+> **记忆机制已整体移除（2026-11）**：历史上曾有 `[memory: <id>]` 整段注入，
+> 一度改为 `[plugin notes]` 指针段，最终**连指针一起删除**——插件对模型只是
+> 工具，使用说明写进工具自己的 `description` 即可（dsh 也是如此）。manifest 里
+> 残留的 `"memory"` 键会被解析器直接忽略；`Plugin.Memory`、`MemoryText`、
+> `[plugin notes]` 段、`has_memory` API 字段均已不存在。上表的字节数按现状
+> 重测：插件装载与否，系统提示逐字节相同，差异只剩工具面（appended 段）。
 
 ### 早先的端到端命中率（`cache_compare.py`，同一段两轮对话）
 

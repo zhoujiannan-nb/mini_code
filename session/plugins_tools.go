@@ -1,34 +1,14 @@
 package session
 
 import (
-	"strings"
-
 	"github.com/user/mini_code/plugin"
 )
 
-// pluginMemorySection renders the "[plugin memory]" block: the notes of every enabled
-// plugin, in plugin-id order. Naming the plugins here (and not in the tools
-// block) keeps the prompt stable: the text only changes when a plugin's memory
-// file changes on disk.
-//
-// Returns "" when no plugin contributes memory, so an installation without
-// plugins produces a byte-identical prompt to the one before plugins existed.
-func pluginMemorySection() string {
-	plugins := plugin.Load()
-	var b strings.Builder
-	for _, p := range plugins {
-		mem := p.MemoryText()
-		if mem == "" {
-			continue
-		}
-		b.WriteString("\n[memory: ")
-		b.WriteString(p.ID)
-		b.WriteString("]\n")
-		b.WriteString(mem)
-		b.WriteString("\n")
-	}
-	return b.String()
-}
+// Plugin notes are NOT part of the system prompt — neither the text nor even
+// a pointer to it. A plugin is, to the model, a tool; a tool documents itself
+// through its own description. The former "[memory: <id>]" injection (and its
+// successor, a "[plugin notes]" pointer block) made every session carry
+// bytes it rarely needed; dsh has nothing like it, and neither do we now.
 
 // registerPluginTools appends the tools contributed by enabled plugins AFTER
 // the core tools. Ordering matters: the core tool list is the head of the

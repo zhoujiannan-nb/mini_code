@@ -2,14 +2,12 @@ package config
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 )
 
-// ErrNoChange is returned by a config save when nothing changed.
-var ErrNoChange = errors.New("no config changes")
+// (ErrNoChange used to live here; no save path ever returned it.)
 
 type AppConfig struct {
 	// Model is the legacy single-model config. On load it is wrapped into

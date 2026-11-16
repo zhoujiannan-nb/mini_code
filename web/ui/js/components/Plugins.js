@@ -134,7 +134,6 @@ function InstalledDetail() {
   if (p.boot) caps.push(["开机动画", (p.boot.entry || "index.html") +
     (p.boot.duration_ms ? " · " + (Math.round(p.boot.duration_ms / 100) / 10) + " 秒" : "")]);
   if (p.tools && p.tools.length) caps.push(["工具", p.tools.join(", ")]);
-  if (p.has_memory) caps.push(["记忆", "memory.md"]);
 
   const facts = [];
   if (p.category === "process" && p.process) {

@@ -40,6 +40,7 @@ import (
 
 	"github.com/user/mini_code/config"
 	"github.com/user/mini_code/plugin"
+	"github.com/user/mini_code/util"
 )
 
 // BootAnimTheme is one startup clip, either an enabled boot plugin or a legacy
@@ -191,16 +192,6 @@ func bootAnimRawURL(repo, ref, p string) string {
 	return bootAnimRawBase(repo, ref) + strings.TrimPrefix(p, "/")
 }
 
-// bootAnimRepo is the GitHub "owner/name" the online catalogue is read from.
-func (s *server) bootAnimRepo() string {
-	if cfg := s.be.GetConfig(); cfg != nil {
-		b := cfg.BootAnim
-		b.Normalize()
-		return b.EffectiveRepo()
-	}
-	return config.DefaultBootAnimRepo
-}
-
 // bootAnimDir returns the LEGACY theme directory, from the live config. New
 // clips live in plugin directories; this is only read for themes installed
 // before the plugin layer existed.
@@ -227,7 +218,7 @@ func pluginBootTheme(p plugin.Plugin) *BootAnimTheme {
 	}
 	t := &BootAnimTheme{
 		ID:          p.ID,
-		Name:        firstNonEmpty(p.Name, p.ID),
+		Name:        util.FirstNonEmpty(p.Name, p.ID),
 		Author:      p.Author,
 		Version:     p.Version,
 		Description: p.Description,
@@ -326,12 +317,12 @@ func loadLegacyBootTheme(dir, id string) (*BootAnimTheme, error) {
 	}
 	t := &BootAnimTheme{
 		ID:          id,
-		Name:        firstNonEmpty(m.Name, id),
+		Name:        util.FirstNonEmpty(m.Name, id),
 		NameEn:      m.NameEn,
 		Author:      m.Author,
 		Version:     m.Version,
 		Description: m.Description,
-		Entry:       firstNonEmpty(m.Entry, plugin.BootEntryDefault),
+		Entry:       util.FirstNonEmpty(m.Entry, plugin.BootEntryDefault),
 		Preview:     m.Preview,
 		DurationMs:  m.DurationMs,
 		MaxMs:       m.MaxMs,
@@ -663,14 +654,6 @@ func pathWithin(root, target string) (bool, error) {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
 }
 
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
-}
 
 // BootAnimBootConfig is what the page's inline player reads out of the JSON
 // block the server injects into the embedded UI.

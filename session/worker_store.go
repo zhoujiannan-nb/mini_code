@@ -337,22 +337,6 @@ func (s *SessionStore) DeleteWorker(workerID string) error {
 	return err
 }
 
-// --- session ↔ worker ---
-
-// SetWorker attaches a session to a worker (or detaches it) and, when workDir
-// is non-nil, rewrites its working directory in the same statement. A targeted
-// update, like SetMode: it must never clobber the agent loop's per-turn message
-// write, and must never be clobbered by it.
-func (s *SessionStore) SetWorker(sessionID, workerID string, workDir *string) error {
-	now := time.Now().Format(time.RFC3339)
-	if workDir == nil {
-		_, err := s.db.Execute("UPDATE sessions SET worker_id=?, updated_at=? WHERE session_id=?", workerID, now, sessionID)
-		return err
-	}
-	_, err := s.db.Execute("UPDATE sessions SET worker_id=?, work_dir=?, updated_at=? WHERE session_id=?", workerID, *workDir, now, sessionID)
-	return err
-}
-
 // ListWorkerSessions returns the IDs of every session assigned to a worker
 // (root sessions and their sub-agent children alike).
 func (s *SessionStore) ListWorkerSessions(workerID string) ([]string, error) {

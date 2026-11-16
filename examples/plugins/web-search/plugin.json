@@ -7,7 +7,7 @@
   "tools": [
     {
       "name": "web_search",
-      "description": "Search the web with a real (headless) browser and return structured results. Use it for anything that needs current information: news, versions, prices, API docs. Returns JSON with title/link/snippet per result.",
+      "description": "Search the web with a real (headless) browser and return structured results. Use it whenever the answer depends on current facts (versions, dates, prices, news) — do not answer from memory. Returns JSON with title/link/snippet per result: judge relevance from the snippet, then open the page with web_read. A 'warning' field means anti-bot degradation — retry with another engine.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -36,7 +36,7 @@
     },
     {
       "name": "web_read",
-      "description": "Read the main article text of one web page as markdown. Use it after web_search to open a promising result.",
+      "description": "Read the main article text of one web page as markdown (navigation and ads stripped; long pages truncated to max_chars). Ground conclusions in text read here rather than in search snippets. Use it after web_search to open a promising result.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -58,6 +58,5 @@
       ],
       "timeout_seconds": 150
     }
-  ],
-  "memory": "memory.md"
+  ]
 }

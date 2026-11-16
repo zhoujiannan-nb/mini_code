@@ -131,7 +131,7 @@ Operating system: Windows. Commands run through PowerShell (pwsh when installed,
 // where it came from. Injected=false marks the sections that come from the code
 // and the agent role (人设 + 工作约束); everything else is stitched in from the
 // environment — the working directory, the AGENTS.md ancestor chain, the plugin
-// list, plugin memory, the OS block, the caller's extra context. The「上下文」
+// list, the OS block, the caller's extra context. The「上下文」
 // drawer uses this to answer "why is the system prompt this big, and which part
 // of it did my own setup contribute".
 type PromptPart struct {
@@ -176,16 +176,11 @@ func (pb *PromptBuilder) BuildSystemPromptParts(workDir, extraContext string) []
 	// User plugins from ~/.mini_code/plugins.md (one per line, optional
 	// "desc:" suffix). Re-read on every task, so edits to the file take
 	// effect from the next task without a restart.
+	// Plugins contribute NO text to the prompt: they contribute tools (see
+	// registerPluginTools), and a tool carries its own documentation in its
+	// description. The old "[memory: <id>]" block is gone for good.
 	if ps := pluginsSection(); ps != "" {
 		add("插件清单", true, ps)
-	}
-	// Plugin memory: notes contributed by installed directory plugins
-	// (~/.mini_code/plugins/<id>/memory.md). Placed after the plugin list and
-	// before the environment block so the untrusted-ish user text stays in one
-	// region of the prompt. Each file is static until edited, so the prefix
-	// stays cacheable.
-	if mem := pluginMemorySection(); mem != "" {
-		add("插件记忆", true, mem)
 	}
 	// The system prompt is static on purpose: it is the head of the request
 	// prefix the provider's prefix cache matches, so it must not be
