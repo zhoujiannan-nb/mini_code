@@ -167,6 +167,7 @@ export async function selectSession(id) {
       workDir: s.work_dir || "",
       // 会话角色:"super" 时主区换成 Router 六页签面板。
       currentRole: s.agent_role || "",
+      superOwned: false,   // 若目标确属 super,由点入方(SuperPanel)随后点亮
       superTab: "chat",
       rows,
       run: { steps: [] },

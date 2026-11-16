@@ -132,6 +132,7 @@ export function Sidebar() {
   const sessSort = useStore((s) => s.sessSort);
   const themeMode = useStore((s) => s.themeMode);
   const currentRole = useStore((s) => s.currentRole);
+  const superOwned = useStore((s) => s.superOwned);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const pickRef = useRef(null);
@@ -211,7 +212,7 @@ export function Sidebar() {
       <span class="nb-plus">＋</span><span class="nb-label">新建会话</span>
       <kbd class="nb-kbd">${IS_MAC ? "⌘ K" : "Ctrl K"}</kbd>
     </button>
-    <button class=${"super-entry" + (currentRole === "super" ? " on" : "")} id="btn-super"
+    <button class=${"super-entry" + (currentRole === "super" || superOwned ? " on" : "")} id="btn-super"
       title="Super-Agent:分派任务的总控会话(worker / 定时任务 / 消息通道 / 进程 / 审计)"
       onClick=${openSuperSession}>
       <svg class="nb-ico" viewBox="0 0 24 24" aria-hidden="true">

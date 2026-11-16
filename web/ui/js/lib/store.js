@@ -79,6 +79,7 @@ export const initialState = {
   pluginLogs: null,      // {id, lines} —— 程序插件日志弹窗
   // ---- Super-Agent(Router 子系统) ----
   currentRole: "",       // 当前会话的 agent_role("super" = 渲染 Router 面板)
+  superOwned: false,     // 当前是 super 旗下 worker 会话(侧栏 Super 入口保持高亮)
   superTab: "chat",      // chat | workers | sched | chan | proc | audit
   superOv: null,         // GET /api/super/overview 的快照(仅 super 会话打开时轮询)
   boot: { dir: "", legacyDir: "", themes: [], play: null, picked: "" },
@@ -257,6 +258,7 @@ export function reduce(st, action) {
         reasoningEffort: "",
         ctxWindow: st.defaultCtxWindow,
         currentRole: "",
+        superOwned: false,
         superTab: "chat",
         tasksOpen: false,
       });

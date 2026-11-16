@@ -283,6 +283,21 @@ func (s *Store) GetSessionBinding(sessionID string) (*WorkerSession, error) {
 	}, nil
 }
 
+// AllWorkerSessionIDs lists every session ever spawned for a super worker
+// (active or closed). The normal session list hides these; they live under
+// the Super-Agent panel only.
+func (s *Store) AllWorkerSessionIDs() ([]string, error) {
+	rows, err := s.db.FetchAll("SELECT id FROM super_worker_session")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, asStr(r["id"]))
+	}
+	return out, nil
+}
+
 func (s *Store) ListBoundSessions(swID string) ([]*WorkerSession, error) {
 	rows, err := s.db.FetchAll(
 		`SELECT id, sw_id, title, status, note_ver, created_at, updated_at FROM super_worker_session

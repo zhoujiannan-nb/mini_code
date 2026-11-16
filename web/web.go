@@ -627,8 +627,18 @@ func (s *server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	// (CancelTask 会级联取消子任务)。这是 children_active,不是 active:
 	// 父会话此刻是空闲的,输入框必须继续能用。查询失败时只剩仅看父会话自身。
 	children, _ := s.be.Mgr().GetStore().ChildIDsByParent()
+	// The super family (resident super session + every super-worker session)
+	// lives outside the normal worker buckets: the sidebar only shows the
+	// Super-Agent entry, and these sessions are reached through the panel.
+	var superHide map[string]bool
+	if superS != nil {
+		superHide = superS.RelatedSessionIDs()
+	}
 	out := make([]SessionSummary, 0, len(records))
 	for _, r := range records {
+		if superHide[r.SessionID] {
+			continue
+		}
 		sum := s.summarizeSummary(r)
 		if !sum.Active {
 			sum.ChildrenActive = childrenRunning(s.be.Hub(), r.SessionID, children)

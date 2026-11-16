@@ -176,7 +176,7 @@ function WorkersPanel({ ov }) {
           <div class="sup-wsessions">
             ${sess.map((x) => html`
               <button key=${x.id} class=${"sup-sess" + (x.active ? " act" : "")} title=${"打开会话 " + x.id}
-                onClick=${() => selectSession(x.id)}>
+                onClick=${() => selectSession(x.id).then(() => setState({ superOwned: true }))}>
                 ${x.active ? html`<span class="sup-dot on"></span>` : null}${x.title || "会话"}
                 <span class="sup-sess-st">${x.status === "active" ? "开" : "关"}</span>
               </button>`)}

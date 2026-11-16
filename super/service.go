@@ -261,6 +261,24 @@ func (s *Service) SuperSessionID() string {
 	return s.superID
 }
 
+// RelatedSessionIDs returns the resident super session plus every session
+// ever spawned for a super worker. The normal session list hides all of them:
+// this family is reached through the Super-Agent panel, not the sidebar.
+func (s *Service) RelatedSessionIDs() map[string]bool {
+	out := map[string]bool{}
+	if id := s.SuperSessionID(); id != "" {
+		out[id] = true
+	}
+	ids, err := s.store.AllWorkerSessionIDs()
+	if err != nil {
+		return out
+	}
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out
+}
+
 // EnsureSuper finds or creates the one resident super session (agent_role
 // "super", root, own workspace under ws_root) and pins its title so the
 // automatic titler never renames it.
