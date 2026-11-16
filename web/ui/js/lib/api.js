@@ -60,6 +60,9 @@ export function del(path) {
 // GET    /api/plugins/{id}/logs?n=          GET  /api/plugins/catalog
 // POST   /api/plugins/install               GET  /api/plugins/prompt?kind=
 // GET    /api/bootanim                      PUT  /api/bootanim
+// POST   /api/super/ensure                  GET  /api/super/overview
+// POST   /api/super/config                  POST /api/super/workers/config
+// POST   /api/super/schedules/toggle|run    POST /api/super/channel/flush
 export const ROUTES = Object.freeze({
   status: "/api/status",
   sessions: (worker) => "/api/sessions?worker=" + encodeURIComponent(worker || ""),
@@ -118,4 +121,12 @@ export const ROUTES = Object.freeze({
   pluginInstall: "/api/plugins/install",
   pluginPrompt: (kind) => "/api/plugins/prompt?kind=" + encodeURIComponent(kind),
   bootanim: "/api/bootanim",
+  // Super-Agent(Router 子系统):overview 一次给全六页签数据。
+  superEnsure: "/api/super/ensure",
+  superOverview: "/api/super/overview",
+  superConfig: "/api/super/config",
+  superWorkerConfig: "/api/super/workers/config",
+  superSchedToggle: "/api/super/schedules/toggle",
+  superSchedRun: "/api/super/schedules/run",
+  superFlush: "/api/super/channel/flush",
 });

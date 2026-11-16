@@ -1064,6 +1064,48 @@ test("render: 输入区「选择模式」下拉切换完整/谨慎,走 POST /mod
   assert.equal(getState().mode, "cautious");
 });
 
+test("render: 新会话发第一条消息接管后,store 的字段一个都不许丢", async () => {
+  // 后端先 emit session_created、HTTP 响应后到 —— 正是这条竞态把新会话"接管"到
+  // adoptNewSession 里。它曾把整个 store 换成七个字段(boot/models 全没),
+  // 于是发送后满屏 "Cannot read properties of undefined (reading 'play'/'find')"。
+  const slowMessages = [[/^\/api\/messages$/, async () => {
+    await new Promise((r) => setTimeout(r, 400));
+    return jsonResponse({ task_id: "t1", session_id: "s-new" }, 202, "Accepted");
+  }]];
+  const fetchMock = await resetAll({ sessions: [], extra: slowMessages });
+  mountApp();
+  await settle();
+  assert.equal(getState().current, null, "起始是新会话草稿");
+
+  const ta = document.querySelector("#input");
+  ta.value = "新会话的第一句话";
+  ta.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await settle();
+  document.querySelector("#btn-send").click();
+  await new Promise((r) => setTimeout(r, 20)); // 只要 POST 在路上,别等它落地
+
+  const es = FakeEventSource.instances[0];
+  assert.ok(es, "App 启动时连了 SSE");
+  es.emit({ kind: "status", status: "session_created", session_id: "s-new", task_id: "t1" });
+  await settle();
+  await new Promise((r) => setTimeout(r, 500)); // 迟到的 POST 落地 → adoptNewSession
+  await settle();
+
+  const st = getState();
+  assert.equal(st.current, "s-new", "迟到的响应按 task_id 接管了新会话");
+  for (const k of Object.keys(initialState)) {
+    assert.ok(k in st && st[k] !== undefined, "接管后字段还在: " + k);
+  }
+  assert.ok(Array.isArray(st.sessions), "sessions 还是数组");
+  // 界面还得活着:这两处正是当年最先炸掉的两块 —— 输入区的模型芯片读
+  // state.models,设置弹窗里的开机动画摘要读 state.boot.play。
+  assert.ok(document.querySelector("#model-name"), "输入区还画得出来");
+  assert.ok(st.models.length >= 1, "模型列表还在");
+  assert.ok(document.querySelector("#a-boot-summary"), "开机动画摘要还画得出来");
+  assert.ok(document.querySelector("#think-pill"), "思考胶囊还在");
+  assert.ok(fetchMock.callsTo("/api/messages").length >= 1, "发了一次消息");
+});
+
 test("render: 输出速度显示在输入卡下方一行(有速度才出现,没有就不占位)", async () => {
   await resetAll();
   mountApp();

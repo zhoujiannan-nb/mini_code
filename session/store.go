@@ -152,6 +152,11 @@ func (s *SessionStore) evLock(sessionID string) *sync.Mutex {
 // (sibling "spill" folder of the database file).
 func (s *SessionStore) SpillDir() string { return s.spillDir }
 
+// DB exposes the shared SQLite handle. The super_* tables live in the same
+// connection as sessions/workers on purpose: like the worker cascade, a
+// super worker's rows and its session rows must stay race-free together.
+func (s *SessionStore) DB() *util.Database { return s.db }
+
 func (s *SessionStore) initDB() {
 	s.db.InitTable(`CREATE TABLE IF NOT EXISTS sessions (
 		session_id TEXT PRIMARY KEY,

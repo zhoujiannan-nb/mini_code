@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { initialState, applyEvent, applyResync } from "../js/lib/store.js";
+import { initialState, applyEvent, applyResync, setState, getState } from "../js/lib/store.js";
 
 // 每个用例一份独立 state:initialState 里只放不可变的初值,
 // 这里把会被 reducer 改写的容器换新,避免用例之间互相污染。
@@ -172,4 +172,22 @@ test("store: 任务已结束的 resync 把剩余步骤标成已执行未收到�
   const r = applyResync(s, [], false);
   assert.equal(r.run.steps[0].phase, "lost");
   assert.equal(r.run.steps[0].folded, true);
+});
+
+test("store: setState 的函数式 patch 也只当补丁合并,不许整份替换", () => {
+  const keep = getState();
+  try {
+    // 漏写 ...s 的函数式 patch(新会话接管当年的写法):只能改它写了的字段。
+    setState((s) => ({ current: "s9", rows: s.rows }));
+    const st = getState();
+    assert.equal(st.current, "s9", "写了的字段生效");
+    for (const k of Object.keys(initialState)) {
+      assert.ok(k in st, "字段没被丢掉: " + k);
+    }
+    assert.ok(st.boot && typeof st.boot === "object", "boot 还在(读 boot.play 的地方不再炸)");
+    assert.ok(Array.isArray(st.models), "models 还在(读 models.find 的地方不再炸)");
+  } finally {
+    setState(() => keep); // keep 是满字段对象,合并即恢复
+  }
+  assert.equal(getState().current, keep.current, "用例之间不留残留");
 });

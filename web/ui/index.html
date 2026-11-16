@@ -13,11 +13,12 @@
 @import url("/css/base.css");
 @import url("/css/layers.css");
 @import url("/css/plugins.css");
+@import url("/css/super.css");
 @import url("/css/app.css");
 </style>
 
 <!-- 错误保镖:白屏不能再无声无息。未捕获异常、模块/资源加载失败、未处理的
-     Promise 拒绝,都贴成页面顶部一条红横幅(桌面版按 F12 看堆栈)。
+     Promise 拒绝,都贴成页面顶部一条红横幅(桌面版按 F12 看完整堆栈)。
      这段在任何 module 脚本之前同步装钩,capture=true 连资源级 error 也接住;
      样式写死在行内,连 css 没加载出来也能显示。 -->
 <script>
@@ -38,13 +39,26 @@
     box.textContent = (box.textContent ? box.textContent + "\n" : "") + "⚠ 页面出错: " + msg;
   }
   function short(u) { return String(u || "").split(/[\\/]/).pop(); }
+  // Preact 的错误兜底是把异常原样再抛一次,于是 event.filename 只剩 preact.js —
+  // 第一现场只在 error.stack 里。线上没有 F12 时这条横幅就是唯一线索,把它带上。
+  function frames(err) {
+    var s = err && err.stack ? String(err.stack).split("\n") : [];
+    var out = [];
+    for (var i = 1; i < s.length && out.length < 2; i++) {
+      var f = String(s[i] || "").trim().replace(/^at\s+/, "").replace(/\((\w+):\/[^)]*\/(js\/[^)]+)\)/, "($2)");
+      if (f) out.push(f);
+    }
+    return out;
+  }
   window.addEventListener("error", function (e) {
     if (e.target && e.target !== window && (e.target.src || e.target.href)) {
       show("资源加载失败: " + short(e.target.src || e.target.href));
       return;
     }
+    var f = frames(e.error);
     show((e.message || "script error")
-      + (e.filename ? "  (" + short(e.filename) + ":" + e.lineno + ")" : ""));
+      + (e.filename ? "  (" + short(e.filename) + ":" + e.lineno + ")" : "")
+      + (f.length ? "\n  " + f.join("\n  ") : ""));
   }, true);
   window.addEventListener("unhandledrejection", function (e) {
     var r = e.reason;

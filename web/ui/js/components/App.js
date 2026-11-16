@@ -27,6 +27,7 @@ import { Composer } from "./Composer.js";
 import { ContextPanel } from "./ContextPanel.js";
 import { TrajPanel } from "./TrajPanel.js";
 import { SummaryPanel } from "./SummaryPanel.js";
+import { SuperFrame } from "./SuperPanel.js";
 import { Settings } from "./Settings.js";
 import { ApprovalModal } from "./panels/ApprovalModal.js";
 import { UserAvatarModal } from "./panels/UserAvatarModal.js";
@@ -128,8 +129,10 @@ export function App() {
       <${Topbar} />
       <section class="chat">
         <${ChatHead} />
-        <${Chat} />
-        <${Composer} />
+        <${SuperFrame}>
+          <${Chat} />
+          <${Composer} />
+        <//>
         <${ContextPanel} />
         <${TrajPanel} />
         <${SummaryPanel} />

@@ -77,6 +77,10 @@ export const initialState = {
   composerSeed: null,    // {id, text} —— 「造一个插件」把提示词塞进输入框
   workerNote: null,      // {id, name, ver, content} —— 公约编辑弹窗
   pluginLogs: null,      // {id, lines} —— 程序插件日志弹窗
+  // ---- Super-Agent(Router 子系统) ----
+  currentRole: "",       // 当前会话的 agent_role("super" = 渲染 Router 面板)
+  superTab: "chat",      // chat | workers | sched | chan | proc | audit
+  superOv: null,         // GET /api/super/overview 的快照(仅 super 会话打开时轮询)
   boot: { dir: "", legacyDir: "", themes: [], play: null, picked: "" },
   plugins: {
     list: [], dir: "", slots: [], catalog: [], catalogMsg: "", repo: "",
@@ -159,12 +163,18 @@ function notify() {
   }
 }
 
+// setState 两种写法都是"打补丁":对象式直接叠,函数式先算出补丁再叠。
+// 函数式早先是整份替换 —— 少写一个 `...st` 就会把整个 store 换成那三五个字段,
+// 界面接下来每一次重渲都成串地炸 undefined(新会话接管就这么翻过车)。
+// 需要整份替换的语义请走 update()。
 export function setState(patch) {
-  state = typeof patch === "function" ? patch(state) : Object.assign({}, state, patch);
+  const next = typeof patch === "function" ? patch(state) : patch;
+  state = Object.assign({}, state, next);
   notify();
   return state;
 }
 
+// update:整份替换(reducer 的写法),返回假值就当没改。
 export function update(fn) {
   const next = fn(state);
   if (next) state = next;
@@ -246,6 +256,8 @@ export function reduce(st, action) {
         thinking: "",
         reasoningEffort: "",
         ctxWindow: st.defaultCtxWindow,
+        currentRole: "",
+        superTab: "chat",
         tasksOpen: false,
       });
     }

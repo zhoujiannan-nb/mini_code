@@ -1,6 +1,6 @@
 // 所有"会打后端"的动作。组件只调用这里的函数,不直接 fetch ——
 // 路径与协议集中在 lib/api.js,状态写回集中在 lib/store.js。
-import { api, ROUTES } from "./api.js";
+import { api, postJSON, ROUTES } from "./api.js";
 import { getState, setState, update, dispatch, toast } from "./store.js";
 import { historyRows } from "./transcript.js";
 import { nav } from "./nav.js";
@@ -165,6 +165,9 @@ export async function selectSession(id) {
     setState({
       // 工作目录:聊天里的相对路径要按它解析(不是服务进程的 cwd)
       workDir: s.work_dir || "",
+      // 会话角色:"super" 时主区换成 Router 六页签面板。
+      currentRole: s.agent_role || "",
+      superTab: "chat",
       rows,
       run: { steps: [] },
       live: null,
@@ -201,9 +204,26 @@ export async function selectSession(id) {
   }
 }
 
+// 打开 Super-Agent 会话:后端惰性建会话(每个进程只一条),拿到 id 直接进。
+export async function openSuperSession() {
+  try {
+    const data = await postJSON(ROUTES.superEnsure, {});
+    if (!data || !data.session_id) {
+      toast("Super-Agent 暂不可用:" + ((data && data.error) || "未知错误"), "err");
+      return;
+    }
+    await selectSession(data.session_id);
+  } catch (e) {
+    toast("打开 Super-Agent 失败:" + e.message, "err");
+  }
+}
+
 // 新会话发送后的"接管":事件与 HTTP 响应谁先到都走这里。
 export function adoptNewSession(sid) {
+  // 这里改的是「接管新会话」那七个字段,别的都要原样留着:boot / models / plugins
+  // 一旦被丢掉,设置弹窗和输入区下一帧渲染就会读 undefined.boot / undefined.models。
   setState((st) => ({
+    ...st,
     current: sid,
     pendingTask: null,
     rows: st.rows,

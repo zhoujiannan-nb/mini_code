@@ -1,0 +1,192 @@
+/* Super-Agent(Router)六页签面板。颜色全部走 base.css 的变量,深浅色自动适配。
+   布局挂在 .chat 区内:页签栏一行 + .sup-scroll 承担原本 .messages 的滚动职责。 */
+
+/* ---- 页签栏 ---- */
+.sup-tabs {
+  display: flex; align-items: center; gap: 2px; flex: 0 0 auto;
+  padding: 6px 14px 0; border-bottom: 1px solid var(--edge);
+  background: var(--bg);
+}
+.sup-tab {
+  appearance: none; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 12.5px; color: var(--ghost-fg);
+  padding: 7px 12px 8px; border-bottom: 2px solid transparent;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+}
+.sup-tab:hover { color: var(--title); }
+.sup-tab.on { color: var(--accent-t); border-bottom-color: var(--accent); font-weight: 600; }
+.sup-badge {
+  min-width: 16px; padding: 0 4px; border-radius: 8px; font-size: 10.5px; line-height: 15px;
+  background: var(--accent-l); color: var(--accent-t); text-align: center; font-weight: 600;
+}
+.sup-badge.zero { opacity: .45; }
+.sup-tabs-flex { flex: 1; }
+.sup-hint { font-size: 11px; color: var(--ghost-fg); opacity: .8; padding-right: 6px; }
+
+/* ---- 面板滚动区(顶替 .messages 的滚动) ---- */
+.sup-scroll {
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+  padding: 14px 18px 40px; background: var(--bg);
+}
+.sup-empty { color: var(--ghost-fg); font-size: 12.5px; padding: 14px 4px; opacity: .8; }
+.sup-note { font-size: 12px; color: var(--ghost-fg); margin: 4px 0 10px; line-height: 1.6; }
+.sup-note code, .sup-wdir {
+  font-family: var(--mono, ui-monospace, Consolas, monospace); font-size: 11.5px;
+  background: var(--ghost-bg); padding: 1px 5px; border-radius: 4px;
+}
+
+/* ---- 边界配置条 ---- */
+.sup-cfg { border: 1px solid var(--edge); border-radius: 10px; margin-bottom: 12px; background: var(--surface); overflow: hidden; }
+.sup-cfg-head {
+  width: 100%; display: flex; align-items: center; gap: 10px; cursor: pointer;
+  border: 0; background: none; font: inherit; text-align: left; padding: 9px 12px;
+}
+.sc-title { font-size: 12.5px; font-weight: 700; color: var(--title); }
+.sc-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.sc-chip {
+  font-size: 11px; color: var(--ghost-fg); background: var(--ghost-bg);
+  border-radius: 6px; padding: 2px 7px; white-space: nowrap;
+}
+.sc-caret { font-size: 10px; color: var(--ghost-fg); }
+.sup-cfg-body {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px; padding: 4px 12px 12px; border-top: 1px dashed var(--edge);
+}
+.sup-cfg-body.wide, .sup-cfg-body label.wide { grid-column: span 2; }
+.sup-cfg-body label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--ghost-fg); }
+.sup-cfg-body input {
+  font: inherit; font-size: 12.5px; color: var(--text); background: var(--bg);
+  border: 1px solid var(--edge); border-radius: 7px; padding: 6px 8px; min-width: 0;
+}
+.sup-cfg-body input:focus { outline: none; border-color: var(--accent-b); }
+.sup-cfg-body .btn { align-self: end; }
+
+/* ---- Workers 卡网格 ---- */
+.sup-wgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; align-items: start; }
+.sup-wcard { border: 1px solid var(--edge); border-radius: 10px; background: var(--surface); padding: 10px 12px; }
+.sup-wcard.live { border-color: var(--accent-b); }
+.sup-whead { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.sup-whead b { font-size: 13px; color: var(--title); }
+.sup-wmeta { font-size: 11px; color: var(--ghost-fg); margin-left: auto; white-space: nowrap; }
+.sup-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ghost-bg-h); flex: 0 0 auto; }
+.sup-dot.on { background: var(--ok-dot); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok-dot) 18%, transparent); }
+.sup-tag {
+  font-size: 10.5px; border-radius: 5px; padding: 1px 6px; white-space: nowrap;
+  background: var(--ghost-bg); color: var(--ghost-fg);
+}
+.sup-tag.live, .sup-tag.active, .sup-tag.running, .sup-tag.delivered { background: var(--accent-l); color: var(--accent-t); }
+.sup-tag.retired, .sup-tag.closed, .sup-tag.exited { opacity: .55; }
+.sup-tag.imm { background: var(--amber-l); color: var(--amber-t); }
+.sup-tag.buf, .sup-tag.batched, .sup-tag.pending, .sup-tag.queued { background: var(--blue-l); color: var(--blue-t); }
+.sup-tag.a-super { background: var(--accent-l); color: var(--accent-t); }
+.sup-tag.a-human { background: var(--amber-l); color: var(--amber-t); }
+.sup-tag.a-runner { background: var(--ghost-bg); color: var(--ghost-fg); }
+.sup-tag.a-system { background: var(--red-l); color: var(--red-t); }
+.sup-wsessions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.sup-sess {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font: inherit;
+  font-size: 11.5px; color: var(--accent-t); background: var(--accent-l);
+  border: 0; border-radius: 6px; padding: 3px 8px; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sup-sess:hover { background: var(--accent-h); }
+.sup-sess .sup-dot { width: 6px; height: 6px; }
+.sup-sess-st { opacity: .55; font-size: 10px; }
+.sup-wbody { margin-top: 10px; border-top: 1px dashed var(--edge); padding-top: 8px; }
+.sup-wdir { display: block; margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sup-label { display: block; font-size: 11px; color: var(--ghost-fg); margin: 6px 0 4px; }
+.sup-wbody textarea, .sup-wrow input {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--edge); border-radius: 7px; padding: 6px 8px; resize: vertical;
+}
+.sup-wrow { display: flex; gap: 8px; align-items: end; margin-top: 8px; }
+.sup-wrow .sup-label { margin: 0 0 4px; }
+.sup-wrow input { flex: 1; }
+
+/* ---- 表格 ---- */
+.sup-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sup-table th {
+  text-align: left; font-weight: 600; font-size: 11px; color: var(--ghost-fg);
+  padding: 6px 8px; border-bottom: 1px solid var(--edge); white-space: nowrap;
+}
+.sup-table td { padding: 6px 8px; border-bottom: 1px solid color-mix(in srgb, var(--edge) 55%, transparent); vertical-align: top; }
+.sup-table tr.off td { opacity: .5; }
+.sup-table tr.onrun { background: var(--accent-l); }
+.sup-table .mono { font-family: var(--mono, ui-monospace, Consolas, monospace); font-size: 11.5px; }
+.sup-table .wrap { max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
+.sup-table .dim { color: var(--ghost-fg); }
+.sup-table .ok { color: var(--ok-dot); }
+.sup-table .bad { color: var(--red-t); }
+.sup-histrow td { background: var(--card-a); }
+.sup-hist { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; font-size: 11.5px; }
+.sup-hist .t { color: var(--ghost-fg); white-space: nowrap; }
+.sup-hist pre { margin: 0; flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-all; font-size: 11px; color: var(--ghost-fg); }
+
+/* 启停开关 */
+.sup-sw {
+  width: 30px; height: 17px; border-radius: 9px; border: 0; cursor: pointer; padding: 2px;
+  background: var(--track); transition: background .15s;
+}
+.sup-sw span { display: block; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.sup-sw.on { background: var(--accent-btn); }
+.sup-sw.on span { transform: translateX(13px); }
+.sup-linkbtn {
+  border: 0; background: none; cursor: pointer; font: inherit; font-size: 11.5px;
+  color: var(--accent-t); padding: 0 2px;
+}
+.sup-linkbtn:hover { text-decoration: underline; }
+
+/* ---- 消息通道 ---- */
+.sup-chandash { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.sup-kpi {
+  border: 1px solid var(--edge); border-radius: 10px; background: var(--surface);
+  padding: 8px 14px; display: flex; flex-direction: column; min-width: 84px;
+}
+.sup-kpi b { font-size: 18px; color: var(--title); }
+.sup-kpi span { font-size: 11px; color: var(--ghost-fg); }
+.sup-colt { font-size: 11.5px; font-weight: 700; color: var(--ghost-fg); margin: 12px 0 6px; }
+.sup-chan2 { margin-bottom: 4px; }
+.sup-msg {
+  display: flex; gap: 8px; align-items: baseline; padding: 5px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--edge) 50%, transparent); font-size: 12px;
+}
+.sup-msg-src {
+  flex: 0 0 auto; font-size: 10.5px; border-radius: 5px; padding: 1px 6px;
+  background: var(--ghost-bg); color: var(--ghost-fg);
+}
+.sup-msg-src.s-worker { background: var(--accent-l); color: var(--accent-t); }
+.sup-msg-src.s-schedule { background: var(--blue-l); color: var(--blue-t); }
+.sup-msg-src.s-queue { background: var(--amber-l); color: var(--amber-t); }
+.sup-msg-src.s-system { background: var(--red-l); color: var(--red-t); }
+.sup-msg-t { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.sup-msg-c { flex: 0 0 auto; font-size: 10.5px; color: var(--ghost-fg); }
+
+/* ---- 审计过滤 ---- */
+.sup-filter { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.sup-chipbtn {
+  border: 1px solid var(--edge); background: var(--surface); border-radius: 14px; cursor: pointer;
+  font: inherit; font-size: 11.5px; color: var(--ghost-fg); padding: 3px 11px;
+}
+.sup-chipbtn.on { border-color: var(--accent-b); background: var(--accent-l); color: var(--accent-t); font-weight: 600; }
+.sup-filter input {
+  flex: 1; min-width: 140px; max-width: 300px; font: inherit; font-size: 12px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--edge); border-radius: 14px; padding: 4px 12px;
+}
+.sup-count { font-size: 11px; color: var(--ghost-fg); }
+
+/* ---- 侧栏入口:样式对齐 .nav-btn(但不带它的 margin-top:auto,要紧跟新建按钮) ---- */
+.super-entry {
+  margin: 10px var(--side-inset, 12px) 0; height: 34px; padding: 0 11px;
+  display: flex; align-items: center; gap: 9px;
+  background: var(--surface); border: 1px solid var(--border2); border-radius: 10px; cursor: pointer;
+  color: var(--text2); font-size: 13.5px; font-family: inherit; text-align: left;
+}
+.super-entry:hover { background: var(--hover); color: var(--text); }
+.super-entry .nb-ico {
+  width: 15px; height: 15px; flex: 0 0 15px;
+  fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+  opacity: .8;
+}
+.super-entry.on {
+  background: var(--accent-l); border-color: var(--accent-b); color: var(--accent-t); font-weight: 600;
+}

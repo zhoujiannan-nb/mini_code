@@ -585,7 +585,14 @@ func (s *Session) preparePromptTools() (*agent.AgentConfig, *PromptBuilder, *too
 		cd.SetDir(ex.WorkingDir())
 	}
 	isRootSession := s.record.ParentID == ""
-	if cfg.Mode == "primary" && s.manager != nil && isRootSession {
+	if s.record.AgentRole == "super" && s.manager != nil && s.manager.Super() != nil {
+		// The Router role replaces the sub-agent orchestration surface with
+		// its own super_* tools: a super session dispatches workers, it does
+		// not fork sub-agents. One constant schema per session, registered on
+		// every task like EnableAgentTools, so the request prefix is stable.
+		pb.goalStore = s.GoalState()
+		s.manager.Super().RegisterTools(pb.Tools, s.ID())
+	} else if cfg.Mode == "primary" && s.manager != nil && isRootSession {
 		// The goal belongs to the conversation: the goal tools this enables
 		// must bind to the session's store (restored from metadata, persist
 		// hook installed), not to the per-builder throwaway one.
@@ -923,6 +930,14 @@ type SessionManager struct {
 	workersMu sync.RWMutex
 	workers   *WorkerService
 
+	// superRegistrar is the Super-Agent tool hook (wired at startup). The
+	// session package never imports package super: it only holds this
+	// interface, and the super service (which does import session) registers
+	// the super_* tools onto the prompt builder of agent_role=="super"
+	// sessions. nil = the super subsystem is off.
+	superMu          sync.RWMutex
+	superRegistrar   SuperRegistrar
+
 	// deliverHook delivers a user message to an IDLE session (i.e. starts a
 	// task); the runtime wires it to the message hub.
 	deliverMu   sync.RWMutex
@@ -1208,6 +1223,30 @@ func (m *SessionManager) Workers() *WorkerService {
 	m.workersMu.RLock()
 	defer m.workersMu.RUnlock()
 	return m.workers
+}
+
+// --- super-agent (Router) ---
+
+// SuperRegistrar is the hook the super service implements: it registers the
+// super_* orchestration tools onto the tool registry of a super session.
+// Declared here so session never depends on package super (which depends on
+// session — the interface is what breaks the cycle).
+type SuperRegistrar interface {
+	RegisterTools(reg *tools.ToolRegistry, sessionID string)
+}
+
+// SetSuperRegistrar wires the super service (nil = feature off).
+func (m *SessionManager) SetSuperRegistrar(r SuperRegistrar) {
+	m.superMu.Lock()
+	m.superRegistrar = r
+	m.superMu.Unlock()
+}
+
+// Super returns the wired super registrar (nil before wiring).
+func (m *SessionManager) Super() SuperRegistrar {
+	m.superMu.RLock()
+	defer m.superMu.RUnlock()
+	return m.superRegistrar
 }
 
 // --- mid-task user message delivery ---

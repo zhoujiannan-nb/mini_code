@@ -19,6 +19,7 @@ import { cycleThemeMode, themeLabel } from "../lib/theme.js";
 import { openSettings } from "../lib/settings.js";
 import {
   selectSession, renameSession, deleteSession, detachWorkerForNewSession, resetToNew,
+  openSuperSession,
   workerEmptyHint, workerBucketId, workerLabel, WK_OTHER,
 } from "../lib/actions.js";
 
@@ -130,6 +131,7 @@ export function Sidebar() {
   const menuOpen = useStore((s) => s.workerMenuOpen);
   const sessSort = useStore((s) => s.sessSort);
   const themeMode = useStore((s) => s.themeMode);
+  const currentRole = useStore((s) => s.currentRole);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const pickRef = useRef(null);
@@ -208,6 +210,15 @@ export function Sidebar() {
       onClick=${() => { detachWorkerForNewSession(); resetToNew(); }}>
       <span class="nb-plus">＋</span><span class="nb-label">新建会话</span>
       <kbd class="nb-kbd">${IS_MAC ? "⌘ K" : "Ctrl K"}</kbd>
+    </button>
+    <button class=${"super-entry" + (currentRole === "super" ? " on" : "")} id="btn-super"
+      title="Super-Agent:分派任务的总控会话(worker / 定时任务 / 消息通道 / 进程 / 审计)"
+      onClick=${openSuperSession}>
+      <svg class="nb-ico" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="5" r="2.3" /><circle cx="5" cy="18" r="2.3" /><circle cx="19" cy="18" r="2.3" />
+        <path d="M12 7.3 6.4 15.9M12 7.3l5.6 8.6M7.3 18h9.4" />
+      </svg>
+      Super-Agent
     </button>
     <div class="sess-head">
       <span class="sh-label" title=${"历史会话 · 当前工作区:" + wkName}>${wkName}</span>

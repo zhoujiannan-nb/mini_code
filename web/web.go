@@ -181,6 +181,9 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("POST /goal", s.handleGoal)
 
+	// --- super-agent (Router 子系统，可选：未 attach 时全部 503) ---
+	s.registerSuperRoutes(mux)
+
 	return mux
 }
 

@@ -120,6 +120,53 @@ func WorkAgentConfig() *AgentConfig {
 	}
 }
 
+// SuperAgentConfig is the Router persona: it never does the work itself. The
+// tool surface is deliberately tiny — read-only inspection (read / grep / glob)
+// plus the super_* orchestration tools registered by the super service; the
+// doers (write / edit / pwsh / subagents / goals) are explicitly denied so the
+// runtime gate blocks them even if a schema ever leaks through registration.
+func SuperAgentConfig() *AgentConfig {
+	prompt := LoadPrompt("super.txt")
+	return &AgentConfig{
+		Name:        "super",
+		Description: "Resident router agent: dispatches tasks to super workers it manages, never executes work itself.",
+		Prompt:      prompt,
+		Mode:        "primary",
+		Permissions: mergePermissions(map[string]interface{}{
+			// read-only inspection so the router can make dispatch calls
+			"read":  "allow",
+			"grep":  "allow",
+			"glob":  "allow",
+			"todo_write": "allow",
+			// orchestration surface (registered per-task by the super service)
+			"super_workers": "allow",
+			"super_sessions": "allow",
+			"super_queue":   "allow",
+			"super_audit":   "allow",
+			// everything that does actual work is denied
+			"write":          "deny",
+			"edit":           "deny",
+			"pwsh":           "deny",
+			"read_image":     "deny",
+			"skill":          "deny",
+			"web_fetch":      "deny",
+			"working_directory": "deny",
+			"job_output":     "deny",
+			"job_list":       "deny",
+			"job_kill":       "deny",
+			"subagent":       "deny",
+			"subagent_fork":  "deny",
+			"send_message":   "deny",
+			"list_agents":    "deny",
+			"wait_agent":     "deny",
+			"create_goal":    "deny",
+			"get_goal":       "deny",
+			"update_goal":    "deny",
+			"workflow":       "deny",
+		}),
+	}
+}
+
 var (
 	customAgents     map[string]*AgentConfig
 	customAgentsOnce sync.Once
@@ -173,6 +220,7 @@ func getCustomAgents() map[string]*AgentConfig {
 var agentFactories = map[string]func() *AgentConfig{
 	"build": BuildAgentConfig,
 	"work":  WorkAgentConfig,
+	"super": SuperAgentConfig,
 }
 
 func GetAgentConfig(role string) (*AgentConfig, error) {

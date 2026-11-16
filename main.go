@@ -34,6 +34,7 @@ import (
 	"github.com/user/mini_code/config"
 	"github.com/user/mini_code/provider"
 	"github.com/user/mini_code/session"
+	"github.com/user/mini_code/super"
 	"github.com/user/mini_code/util"
 	"github.com/user/mini_code/web"
 )
@@ -66,6 +67,7 @@ type runtime struct {
 	hub       *channels.Hub
 	subagents *session.SubagentService
 	workers   *session.WorkerService
+	superSvc  *super.Service
 	approvals *approval.Service
 }
 
@@ -166,6 +168,15 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 	workers := session.NewWorkerService(mgr.GetStore(), mgr)
 	mgr.SetWorkers(workers)
 
+	// Super-Agent (Router 子系统): super_* tables ride the same SQLite
+	// connection as sessions; the manager gets the tool-registration hook,
+	// the HTTP layer gets the panel API, and the runner (script schedules +
+	// channel batch timeout + queue pickup) lives with the process.
+	superSvc := super.NewService(mgr.GetStore().DB(), mgr, hub)
+	mgr.SetSuperRegistrar(superSvc)
+	web.AttachSuperService(superSvc)
+	go superSvc.Start(context.Background())
+
 	return &runtime{
 		cfg:       cfg,
 		clients:   allClients,
@@ -173,6 +184,7 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 		hub:       hub,
 		subagents: subagents,
 		workers:   workers,
+		superSvc:  superSvc,
 		approvals: approvals,
 	}, nil
 }
