@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -768,12 +769,142 @@ func (s *Service) HistSnapshot() map[string][]ExecRec {
 
 // --- registration hook (implements session.SuperRegistrar) ---
 
+// CreateTaskSchedule registers a natural-language periodic task: the runner
+// re-delivers `task` onto the message channel every `every` period (buffered
+// by default — the router decides who executes when it arrives). No script,
+// no code: the schedule is only the reminder; the work still goes to workers.
+func (s *Service) CreateTaskSchedule(name, task, every, mode string) (*Schedule, error) {
+	name = sanitizeTaskName(name)
+	if name == "" {
+		return nil, fmt.Errorf("name 必填（英文短名，如 repo-pull-check）")
+	}
+	task = strings.TrimSpace(task)
+	if task == "" {
+		return nil, fmt.Errorf("task 必填：到点发给通道的一句话任务（给未来的你自己）")
+	}
+	everySec, err := parseEvery(every)
+	if err != nil {
+		return nil, err
+	}
+	if mode != "imm" {
+		mode = "buf"
+	}
+	file := "task-" + name + "-" + util.RandomHex(3)
+	sc := &Schedule{File: file, Kind: "task", EverySec: everySec, Mode: mode, Enabled: true, Note: task}
+	if err := s.store.UpsertSchedule(sc); err != nil {
+		return nil, err
+	}
+	s.audit("super", "schedule.task.create", file,
+		fmt.Sprintf("每 %ds · %s 通道 · %s", everySec, mode, truncate(task, 120)), file)
+	return sc, nil
+}
+
+// DeleteTaskSchedule removes a task-type schedule. Script-type schedules are
+// owned by the scripts folder (a human deletes the file) — super may not.
+func (s *Service) DeleteTaskSchedule(file string) error {
+	sc, err := s.store.GetSchedule(file)
+	if err != nil || sc == nil {
+		return fmt.Errorf("计划不存在: %s", file)
+	}
+	if sc.Kind != "task" {
+		return fmt.Errorf("%s 是脚本计划，由人类在 scripts 目录管理，你不能删", file)
+	}
+	if err := s.store.DeleteSchedule(file); err != nil {
+		return err
+	}
+	s.audit("super", "schedule.task.delete", file, truncate(sc.Note, 120), file)
+	return nil
+}
+
+// sanitizeTaskName keeps schedule keys filesystem-safe and predictable.
+func sanitizeTaskName(name string) string {
+	var b strings.Builder
+	lastDash := true
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+		} else if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+var everyUnit = map[string]int{"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+// parseEvery accepts "90m" / "3h" / "2h30m" / "1d" / bare seconds and
+// clamps into [60s, 30d]. Empty means the 1h default.
+func parseEvery(v string) (int, error) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if v == "" {
+		return 3600, nil
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		if n < 60 {
+			n = 60
+		}
+		if n > 30*86400 {
+			return 0, fmt.Errorf("every 超过 30 天上限: %s", v)
+		}
+		return n, nil
+	}
+	total, seen, num := 0, false, ""
+	flush := func() error {
+		if num == "" {
+			return nil
+		}
+		n, err := strconv.Atoi(num)
+		if err != nil {
+			return fmt.Errorf("every 格式不对: %s（例 3h / 90m / 2h30m）", v)
+		}
+		total += n
+		num = ""
+		return nil
+	}
+	for _, r := range v {
+		switch {
+		case r >= '0' && r <= '9':
+			num += string(r)
+		case r == 's' || r == 'm' || r == 'h' || r == 'd':
+			if num == "" {
+				return 0, fmt.Errorf("every 格式不对: %s（单位前要带数字）", v)
+			}
+			n, err := strconv.Atoi(num)
+			if err != nil {
+				return 0, fmt.Errorf("every 格式不对: %s", v)
+			}
+			total += n * everyUnit[string(r)]
+			seen = true
+			num = ""
+		case r == ' ' || r == ',':
+			if err := flush(); err != nil {
+				return 0, err
+			}
+		default:
+			return 0, fmt.Errorf("every 格式不对: %s（只认 s/m/h/d）", v)
+		}
+	}
+	if !seen {
+		return 0, fmt.Errorf("every 格式不对: %s（例 3h / 90m / 2h30m）", v)
+	}
+	if total < 60 {
+		total = 60
+	}
+	if total > 30*86400 {
+		return 0, fmt.Errorf("every 超过 30 天上限: %s", v)
+	}
+	return total, nil
+}
+
 // RegisterTools adds the super_* orchestration tools to one session's
 // registry. Called per task for agent_role=="super" sessions only.
 func (s *Service) RegisterTools(reg *tools.ToolRegistry, sessionID string) {
 	reg.Register(newWorkersTool(s))
 	reg.Register(newSessionsTool(s))
 	reg.Register(newQueueTool(s))
+	reg.Register(newScheduleTool(s))
 	reg.Register(newAuditTool(s))
 }
 

@@ -19,6 +19,11 @@ const scriptTimeout = 120 * time.Second
 // runnerLoop is the super runner tick: script schedules, the batch timeout
 // flush and queue pickup all hang off it. It lives inside the minicode
 // process lifetime (human requirement: minicode 生命周期常驻调度).
+//
+// 身份说明:runner 是 super 子系统自带的基础设施(本进程里的 15s 定时器),
+// 不是 super worker,也不是 super agent 在"干活"。它只做三件事:按期跑脚本/
+// 投递任务文本、兜底冲刷缓冲、捞起排队任务。真正的执行永远发生在人类或
+// super 让 worker 做的地方。
 func (s *Service) runnerLoop(ctx context.Context) {
 	s.startedAt = time.Now()
 	s.discoverSchedules()
@@ -87,23 +92,30 @@ func (s *Service) runDue() {
 	}
 }
 
-// ToggleSchedule is the human per-script switch (actor=human audited).
-func (s *Service) ToggleSchedule(file string) (bool, error) {
+// ToggleSchedule is the per-schedule switch (audited under the caller's
+// actor: "human" from the panel, "super" from its own tool).
+func (s *Service) ToggleSchedule(file, actor string) (bool, error) {
 	sc, err := s.store.GetSchedule(file)
 	if err != nil || sc == nil {
-		return false, fmt.Errorf("脚本计划不存在: %s", file)
+		return false, fmt.Errorf("计划不存在: %s", file)
 	}
 	on := !sc.Enabled
 	if err := s.store.ScheduleSetEnabled(file, on); err != nil {
 		return false, err
 	}
-	s.audit("human", "human.config.script", file, "enabled="+fmt.Sprint(on), file)
+	if actor == "" {
+		actor = "human"
+	}
+	s.audit(actor, "schedule.toggle", file, "enabled="+fmt.Sprint(on), file)
 	return on, nil
 }
 
-// RunScheduleNow is the human ▶-run-once trigger.
-func (s *Service) RunScheduleNow(file string) {
-	s.audit("human", "human.trigger", file, "立即跑一次（actor=human）", file)
+// RunScheduleNow fires one schedule immediately (auto/manual trigger).
+func (s *Service) RunScheduleNow(file, actor string) {
+	if actor == "" {
+		actor = "human"
+	}
+	s.audit(actor, "schedule.run_now", file, "立即触发一次", file)
 	go s.runScript(file, "manual")
 }
 
@@ -125,12 +137,17 @@ func (s *Service) runScript(file, trigger string) {
 	}()
 
 	abs := filepath.Join(s.scripts, file)
-	if st, err := os.Stat(abs); err != nil || st.IsDir() {
-		s.audit("runner", "proc.fail", file, "脚本文件不存在", file)
-		return
-	}
 	sc, err := s.store.GetSchedule(file)
 	if err != nil || sc == nil {
+		return
+	}
+	if sc.Kind == "task" {
+		// 任务型计划：不跑程序，到点把任务文本投递进消息通道。
+		s.deliverTaskSchedule(sc, trigger)
+		return
+	}
+	if st, err := os.Stat(abs); err != nil || st.IsDir() {
+		s.audit("runner", "proc.fail", file, "脚本文件不存在", file)
 		return
 	}
 	ext := strings.ToLower(filepath.Ext(file))
@@ -213,6 +230,33 @@ func (s *Service) runScript(file, trigger string) {
 			slog.Warn("super: script output not published", "file", file, "err", err)
 		}
 	}
+}
+
+// deliverTaskSchedule fires one task-type schedule: the task text lands on
+// the message channel (buffered unless the schedule opts into imm), and the
+// router picks it up on the next flush to decide which worker executes it.
+// This is how a "scheduled job" exists without super ever writing code.
+func (s *Service) deliverTaskSchedule(sc *Schedule, trigger string) {
+	mode := "buf"
+	if sc.Mode == "imm" {
+		mode = "imm"
+	}
+	payload := fmt.Sprintf("【定时任务·%s】%s\n（来自计划 %s，每 %ds 触发，trigger=%s。请按分派纪律安排 worker 执行。）",
+		mode, sc.Note, sc.File, sc.EverySec, trigger)
+	if _, err := s.Publish(mode, sc.File, payload, "schedule"); err != nil {
+		s.audit("runner", "schedule.deliver.fail", sc.File, truncate(err.Error(), 150), sc.File)
+		return
+	}
+	_ = s.store.ScheduleSetResult(sc.File, time.Now().Format(time.RFC3339), 0)
+	s.histMu.Lock()
+	rec := ExecRec{Ts: time.Now().Format("15:04:05"), Exit: 0, Ms: 0, Tail: "已投递" + mode + "通道"}
+	s.hist[sc.File] = append([]ExecRec{rec}, s.hist[sc.File]...)
+	if len(s.hist[sc.File]) > 8 {
+		s.hist[sc.File] = s.hist[sc.File][:8]
+	}
+	s.histMu.Unlock()
+	s.audit("runner", "schedule.deliver", sc.File,
+		fmt.Sprintf("%s · 每 %ds · %s · %s", mode, sc.EverySec, trigger, truncate(sc.Note, 100)), sc.File)
 }
 
 func lastLine(s string) string {

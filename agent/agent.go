@@ -142,6 +142,7 @@ func SuperAgentConfig() *AgentConfig {
 			"super_workers": "allow",
 			"super_sessions": "allow",
 			"super_queue":   "allow",
+			"super_schedule": "allow",
 			"super_audit":   "allow",
 			// everything that does actual work is denied
 			"write":          "deny",

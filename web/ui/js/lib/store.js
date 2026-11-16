@@ -82,6 +82,7 @@ export const initialState = {
   superOwned: false,     // 当前是 super 旗下 worker 会话(侧栏 Super 入口保持高亮)
   superTab: "chat",      // chat | workers | sched | chan | proc | audit
   superOv: null,         // GET /api/super/overview 的快照(仅 super 会话打开时轮询)
+  superDrawer: null,     // {id,title,rows,loading,active,error} —— Workers 页签会话侧抽屉(不离开面板)
   boot: { dir: "", legacyDir: "", themes: [], play: null, picked: "" },
   plugins: {
     list: [], dir: "", slots: [], catalog: [], catalogMsg: "", repo: "",
@@ -260,6 +261,7 @@ export function reduce(st, action) {
         currentRole: "",
         superOwned: false,
         superTab: "chat",
+        superDrawer: null,
         tasksOpen: false,
       });
     }

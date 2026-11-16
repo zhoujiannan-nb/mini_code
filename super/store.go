@@ -509,6 +509,14 @@ func (s *Store) ScheduleSetEnabled(file string, on bool) error {
 	return err
 }
 
+// DeleteSchedule drops a schedule row (task-type only; guarded by the
+// service layer). The runner loop never re-adds task rows — only real
+// script files get rediscovered.
+func (s *Store) DeleteSchedule(file string) error {
+	_, err := s.db.Execute("DELETE FROM super_schedule WHERE file = ?", file)
+	return err
+}
+
 func (s *Store) ScheduleSetResult(file, runAt string, exit int) error {
 	_, err := s.db.Execute("UPDATE super_schedule SET last_run = ?, last_exit = ?, updated_at = ? WHERE file = ?",
 		runAt, exit, nowStr(), file)

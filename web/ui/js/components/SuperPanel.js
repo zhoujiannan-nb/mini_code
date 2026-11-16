@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import htm from "htm";
 
 import { ROUTES, getJSON, postJSON } from "../lib/api.js";
-import { useStore, setState, toast } from "../lib/store.js";
+import { useStore, setState, getState, toast } from "../lib/store.js";
 import { relTime } from "../lib/format.js";
 import { selectSession } from "../lib/actions.js";
 
@@ -52,6 +52,37 @@ async function loadOv() {
   } catch (e) { /* 静默:轮询会自愈,失败刷屏反而干扰 */ }
 }
 
+/* ---- worker 会话侧抽屉:在面板内看会话,不离开 super 页签 ---- */
+
+function msgText(m) {
+  if (typeof m.content === "string") return m.content;
+  if (Array.isArray(m.content)) return m.content.filter((p) => p && p.type === "text").map((p) => p.text || "").join("\n");
+  return "";
+}
+
+async function openSuperDrawer(id, title) {
+  setState({ superDrawer: { id, title: title || "会话", rows: null, loading: true, active: false, error: "" } });
+  await refreshSuperDrawer();
+}
+async function refreshSuperDrawer() {
+  const d = getState().superDrawer;
+  if (!d) return;
+  try {
+    const data = await getJSON(ROUTES.session(d.id));
+    const rows = (data.messages || [])
+      .filter((m) => m && (m.role === "user" || m.role === "assistant"))
+      .map((m) => ({ role: m.role, text: msgText(m) }))
+      .filter((r) => r.text.trim() !== "");
+    if (getState().superDrawer && getState().superDrawer.id === d.id) {
+      setState({ superDrawer: Object.assign({}, d, { rows, loading: false, active: !!(data.session && data.session.active), error: "" }) });
+    }
+  } catch (e) {
+    if (getState().superDrawer && getState().superDrawer.id === d.id) {
+      setState({ superDrawer: Object.assign({}, d, { loading: false, error: e.message }) });
+    }
+  }
+}
+
 const TABS = [
   { id: "chat", label: "会话" },
   { id: "workers", label: "Workers" },
@@ -76,17 +107,37 @@ export function SuperFrame({ children }) {
     return () => clearInterval(t);
   }, [role]);
 
+  // 抽屉打开时跟着 3s 刷新会话内容(执行中的输出会动)。
+  const drawerId = useStore((s) => (s.superDrawer ? s.superDrawer.id : ""));
+  useEffect(() => {
+    if (!drawerId) return undefined;
+    const t = setInterval(refreshSuperDrawer, 3000);
+    return () => clearInterval(t);
+  }, [drawerId]);
+
   if (role !== "super") return children;
 
   const running = ((ov && ov.procs) || []).filter((p) => p.status === "running").length;
+  const liveWorkers = ov ? ((ov.workers || []).filter((w) => w.live).length) : 0;
+  const chanPending = ov ? (ov.buf_count || 0) : 0;
   const badges = {
     workers: ov ? (ov.workers || []).length : 0,
     sched: ov ? (ov.schedules || []).filter((s) => s.enabled).length : 0,
-    chan: ov ? (ov.buf_count || 0) : 0,
+    chan: chanPending,
     proc: running,
   };
 
   return html`
+    <div class="sup-banner">
+      <span class="sb-bolt">⚡</span>
+      <b class="sb-title">Super 调度中心</b>
+      <span class="sb-chip">自动</span>
+      <span class="sb-stats">Worker ${badges.workers} · 运行中 ${liveWorkers} · 通道 ${chanPending}</span>
+      <span class="sup-tabs-flex"></span>
+      <button class="sup-linkbtn" title="切到 Workers 页签:上限/默认模型/工作区根/批量N/兜底冲刷"
+        onClick=${() => setState({ superTab: "workers" })}>⚙ 边界配置</button>
+      <button class="sup-linkbtn" onClick=${() => setState({ superTab: "workers" })}>→ 去 Workers 管理</button>
+    </div>
     <div class="sup-tabs">
       ${TABS.map((t) => html`
         <button key=${t.id} class=${"sup-tab" + (tab === t.id ? " on" : "")}
@@ -108,7 +159,40 @@ export function SuperFrame({ children }) {
         ${tab === "chan" ? html`<${ChanPanel} ov=${ov}/>` : null}
         ${tab === "proc" ? html`<${ProcPanel} ov=${ov}/>` : null}
         ${tab === "audit" ? html`<${AuditPanel} ov=${ov}/>` : null}
-      </div>`}`;
+      </div>`}
+    <${SuperDrawer}/>`;
+}
+
+/* ================= worker 会话侧抽屉(不离开面板) ================= */
+
+function SuperDrawer() {
+  const d = useStore((s) => s.superDrawer);
+  if (!d) return null;
+  const close = () => setState({ superDrawer: null });
+  const rows = d.rows || [];
+  return html`<div class="sup-drawer-mask" onClick=${close}>
+    <div class="sup-drawer" onClick=${(e) => e.stopPropagation()}>
+      <div class="sd-head">
+        ${d.active ? html`<span class="sup-dot on"></span>` : null}
+        <b class="sd-title" title=${d.id}>${d.title}</b>
+        <span class=${"sup-tag " + (d.active ? "active" : "")}>${d.active ? "运行中" : "空闲"}</span>
+        <span class="sup-tabs-flex"></span>
+        <button class="sup-linkbtn" title="重拉最新消息" onClick=${refreshSuperDrawer}>⟳</button>
+        <button class="sup-linkbtn" title="整页打开(会离开面板,侧栏 Super 入口可回)"
+          onClick=${() => selectSession(d.id).then(() => setState({ superOwned: true, superDrawer: null }))}>整页打开 ↗</button>
+        <button class="sd-x" title="收起" onClick=${close}>✕</button>
+      </div>
+      <div class="sd-body">
+        ${d.loading && !rows.length ? html`<div class="sup-empty">加载中…</div>` : null}
+        ${d.error ? html`<div class="sup-empty">拉取失败:${d.error}</div>` : null}
+        ${!d.loading && !d.error && !rows.length ? html`<div class="sup-empty">还没有消息</div>` : null}
+        ${rows.map((r, i) => html`<div key=${i} class=${"sd-msg sd-" + r.role}>
+          <div class="sd-role">${r.role === "user" ? "人类/来件" : "worker"}</div>
+          <div class="sd-text">${r.text}</div>
+        </div>`)}
+      </div>
+    </div>
+  </div>`;
 }
 
 /* ================= 配置条(人类配边界,全部审计) ================= */
@@ -175,8 +259,8 @@ function WorkersPanel({ ov }) {
           </div>
           <div class="sup-wsessions">
             ${sess.map((x) => html`
-              <button key=${x.id} class=${"sup-sess" + (x.active ? " act" : "")} title=${"打开会话 " + x.id}
-                onClick=${() => selectSession(x.id).then(() => setState({ superOwned: true }))}>
+              <button key=${x.id} class=${"sup-sess" + (x.active ? " act" : "")} title=${"在侧边抽屉打开会话(不离开面板)"}
+                onClick=${() => openSuperDrawer(x.id, x.title || "会话")}>
                 ${x.active ? html`<span class="sup-dot on"></span>` : null}${x.title || "会话"}
                 <span class="sup-sess-st">${x.status === "active" ? "开" : "关"}</span>
               </button>`)}
@@ -206,33 +290,40 @@ function SchedPanel({ ov }) {
   if (!ov) return html`<div class="sup-empty">加载中…</div>`;
   const list = ov.schedules || [];
   return html`
-    <div class="sup-note">脚本放进 <code>${(ov.scripts_dir || "") + "\\scripts"}</code> 即自动上线(每 5 分钟扫一次);
-      stdout 非空自动进消息通道。启停与手动执行都以 human 身份记审计。</div>
+    <div class="sup-note">两类计划:<b>任务型</b>由 Super-Agent 用 super_schedule 登记(任务=一句话,到点投递进消息通道,由 super 分派 worker,不写任何脚本);
+      <b>脚本型</b>把 .ps1/.py/.bat 放进 <code>${(ov.scripts_dir || "") + "\\scripts"}</code> 即自动上线(每 5 分钟扫一次,stdout 进通道)。
+      这里的启停/手动触发都以 human 身份记审计。</div>
     <table class="sup-table">
-      <thead><tr><th></th><th>脚本</th><th>周期</th><th>通道</th><th>上次</th><th>结果</th><th></th></tr></thead>
+      <thead><tr><th></th><th>任务 / 脚本</th><th>周期</th><th>通道</th><th>上次</th><th>结果</th><th></th></tr></thead>
       <tbody>
-        ${list.length === 0 ? html`<tr><td colspan="7" class="sup-empty">scripts/ 目录还是空的</td></tr>` : null}
+        ${list.length === 0 ? html`<tr><td colspan="7" class="sup-empty">还没有计划 —— 吩咐 Super-Agent「每 3 小时做某某」即可,或往 scripts/ 放脚本</td></tr>` : null}
         ${list.map((s) => {
+          const isTask = s.kind === "task";
           const hist = ((ov.hist || {})[s.file] || []);
           const open = openFile === s.file;
           return html`<${Fragment} key=${s.file}>
             <tr class=${s.enabled ? "" : " off"}>
               <td><button class=${"sup-sw" + (s.enabled ? " on" : "")} title=${s.enabled ? "停用" : "启用"}
                 onClick=${() => post(ROUTES.superSchedToggle, { file: s.file })}><span></span></button></td>
-              <td class="mono" title=${s.file}>${s.file}</td>
-              <td>${Math.round(s.every_sec / 60)}min</td>
+              <td class="mono" title=${isTask ? s.note : s.file}>
+                <span class=${"sup-tag " + (isTask ? "task" : "script")}>${isTask ? "任务" : "脚本"}</span>
+                ${isTask ? html`<span class="sup-taskbody">${s.note || s.file}</span>` : s.file}
+              </td>
+              <td>${everyHuman(s.every_sec)}</td>
               <td><span class=${"sup-tag " + s.mode}>${s.mode === "imm" ? "立即" : "批次"}</span></td>
               <td title=${full(s.last_run)}>${s.last_run ? relTime(s.last_run) : "从未"}</td>
               <td class=${s.last_exit === 0 ? "ok" : (s.last_run ? "bad" : "")}>
-                ${s.last_run ? "exit " + s.last_exit : "—"}
+                ${s.last_run ? (isTask ? "已投递" : "exit " + s.last_exit) : "—"}
                 ${hist.length ? html` <button class="sup-linkbtn" onClick=${() => setOpenFile(open ? "" : s.file)}>${open ? "收起" : "历史 " + hist.length}</button>` : null}
               </td>
-              <td><button class="sup-linkbtn" title="立即跑一次" onClick=${() => post(ROUTES.superSchedRun, { file: s.file }, "已触发:" + s.file)}>▶ 跑一次</button></td>
+              <td><button class="sup-linkbtn" title=${isTask ? "立即投一条消息到通道" : "立即跑一次"}
+                onClick=${() => post(ROUTES.superSchedRun, { file: s.file }, "已触发:" + s.file)}>
+                ▶ ${isTask ? "投一次" : "跑一次"}</button></td>
             </tr>
             ${open ? html`<tr class="sup-histrow"><td colspan="7">
               ${hist.map((r, i) => html`<div class="sup-hist" key=${i}>
                 <span class="t">${full(r.ts)}</span>
-                <span class=${r.exit === 0 ? "ok" : "bad"}>exit ${r.exit}</span>
+                <span class=${r.exit === 0 ? "ok" : "bad"}>${isTask ? "ok" : "exit " + r.exit}</span>
                 <span>${r.ms}ms</span>
                 <pre title=${r.tail}>${(r.tail || "").slice(0, 400)}</pre>
               </div>`)}
@@ -241,6 +332,22 @@ function SchedPanel({ ov }) {
         })}
       </tbody>
     </table>`;
+}
+
+// 通道来件的 src 归一:task-xxx→任务、sw-/会话→worker、脚本扩展名→脚本。
+function srcKind(src) {
+  if (!src) return "system";
+  if (src.startsWith("task-")) return "schedule";
+  if (/\.(ps1|py|bat|cmd|exe)$/i.test(src)) return "script";
+  if (src === "schedule") return "schedule";
+  return src;
+}
+
+// every_sec → "3h" / "90m" / "45s" 这样的人类记法。
+function everyHuman(sec) {
+  if (sec >= 3600 && sec % 3600 === 0) return sec / 3600 + "h";
+  if (sec >= 60 && sec % 60 === 0) return sec / 60 + "min";
+  return sec + "s";
 }
 
 /* ================= 消息通道 ================= */
@@ -263,7 +370,7 @@ function ChanPanel({ ov }) {
       <div class="sup-colt">立即通道</div>
       ${imm.length === 0 ? html`<div class="sup-empty">暂无</div>` : null}
       ${imm.map((m) => html`<div class="sup-msg" key=${m.id} title=${full(m.created_at)}>
-        <span class=${"sup-msg-src s-" + m.src}>${m.src}</span>
+        <span class=${"sup-msg-src s-" + srcKind(m.src)}>${srcKind(m.src)}</span>
         <span class="sup-msg-t">${m.payload}</span>
         <span class="sup-msg-c">${clock(m.created_at)}</span>
       </div>`)}
@@ -272,7 +379,7 @@ function ChanPanel({ ov }) {
       <div class="sup-colt">缓冲批次(冲刷前只有这里能看到)</div>
       ${buf.length === 0 ? html`<div class="sup-empty">空</div>` : null}
       ${buf.map((m) => html`<div class="sup-msg" key=${m.id} title=${full(m.created_at)}>
-        <span class=${"sup-msg-src s-" + m.src}>${m.src}</span>
+        <span class=${"sup-msg-src s-" + srcKind(m.src)} title=${m.src}>${srcKind(m.src)}</span>
         <span class="sup-msg-t">${m.payload}</span>
         <span class="sup-msg-c">${clock(m.created_at)}</span>
       </div>`)}
@@ -298,7 +405,7 @@ function ProcPanel({ ov }) {
   if (!ov) return html`<div class="sup-empty">加载中…</div>`;
   const ps = ov.procs || [];
   return html`
-    <div class="sup-note">runner 心跳 15s。全量输出归档在 <code>${ov.outbox_dir || ""}</code>;
+    <div class="sup-note">runner 是 minicode 进程常驻的定时器(基础设施),执行动作的不是 super、也不是 worker。runner 心跳 15s。全量输出归档在 <code>${ov.outbox_dir || ""}</code>;
       这里保留最近 100 条进程记录(stdout 给前 400 字符)。</div>
     <table class="sup-table">
       <thead><tr><th>开始</th><th>进程</th><th>PID</th><th>状态</th><th>exit</th><th>时长</th><th>输出</th></tr></thead>

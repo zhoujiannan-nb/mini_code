@@ -115,7 +115,7 @@ func (s *server) handleSuperScheduleToggle(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "file is required")
 		return
 	}
-	on, err := superS.ToggleSchedule(req.File)
+	on, err := superS.ToggleSchedule(req.File, "human")
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -132,7 +132,7 @@ func (s *server) handleSuperScheduleRun(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "file is required")
 		return
 	}
-	superS.RunScheduleNow(req.File)
+	superS.RunScheduleNow(req.File, "human")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "triggered"})
 }
 

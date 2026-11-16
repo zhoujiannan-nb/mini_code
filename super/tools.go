@@ -225,6 +225,92 @@ func (t *queueTool) Execute(ctx context.Context, params map[string]interface{}) 
 	}
 }
 
+// --- super_schedule ---
+
+type scheduleTool struct{ s *Service }
+
+func newScheduleTool(s *Service) tools.Tool { return &scheduleTool{s} }
+
+func (t *scheduleTool) Name() string { return "super_schedule" }
+func (t *scheduleTool) Description() string {
+	return `定时任务——你自己不写脚本、不写代码：任务就是一句话，到点由系统投递回你的消息通道，你收到后再分派给 worker 干活。
+action=create：登记一个周期任务（name 英文短名、task 到点发给未来的你的一句话、every 周期如 "3h"/"90m"/"2h30m"/"1d"、mode 可选 imm|buf，默认 buf 走缓冲批次——除非人类明说"立即"）。例：人类说"每 3 小时拉取 xx 检查更新并修复发布"，你就 create 一个 every=3h、task 原样转述这件工作的任务；到点消息进通道，你再 spawn 给合适 worker；
+action=list：查看现有任务与脚本计划；
+action=toggle：启停一个计划（file）；
+action=run：立即触发一次（file，任务型=立刻投一条消息）；
+action=delete：删除任务型计划（file；脚本型由人类删脚本，你删不了）。`
+}
+func (t *scheduleTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"action": map[string]interface{}{"type": "string", "enum": []string{"create", "list", "toggle", "run", "delete"}},
+			"name":   map[string]interface{}{"type": "string", "description": "create：英文短名，如 repo-pull-check"},
+			"task":   map[string]interface{}{"type": "string", "description": "create：到点投递的一句话任务描述"},
+			"every":  map[string]interface{}{"type": "string", "description": `create：周期，如 "3h"、"90m"、"2h30m"、"1d"（默认 1h，最短 60s）`},
+			"mode":   map[string]interface{}{"type": "string", "enum": []string{"buf", "imm"}, "description": "create：默认 buf（缓冲批次），人类明确要求才 imm"},
+			"file":   map[string]interface{}{"type": "string", "description": "toggle/run/delete：计划 file 标识"},
+		},
+		"required": []string{"action"},
+	}
+}
+func (t *scheduleTool) IsHidden() bool { return false }
+
+func (t *scheduleTool) Execute(ctx context.Context, params map[string]interface{}) (*tools.ToolResult, error) {
+	switch strings.TrimSpace(getStr(params, "action")) {
+	case "create": {
+		sc, err := t.s.CreateTaskSchedule(getStr(params, "name"), getStr(params, "task"), getStr(params, "every"), getStr(params, "mode"))
+		if err != nil {
+			return nil, err
+		}
+		return tools.NewTextResult(fmt.Sprintf("定时任务已登记：%s（每 %ds · %s 通道）。到点后任务文本会出现在你的消息通道，届时按纪律分派 worker。", sc.File, sc.EverySec, sc.Mode)), nil
+	}
+	case "list": {
+		scheds, err := t.s.store.ListSchedules()
+		if err != nil {
+			return nil, err
+		}
+		if len(scheds) == 0 {
+			return tools.NewTextResult("还没有任何定时任务/脚本计划。"), nil
+		}
+		var sb strings.Builder
+		for _, sc := range scheds {
+			kind := "脚本"
+			body := ""
+			if sc.Kind == "task" {
+				kind = "任务"
+				body = " ｜ " + truncate(sc.Note, 80)
+			}
+			on := "停"
+			if sc.Enabled {
+				on = "启"
+			}
+			fmt.Fprintf(&sb, "- %s [%s·%s] 每%ds %s通道 last=%s exit=%d%s\n", sc.File, kind, on, sc.EverySec, sc.Mode, sc.LastRun, sc.LastExit, body)
+		}
+		return tools.NewTextResult(strings.TrimRight(sb.String(), "\n")), nil
+	}
+	case "toggle": {
+		on, err := t.s.ToggleSchedule(getStr(params, "file"), "super")
+		if err != nil {
+			return nil, err
+		}
+		return tools.NewTextResult(fmt.Sprintf("已%s。", map[bool]string{true: "启用", false: "停用"}[on])), nil
+	}
+	case "run": {
+		t.s.RunScheduleNow(getStr(params, "file"), "super")
+		return tools.NewTextResult("已触发一次。"), nil
+	}
+	case "delete": {
+		if err := t.s.DeleteTaskSchedule(getStr(params, "file")); err != nil {
+			return nil, err
+		}
+		return tools.NewTextResult("任务已删除。"), nil
+	}
+	default:
+		return nil, fmt.Errorf("未知 action（create|list|toggle|run|delete）")
+	}
+}
+
 // --- super_audit ---
 
 type auditTool struct{ s *Service }

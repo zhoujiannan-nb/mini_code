@@ -169,6 +169,7 @@ export async function selectSession(id) {
       currentRole: s.agent_role || "",
       superOwned: false,   // 若目标确属 super,由点入方(SuperPanel)随后点亮
       superTab: "chat",
+      superDrawer: null,   // 离开面板回到聊天视图时收起 worker 会话抽屉
       rows,
       run: { steps: [] },
       live: null,
