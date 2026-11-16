@@ -235,10 +235,10 @@ func (t *scheduleTool) Name() string { return "super_schedule" }
 func (t *scheduleTool) Description() string {
 	return `定时任务——你自己不写脚本、不写代码：任务就是一句话，到点由系统投递回你的消息通道，你收到后再分派给 worker 干活。
 action=create：登记一个周期任务（name 英文短名、task 到点发给未来的你的一句话、every 周期如 "3h"/"90m"/"2h30m"/"1d"、mode 可选 imm|buf，默认 buf 走缓冲批次——除非人类明说"立即"）。例：人类说"每 3 小时拉取 xx 检查更新并修复发布"，你就 create 一个 every=3h、task 原样转述这件工作的任务；到点消息进通道，你再 spawn 给合适 worker；
-action=list：查看现有任务与脚本计划；
+action=list：查看现有定时任务；
 action=toggle：启停一个计划（file）；
 action=run：立即触发一次（file，任务型=立刻投一条消息）；
-action=delete：删除任务型计划（file；脚本型由人类删脚本，你删不了）。`
+action=delete：删除定时任务（file）。`
 }
 func (t *scheduleTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{

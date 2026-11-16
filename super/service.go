@@ -78,10 +78,8 @@ type Service struct {
 	mgr   *session.SessionManager
 	hub   *channels.Hub
 
-	dir       string // ~/.mini_code/super
-	scripts   string
-	outbox    string
-	cfgPath   string
+	dir     string // ~/.mini_code/super
+	cfgPath string
 
 	mu        sync.Mutex
 	cfg       Config
@@ -89,8 +87,6 @@ type Service struct {
 	startedAt time.Time
 
 	pickupMu sync.Mutex
-	runMu    sync.Mutex
-	running  map[string]bool // schedule file -> running now
 
 	histMu sync.Mutex
 	hist   map[string][]ExecRec
@@ -109,17 +105,12 @@ func NewService(db *util.Database, mgr *session.SessionManager, hub *channels.Hu
 		mgr:     mgr,
 		hub:     hub,
 		dir:     base,
-		scripts: filepath.Join(base, "scripts"),
-		outbox:  filepath.Join(base, "outbox"),
 		cfgPath: filepath.Join(base, "config.json"),
-		running: map[string]bool{},
 		hist:    map[string][]ExecRec{},
 		ctx:     context.Background(),
 	}
-	for _, d := range []string{s.dir, s.scripts, s.outbox} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			slog.Warn("super: cannot create dir", "dir", d, "err", err)
-		}
+	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		slog.Warn("super: cannot create dir", "dir", s.dir, "err", err)
 	}
 	s.cfg = s.loadConfig()
 	return s
@@ -690,8 +681,6 @@ type Overview struct {
 	Procs             []*Process        `json:"procs"`
 	Audits            []*AuditRow       `json:"audits"`
 	RunnerStartedAt   string            `json:"runner_started_at"`
-	ScriptsDir        string            `json:"scripts_dir"`
-	OutboxDir         string            `json:"outbox_dir"`
 }
 
 func (s *Service) Overview() *Overview {
@@ -707,8 +696,6 @@ func (s *Service) Overview() *Overview {
 		Procs:           []*Process{},
 		Audits:          []*AuditRow{},
 		RunnerStartedAt: s.startedAt.Format(time.RFC3339),
-		ScriptsDir:      s.scripts,
-		OutboxDir:       s.outbox,
 	}
 	if ws, err := s.store.ListWorkers(); err == nil {
 		for _, w := range ws {

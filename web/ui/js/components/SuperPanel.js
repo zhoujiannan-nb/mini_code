@@ -130,7 +130,7 @@ export function SuperFrame({ children }) {
   return html`
     <div class="sup-banner">
       <span class="sb-bolt">⚡</span>
-      <b class="sb-title">Super 调度中心</b>
+      <b class="sb-title">Super-Agent</b>
       <span class="sb-chip">自动</span>
       <span class="sb-stats">Worker ${badges.workers} · 运行中 ${liveWorkers} · 通道 ${chanPending}</span>
       <span class="sup-tabs-flex"></span>
@@ -148,7 +148,7 @@ export function SuperFrame({ children }) {
           ${t.id === "chan" && badges.chan === 0 ? html`<span class="sup-badge zero">0</span>` : null}
         </button>`)}
       <span class="sup-tabs-flex"></span>
-      <span class="sup-hint" title=${"脚本目录:" + ((ov && ov.scripts_dir) || "")}>
+      <span class="sup-hint" title="runner=minicode 常驻定时器(tick 15s):到点投递任务 / 兜底冲刷 / 捞起队列">
         ${(ov && ov.runner_started_at) ? "runner " + clock(ov.runner_started_at) + " 起" : "runner —"}
       </span>
     </div>
@@ -290,13 +290,13 @@ function SchedPanel({ ov }) {
   if (!ov) return html`<div class="sup-empty">加载中…</div>`;
   const list = ov.schedules || [];
   return html`
-    <div class="sup-note">两类计划:<b>任务型</b>由 Super-Agent 用 super_schedule 登记(任务=一句话,到点投递进消息通道,由 super 分派 worker,不写任何脚本);
-      <b>脚本型</b>把 .ps1/.py/.bat 放进 <code>${(ov.scripts_dir || "") + "\\scripts"}</code> 即自动上线(每 5 分钟扫一次,stdout 进通道)。
-      这里的启停/手动触发都以 human 身份记审计。</div>
+    <div class="sup-note">定时任务就是<b>一句话</b>,直接存数据库:吩咐 Super-Agent「每 3 小时做某某」,它用 super_schedule 登记;
+      到点 runner(minicode 常驻定时器,基础设施)把任务文本投进消息通道,super 收到后派 worker 执行——全程没有脚本、super 也不写代码。
+      这里的启停/手动投递都以 human 身份记审计。</div>
     <table class="sup-table">
-      <thead><tr><th></th><th>任务 / 脚本</th><th>周期</th><th>通道</th><th>上次</th><th>结果</th><th></th></tr></thead>
+      <thead><tr><th></th><th>定时任务</th><th>周期</th><th>通道</th><th>上次</th><th>结果</th><th></th></tr></thead>
       <tbody>
-        ${list.length === 0 ? html`<tr><td colspan="7" class="sup-empty">还没有计划 —— 吩咐 Super-Agent「每 3 小时做某某」即可,或往 scripts/ 放脚本</td></tr>` : null}
+        ${list.length === 0 ? html`<tr><td colspan="7" class="sup-empty">还没有定时任务 —— 吩咐 Super-Agent「每 3 小时检查某某更新」即可</td></tr>` : null}
         ${list.map((s) => {
           const isTask = s.kind === "task";
           const hist = ((ov.hist || {})[s.file] || []);
@@ -306,7 +306,7 @@ function SchedPanel({ ov }) {
               <td><button class=${"sup-sw" + (s.enabled ? " on" : "")} title=${s.enabled ? "停用" : "启用"}
                 onClick=${() => post(ROUTES.superSchedToggle, { file: s.file })}><span></span></button></td>
               <td class="mono" title=${isTask ? s.note : s.file}>
-                <span class=${"sup-tag " + (isTask ? "task" : "script")}>${isTask ? "任务" : "脚本"}</span>
+                <span class=${"sup-tag " + (isTask ? "task" : "script")}>${isTask ? "任务" : "旧脚本"}</span>
                 ${isTask ? html`<span class="sup-taskbody">${s.note || s.file}</span>` : s.file}
               </td>
               <td>${everyHuman(s.every_sec)}</td>
@@ -316,9 +316,9 @@ function SchedPanel({ ov }) {
                 ${s.last_run ? (isTask ? "已投递" : "exit " + s.last_exit) : "—"}
                 ${hist.length ? html` <button class="sup-linkbtn" onClick=${() => setOpenFile(open ? "" : s.file)}>${open ? "收起" : "历史 " + hist.length}</button>` : null}
               </td>
-              <td><button class="sup-linkbtn" title=${isTask ? "立即投一条消息到通道" : "立即跑一次"}
-                onClick=${() => post(ROUTES.superSchedRun, { file: s.file }, "已触发:" + s.file)}>
-                ▶ ${isTask ? "投一次" : "跑一次"}</button></td>
+              <td><button class="sup-linkbtn" title="立即投一条消息到通道"
+                onClick=${() => post(ROUTES.superSchedRun, { file: s.file }, "已投递:" + s.file)}>
+                ▶ 投一次</button></td>
             </tr>
             ${open ? html`<tr class="sup-histrow"><td colspan="7">
               ${hist.map((r, i) => html`<div class="sup-hist" key=${i}>
@@ -365,7 +365,7 @@ function ChanPanel({ ov }) {
         onClick=${() => post(ROUTES.superFlush, {}, "已冲刷")}>冲刷缓冲区</button>
     </div>
     <div class="sup-note">立即 = 到达即注入 super 会话打断回合;批次 = 攒满 ${ov.config ? ov.config.batch_size : "?"} 条或到兜底
-      ${ov.config ? ov.config.flush_timeout_min : "?"}min 合并成一条。worker 汇报走立即,脚本 stdout 走批次。</div>
+      ${ov.config ? ov.config.flush_timeout_min : "?"}min 合并成一条。worker 汇报走立即,定时任务投递默认走批次。</div>
     <div class="sup-chan2">
       <div class="sup-colt">立即通道</div>
       ${imm.length === 0 ? html`<div class="sup-empty">暂无</div>` : null}
@@ -405,12 +405,11 @@ function ProcPanel({ ov }) {
   if (!ov) return html`<div class="sup-empty">加载中…</div>`;
   const ps = ov.procs || [];
   return html`
-    <div class="sup-note">runner 是 minicode 进程常驻的定时器(基础设施),执行动作的不是 super、也不是 worker。runner 心跳 15s。全量输出归档在 <code>${ov.outbox_dir || ""}</code>;
-      这里保留最近 100 条进程记录(stdout 给前 400 字符)。</div>
+    <div class="sup-note">这里显示正在执行的 worker 会话与历史进程记录。runner 是 minicode 进程常驻的定时器(基础设施,心跳 15s),执行动作的不是 super、也不是 worker。</div>
     <table class="sup-table">
       <thead><tr><th>开始</th><th>进程</th><th>PID</th><th>状态</th><th>exit</th><th>时长</th><th>输出</th></tr></thead>
       <tbody>
-        ${ps.length === 0 ? html`<tr><td colspan="7" class="sup-empty">还没有跑过脚本</td></tr>` : null}
+        ${ps.length === 0 ? html`<tr><td colspan="7" class="sup-empty">当前没有执行中的会话</td></tr>` : null}
         ${ps.map((p) => html`<tr key=${p.id} class=${p.status === "running" ? "onrun" : ""}>
           <td title=${full(p.started_at)}>${clock(p.started_at)}</td>
           <td class="mono" title=${p.ref || p.name}>${p.name}</td>
