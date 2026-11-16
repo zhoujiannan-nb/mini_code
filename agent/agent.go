@@ -133,18 +133,19 @@ func SuperAgentConfig() *AgentConfig {
 		Prompt:      prompt,
 		Mode:        "primary",
 		Permissions: mergePermissions(map[string]interface{}{
-			// read-only inspection so the router can make dispatch calls
-			"read":  "allow",
-			"grep":  "allow",
-			"glob":  "allow",
-			"todo_write": "allow",
+			// 纯 Router:只分派、不干活,连读文件都不需要——想了解情况,
+			// 下发个 worker 去查,结果会经通道汇报回来。
 			// orchestration surface (registered per-task by the super service)
 			"super_workers": "allow",
 			"super_sessions": "allow",
 			"super_queue":   "allow",
 			"super_schedule": "allow",
 			"super_audit":   "allow",
-			// everything that does actual work is denied
+			// everything else — inspection included — is denied
+			"read":           "deny",
+			"grep":           "deny",
+			"glob":           "deny",
+			"todo_write":     "deny",
 			"write":          "deny",
 			"edit":           "deny",
 			"pwsh":           "deny",
