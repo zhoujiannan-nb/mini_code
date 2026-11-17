@@ -12,6 +12,7 @@ import { h, render } from "preact";
 import htm from "htm";
 
 import { App } from "../js/components/App.js";
+import { summarize } from "../js/components/SummaryPanel.js";
 import { setEventSourceFactory, disconnectEvents } from "../js/lib/sse.js";
 import { setState, getState, initialState } from "../js/lib/store.js";
 
@@ -1117,4 +1118,101 @@ test("render: 输出速度显示在输入卡下方一行(有速度才出现,没�
   setState({ speed: 0 });
   await settle();
   assert.ok(!/tok\/s/.test(document.querySelector("#token-usage").textContent), "速度归零后撤掉");
+});
+
+/* ================= 24) 输出速度按会话隔离(2026-11 用户:统计会串到别的会话) ================= */
+// 只有当前会话的 content_delta 能喂估算窗口,只有当前会话在跑才写表头。
+// 两条 delta 之间真的等 700ms:窗口要 dt>0.5s 才吐数,不然这条用例改坏也照样绿。
+test("render: 别的会话在流式输出,不许把它的 tok/s 记到当前会话头上", async () => {
+  await resetAll();
+  mountApp();
+  await settle();
+  document.querySelector("#sess-list .sess-item").click(); // 会话 A(s1)
+  await settle();
+  setState({ running: true });
+  const es = FakeEventSource.instances[0];
+
+  es.emit({ kind: "content_delta", session_id: "s2", content: "x".repeat(90) });
+  await new Promise((r) => setTimeout(r, 700));
+  es.emit({ kind: "content_delta", session_id: "s2", content: "x".repeat(900) });
+  await settle();
+  assert.equal(getState().speed, 0, "s2 在生成,s1 的速度一个字都不该动");
+
+  // 换成自己的会话:同样的节奏就必须算出来(证明上面那条不是"永远不动")。
+  es.emit({ kind: "content_delta", session_id: "s1", content: "y".repeat(60) });
+  await new Promise((r) => setTimeout(r, 700));
+  es.emit({ kind: "content_delta", session_id: "s1", content: "y".repeat(600) });
+  await settle();
+  assert.ok(getState().speed > 0, "当前会话自己的增量照常估算");
+
+  // 别的会话收尾:既不写速度,也不许把展示值抹成别人的实测值。
+  const before = getState().speed;
+  setState({ speed: 33.3, speedAccurate: true });
+  es.emit({ kind: "assistant", session_id: "s2", content: "B 说完了" });
+  es.emit({ kind: "usage", session_id: "s2", prompt_tokens: 10, cached_tokens: 5, cache_reported: true, speed: 99 });
+  await settle();
+  assert.equal(getState().speed, 33.3, "s2 的 usage/收尾不许改 s1 的展示值");
+  assert.ok(before > 0);
+});
+
+/* ================= 25) 并行执行时「正在执行」卡默认收起 ================= */
+// collapsed 必须落在带 .ms-live 的那张卡上 —— CSS 规则写的是
+// .ms-live.collapsed .ms-live-body{display:none},类挂到外层 .msg 上谁都匹配不到,
+// 结果并行那一长列步骤 + 思考框永远摊在聊天区里(2026-11 用户:拉很长)。
+test("render: 并行执行时「正在执行」卡默认收起,collapsed 与 .ms-live 同元素", async () => {
+  await resetAll();
+  mountApp();
+  await settle();
+  document.querySelector("#sess-list .sess-item").click();
+  await settle();
+  const es = FakeEventSource.instances[0];
+
+  es.emit({ kind: "reasoning_delta", session_id: "s1", reasoning: "先分别看看这两个文件" });
+  es.emit({ kind: "tool_start", session_id: "s1", tool_name: "read", tool_args: '{"file_path":"a.go"}' });
+  es.emit({ kind: "tool_end", session_id: "s1", tool_name: "read", tool_result: "ok" });
+  es.emit({ kind: "tool_start", session_id: "s1", tool_name: "pwsh", tool_args: '{"description":"跑测试","command":"npm test"}' });
+  await settle();
+
+  const card = document.querySelector("#messages .m-card.ms-live");
+  assert.ok(card, "画出了「正在执行」卡");
+  assert.match(card.className, /collapsed/, "默认收起:collapsed 要和 .ms-live 在同一个元素上");
+  assert.ok(document.querySelector("#messages .ms-live-hd"), "头部一行还在(正在执行 · N 步 · 最近 xx)");
+  assert.ok(card.querySelector(".ms-live-body .ms-step"), "清单仍在 DOM 里,点开就看得见");
+});
+
+/* ================= 26) 执行摘要里的待办跟的是"最新那一份" ================= */
+function todoStep(todos) {
+  return { key: "k" + Math.random(), kind: "tool", name: "todo_write", phase: "done", args: JSON.stringify({ todos }) };
+}
+
+test("render: 执行摘要的待办跟着最新一份改写走,不是刚列出来的那一份", async () => {
+  await resetAll();
+  mountApp();
+  await settle();
+  document.querySelector("#sess-list .sess-item").click();
+  await settle();
+
+  const v1 = [{ content: "改 base.css", status: "pending" }, { content: "跑测试", status: "pending" }];
+  const v2 = [{ content: "改 base.css", status: "completed" }, { content: "跑测试", status: "in_progress" }];
+  const v3 = [{ content: "改 base.css", status: "completed" }, { content: "跑测试", status: "completed" }];
+  const rows = [{
+    key: "r1", kind: "assistant", text: "", reasoning: "",
+    steps: [
+      todoStep(v1), todoStep(v2),
+      { key: "k-read", kind: "tool", name: "read", phase: "done", args: JSON.stringify({ file_path: "D:\\work\\s1\\base.css" }) },
+    ],
+  }];
+  const live = [todoStep(v3)];
+
+  const sum = summarize(rows, live);
+  assert.equal(sum.todos.label, "2/2", "取的是当前轮最新那份(liveSteps 最后写)");
+  assert.equal(sum.todos.items[1].status, "completed", "同一轮里第二次改写也要认");
+  assert.equal(sum.todos.items[0].text, "改 base.css");
+
+  setState({ rows, run: { steps: live }, summaryOpen: true });
+  await settle();
+  const panel = document.querySelector("#summary-panel");
+  assert.ok(panel, "摘要抽屉画出来了");
+  assert.match(panel.querySelector(".todo-card .td-n").textContent, /2\/2/, "抽屉里的进度跟着最新清单走");
+  assert.match(panel.querySelector(".sum-files").textContent, /base\.css/, "相关文件那节不受影响");
 });

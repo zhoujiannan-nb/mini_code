@@ -127,10 +127,10 @@ test("frameless: v3.7 两框定稿 —— 不透明 + 外框一色 + 聊天卡�
     `--tb-ctl-w(${cssW && cssW[1]}) 与 Go tbControlsW(${goW && goW[1]}) 必须同步`);
 });
 
-// v3.11 背景定稿(用户):浅色主题外框/缝隙/内框一律 #ffffff——色差错位线不
-// 许再出现;水印星环严格按官方 .ico 复刻:左蓝右紫渐变细环 + 发光底层 +
-// 白色发光卫星,居中,带两枚流星。
-test("frameless: v3.11 背景定稿 —— 通体纯白 + .ico 复刻发光星环", () => {
+// v3.11 背景定稿(用户):浅色主题外框/缝隙/内框一律 #ffffff——色差错位线不许再
+// 出现。v3.12 深色搬进 VS Code 那套中灰(内框 #2b2b2b / 外框和缝隙 #3c3f41),
+// 并把 .ico 同款星环水印整段删除;浅色通体纯白这条没动。
+test("frameless: 背景定稿 —— 浅色通体纯白 + 深色 VS Code 中灰 + 无星环水印", () => {
   const css = readFileSync(new URL("../css/layers.css", import.meta.url), "utf8");
   const base = readFileSync(new URL("../css/base.css", import.meta.url), "utf8");
   // 浅色不许再有发灰底或冷灰衬底,通体纯白。
@@ -139,29 +139,34 @@ test("frameless: v3.11 背景定稿 —— 通体纯白 + .ico 复刻发光星�
   assert.match(base, /--bg: #ffffff/, "浅色聊天区底 = 纯白");
   assert.match(css, /html\.frameless \{ --frame-outer: #ffffff; --seam: #ffffff; \}/,
     "浅色外框/缝隙 = #ffffff:内外的色差错位线是不许出现的");
-  // 深色:内框 = 图标黑底,外框保留色差(边界沿圆角矩形,是正的)。
-  assert.match(base, /--bg: #0b0b0e/, "深色聊天区底 = 图标黑底色");
-  assert.match(css, /--frame-outer: #16161a/, "深色外框有独立收边值");
-  // 星环水印:两主题都是 .ico 同款蓝→紫渐变细环(rx236 ry104 rot-16 同几何)。
-  assert.equal((css.match(/--ring-wm: url\("data:image\/svg\+xml/g) || []).length, 2,
-    "明暗主题各有一条水印 data-uri");
-  assert.equal((css.match(/linearGradient id='rg'/g) || []).length, 2, "两条渐变描边");
-  assert.ok((css.match(/stop-color='%237cc7ff'/g) || []).length >= 4,
-    "渐变起笔 = .ico 浅蓝(环 + 流星,两主题共 4 处以上)");
-  assert.ok((css.match(/stop-color='%23b06cff'/g) || []).length >= 4,
-    "渐变收笔 = .ico 紫");
-  assert.equal((css.match(/rx='236' ry='104'/g) || []).length, 4, "环几何与 .ico 同款(两主题×两层)");
-  // "有点发光":每主题环下都垫一条 4 倍粗的低透明光晕层(细环本身是 sw8)。
-  assert.equal((css.match(/stroke-width='30'/g) || []).length, 2, "两主题各有一层光晕环");
-  assert.equal((css.match(/stroke-width='8'/g) || []).length, 2, "两主题各有一层细环");
-  // 卫星 = .ico 同款白色发光点(带蓝晕)。
-  assert.equal((css.match(/circle cx='342' cy='358' r='9' fill='%23ffffff'/g) || []).length, 2,
-    "两主题卫星都是白色发光核");
-  // 流星:一大一小 + 发光头,两主题都在。
-  assert.equal((css.match(/M158 112 L70 172/g) || []).length, 2, "大流星尾迹×2");
-  assert.equal((css.match(/M470 142 L416 182/g) || []).length, 2, "小流星尾迹×2");
-  // 居中引用。
-  assert.match(css, /html\.frameless \.chat \{[^}]*background-image: var\(--ring-wm\)/,
-    "内框引用水印");
-  assert.match(css, /background-position: 50% 52%;/, "水印居中偏下一丢丢");
+  // v3.12 深色 VS Code 化:内框 = 编辑器中灰 #2b2b2b,外框/缝隙 = 侧栏灰
+  // #3c3f41,缝隙和外框同色(不再有一圈色差)。深色依旧保留外框/内框的明暗
+  // 色差——那条边界沿圆角矩形走,是正的,和浅色通体纯白的处理是两回事。
+  assert.match(base, /--bg: #2b2b2b/, "深色聊天区底 = VS Code 编辑器灰(旧值 #0b0b0e 是对齐官方图标的黑底,已让位)");
+  assert.match(css, /html\.frameless\[data-theme="dark"\] \{ --frame-outer: #3c3f41; --seam: #3c3f41; \}/,
+    "深色外框 = VS Code 侧栏灰,缝隙同色:不许有色差错位线");
+  // v3.12:星环水印(发光环 + 白卫星 + 两枚流星)整体删除,内框就是纯色底。它是
+  // 给近黑底设计的,底色抬到中灰后压在正文后面糊成一片脏影 —— 不许再以任何形式回来。
+  assert.doesNotMatch(css, /--ring-wm/, "星环水印已下线,不许复活");
+  assert.doesNotMatch(css, /html\.frameless \.chat \{[^}]*background-image/,
+    "内框不贴图,只剩圆角 + 一条发丝描边");
+  // 内框四周那圈衬底:文件开头 main 自带 background: var(--bg),不把外框色盖上去,
+  // 侧栏和聊天卡之间就会糊出一条深色带(用户圈图点名的色差)。
+  assert.match(css, /html\.frameless main \{ background: var\(--frame-outer\); \}/,
+    "衬底必须跟标题条/侧栏同色,「两框」才只剩两个框");
+});
+
+// 步骤行的两条排版铁律(2026-11 用户圈图:① "write" 被断成两截;② 并行执行时
+// 「正在执行」那一长列没收起来)。两处都是 CSS 与 JS 各写一半、只对得上一次改动
+// 的那种坑,所以两条一起钉死。
+test("frameless: 步骤行排版 —— 工具名不许拆字、正在执行卡的收起类名要和 CSS 对得上", () => {
+  const css = readFileSync(new URL("../css/layers.css", import.meta.url), "utf8");
+  const js = readFileSync(new URL("../js/components/Steps.js", import.meta.url), "utf8");
+  const nameRule = (css.match(/\.ms-step \.t-name \{[^}]*\}/) || [""])[0];
+  assert.match(nameRule, /white-space:\s*nowrap/, "工具名不许换行");
+  assert.match(nameRule, /flex:\s*0 0 auto/, "工具名不许参与 flex 收缩:该被截断的是参数,不是名字");
+  assert.match(css, /\.ms-live\.collapsed \.ms-live-body \{ display: none; \}/,
+    "「正在执行」收起靠这条规则");
+  assert.match(js, /class=\$\{"m-card ms-live" \+ \(open \? "" : " collapsed"\)\}/,
+    "collapsed 落在带 .ms-live 的那张卡上 —— 挂到外层 .msg 上谁都匹配不到");
 });

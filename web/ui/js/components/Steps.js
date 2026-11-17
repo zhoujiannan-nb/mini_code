@@ -136,9 +136,12 @@ export function LiveSteps({ steps, running }) {
   const parallel = visible.filter((s) => s.phase === "run").length;
   const last = visible[visible.length - 1];
   const lastHint = last.kind === "think" ? "思考中" : String(last.name || "tool");
-  return html`<div class=${"msg steps ms-live-wrap" + (open ? "" : " collapsed")}>
+  // collapsed 必须和 .ms-live 落在同一个元素上:CSS 是
+  // .ms-live.collapsed .ms-live-body{display:none},写在外层 .msg 上谁都匹配不到
+  // —— 并行执行时一长列步骤加思考框就这么摊在聊天区里(2026-11 用户反馈)。
+  return html`<div class="msg steps ms-live-wrap">
     <${AgentAvatar} cls="c-avatar" />
-    <div class="m-card ms-live">
+    <div class=${"m-card ms-live" + (open ? "" : " collapsed")}>
       <div class="ms-live-hd" onClick=${() => setOpen((v) => !v)}>
         <span class="spin"></span>正在执行<span class="ms-live-n">${visible.length} 步</span>${parallel > 1
           ? html`<span class="ms-live-n">${parallel} 个并行</span>` : null}

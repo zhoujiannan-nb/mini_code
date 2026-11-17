@@ -339,7 +339,13 @@ details.m-steps[open] > .m-steps-wrap { max-height: 46vh; opacity: 1; }
   font-size: 12px; color: var(--text2); word-break: break-word;
 }
 .ms-step:last-child { border-left-color: transparent; }
-.ms-step .t-name { display: inline-block; font-size: 11.5px; font-weight: 700; color: var(--title2); }
+/* 工具名不许被挤到拆字:summary 是 flex 行,.ms-arg1 会吃掉剩余宽度,而 .ms-step
+   带了 word-break:break-word —— 一旦让 t-name 参与收缩,"⚙ write" 就从中间断开换行。
+   flex:0 0 auto + nowrap 让它永远占自己那一格,该截断的是参数,不是工具名。 */
+.ms-step .t-name {
+  display: inline-block; flex: 0 0 auto; white-space: nowrap;
+  font-size: 11.5px; font-weight: 700; color: var(--title2);
+}
 .ms-step .t-args, .ms-step .t-res { font-size: 11.5px; line-height: 1.62; }
 details.ms-step > summary {
   display: flex; align-items: center; gap: 7px;
@@ -1100,12 +1106,16 @@ html.frameless .modal.settings-modal {
    所以取和 --frame 几乎同色的值。深色主题下 --surface 比 --bg 亮一档,
    两框靠明暗 + 1px 描边分开。 */
 html.frameless { --seam: #f0f0f3; }
-html.frameless[data-theme="dark"] { --seam: #1b1b1f; }
+html.frameless[data-theme="dark"] { --seam: #3c3f41; }
 html.frameless { background: var(--seam); }
 html.frameless body { background: transparent; }
 html.frameless #mc-titlebar { background: var(--surface); border-bottom: none; }
 html.frameless aside { border-right: none; background: var(--surface); }
 html.frameless main { padding: 10px 14px 14px 14px; } /* 内框四周 = 外框色 */
+/* 可这句只管内衬的宽度:文件开头 main 自带 background: var(--bg),这圈内衬于是
+   被涂成内框色,侧栏和聊天卡之间多出一条深色带 —— 底色从近黑抬到中灰后格外扎眼
+   (用户圈图点名的色差)。衬底必须和标题条/侧栏同色,「两框」才只剩两个框。 */
+html.frameless main { background: var(--frame-outer); }
 html.frameless .chat {
   border-radius: 18px; overflow: hidden;
   border: 1px solid var(--border);
@@ -1186,28 +1196,15 @@ html.frameless .chat-head { gap: 8px; }
 }
 
 /* =====================================================================
-   ===== v3.11 定稿:浅色通体纯白 + 水印严格按 .ico 复刻(发光环+白卫星) =====
-     · v3.10 的冷灰蓝衬底被否:外框和内框之间露出色差歪线。浅色主题现在
-       外框/缝隙/内框全部 #ffffff,整窗一块白,两框只剩圆角几何 + 发丝线。
-       (深色保留色差——那条边界沿圆角矩形走,是正的。)
-     · 水印按官方 .ico 逐要素复刻:浅蓝→紫的渐变细环(左 #7cc7ff 右
-       #b06cff),环下垫一条 4 倍粗的低透明描边模拟"发光";卫星 = 白色
-       发光点 + 蓝色光晕。居中,两枚流星保留。 */
+   ===== v3.12 定稿:浅色通体纯白;深色搬 VS Code 中灰,星环水印下线 =====
+      · v3.10 的冷灰蓝衬底被否:外框和内框之间露出色差歪线。浅色主题现在
+        外框/缝隙/内框全部 #ffffff,整窗一块白,两框只剩圆角几何 + 发丝线。
+      · 深色搬 VS Code Darcula:外框 = 缝隙 = #3c3f41(同色,不许有色差圈),
+        内框 #2b2b2b。外框/内框的明暗色差保留 —— 那条边界沿圆角矩形走,是正的。
+      · .ico 同款星环水印(发光环 + 白卫星 + 两枚流星)整体删除:它是给近黑底
+        设计的,底色一抬到中灰就压在正文后面糊成一片脏影。侧栏的 E7 徽标不动。 */
  html.frameless { --frame-outer: #ffffff; --seam: #ffffff; }
- html.frameless[data-theme="dark"] { --frame-outer: #16161a; --seam: #20202a; }
+ html.frameless[data-theme="dark"] { --frame-outer: #3c3f41; --seam: #3c3f41; }
  /* 覆盖 v3.7 那两条 var(--surface):外框色单独可控。 */
  html.frameless #mc-titlebar { background: var(--frame-outer); border-bottom: none; }
  html.frameless aside { border-right: none; background: var(--frame-outer); }
- html.frameless {
-   --ring-wm: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-26 64 564 384'%3E%3Cdefs%3E%3ClinearGradient id='rg' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%237cc7ff' stop-opacity='0.15'/%3E%3Cstop offset='1' stop-color='%23b06cff' stop-opacity='0.15'/%3E%3C/linearGradient%3E%3CradialGradient id='sg'%3E%3Cstop offset='0' stop-color='%239fd4ff' stop-opacity='0.45'/%3E%3Cstop offset='1' stop-color='%239fd4ff' stop-opacity='0'/%3E%3C/radialGradient%3E%3ClinearGradient id='mg' x1='1' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23b06cff' stop-opacity='0'/%3E%3Cstop offset='1' stop-color='%237cc7ff' stop-opacity='0.3'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg transform='rotate(-16 256 278)' fill='none' stroke='url(%23rg)'%3E%3Cellipse cx='256' cy='278' rx='236' ry='104' stroke-width='30' opacity='0.32'/%3E%3Cellipse cx='256' cy='278' rx='236' ry='104' stroke-width='8'/%3E%3C/g%3E%3Cg transform='rotate(-16 256 278)'%3E%3Ccircle cx='342' cy='358' r='26' fill='url(%23sg)'/%3E%3Ccircle cx='342' cy='358' r='9' fill='%23ffffff' fill-opacity='0.9'/%3E%3C/g%3E%3Cg stroke-linecap='round'%3E%3Cpath d='M158 112 L70 172' stroke='url(%23mg)' stroke-width='7'/%3E%3Ccircle cx='64' cy='176' r='7' fill='%237cc7ff' fill-opacity='0.32'/%3E%3Cpath d='M470 142 L416 182' stroke='url(%23mg)' stroke-width='5'/%3E%3Ccircle cx='411' cy='185' r='5' fill='%23b06cff' fill-opacity='0.3'/%3E%3C/g%3E%3C/svg%3E");
- }
- html.frameless[data-theme="dark"] {
-   --ring-wm: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-26 64 564 384'%3E%3Cdefs%3E%3ClinearGradient id='rg' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%237cc7ff' stop-opacity='0.2'/%3E%3Cstop offset='1' stop-color='%23b06cff' stop-opacity='0.2'/%3E%3C/linearGradient%3E%3CradialGradient id='sg'%3E%3Cstop offset='0' stop-color='%237cc7ff' stop-opacity='0.55'/%3E%3Cstop offset='1' stop-color='%237cc7ff' stop-opacity='0'/%3E%3C/radialGradient%3E%3ClinearGradient id='mg' x1='1' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23b06cff' stop-opacity='0'/%3E%3Cstop offset='1' stop-color='%239fd4ff' stop-opacity='0.45'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg transform='rotate(-16 256 278)' fill='none' stroke='url(%23rg)'%3E%3Cellipse cx='256' cy='278' rx='236' ry='104' stroke-width='30' opacity='0.38'/%3E%3Cellipse cx='256' cy='278' rx='236' ry='104' stroke-width='8'/%3E%3C/g%3E%3Cg transform='rotate(-16 256 278)'%3E%3Ccircle cx='342' cy='358' r='26' fill='url(%23sg)'/%3E%3Ccircle cx='342' cy='358' r='9' fill='%23ffffff' fill-opacity='0.9'/%3E%3C/g%3E%3Cg stroke-linecap='round'%3E%3Cpath d='M158 112 L70 172' stroke='url(%23mg)' stroke-width='7'/%3E%3Ccircle cx='64' cy='176' r='7' fill='%239fd4ff' fill-opacity='0.5'/%3E%3Cpath d='M470 142 L416 182' stroke='url(%23mg)' stroke-width='5'/%3E%3Ccircle cx='411' cy='185' r='5' fill='%23c4a8ff' fill-opacity='0.45'/%3E%3C/g%3E%3C/svg%3E");
- }
- html.frameless .chat {
-   background-color: var(--bg);
-   background-image: var(--ring-wm);
-   background-repeat: no-repeat;
-   background-position: 50% 52%;
-   background-size: min(80%, 760px);
- }

@@ -64,6 +64,11 @@ export function onEvent(m) {
   const state = getState();
   dispatch({ type: "sse", msg: m });
 
+  // 当前会话的判定:没有 session_id 的全局事件按"算我的"处理。reducer 早就按会话
+  // 隔离了视图,下面的副作用以前没有 —— 于是别的会话在生成时,当前会话的 tok/s
+  // 跟着涨;别的会话一结束,又把当前会话还在跑的计时器停掉(用户说的串台)。
+  const mine = !m.session_id || m.session_id === state.current;
+
   switch (m.kind) {
     case "approval_request":
     case "approval_resolved":
@@ -75,36 +80,34 @@ export function onEvent(m) {
       }
       if (m.status === "task_started") {
         // 服务端已把任务登记进活动表:立即拉列表,侧边栏"执行中"即时点亮。
-        clearSending();
+        if (mine) clearSending();
         loadSessions();
         return;
       }
       if (m.status === "task_done" || m.status === "interrupted") {
-        stopSpeedTicker();
-        updateTokenUsage();
+        if (mine) { stopSpeedTicker(); updateTokenUsage(); }
         loadSessions();
         return;
       }
-      updateTokenUsage();
+      if (mine) updateTokenUsage();
       return;
     case "assistant":
     case "error":
-      stopSpeedTicker(); // 任务结束:保留最后一次的展示值
-      updateTokenUsage();
+      if (mine) { stopSpeedTicker(); updateTokenUsage(); } // 任务结束:保留最后一次的展示值
       loadSessions();
       return;
     case "usage":
       // 每轮 LLM 调用后后端推送的真实 usage,画缓存命中率与实测输出速度
       rememberCacheHit(m.session_id || state.current, m.prompt_tokens, m.cached_tokens, m.cache_reported);
-      stopSpeedTicker();
+      if (mine) stopSpeedTicker();
       return;
     case "content_delta":
-      speedDelta(m.content); // 实时估算输出速度(滚动窗口)
+      if (mine) speedDelta(m.content); // 实时估算输出速度(滚动窗口)
       return;
     case "tool_end":
       // workers 工具会改这条会话自己的归属(join/create/leave):跑完立刻把侧栏
       // 对齐到新的 worker,不然新会话加入了 worker 还停在「未分配」。
-      if (m.tool_name === "workers") resyncSessionWorker(state.current);
+      if (mine && m.tool_name === "workers") resyncSessionWorker(state.current);
       return;
     default:
       break;
@@ -122,9 +125,16 @@ function clearSending() {
 // 生成中:content_delta 累积下发,用滚动窗口(最近 4s)的字符增长估算输出速度
 // (≈ token/s,按 ~3 字符/token 折算混合中英文)。实测值由 usage 事件覆盖。
 const SPEED_WINDOW_MS = 4000;
-const speedState = { samples: [], timer: null };
+// sid = 这批样本属于哪条会话。切会话时窗口必须清空:否则上一条会话留下的样本
+// 还躺在 4s 窗口里,两条会话的字符增量会被算成同一条曲线(数字漂到别的会话上)。
+const speedState = { samples: [], timer: null, sid: null };
 
 function speedDelta(text) {
+  const cur = getState().current;
+  if (speedState.sid !== cur) {
+    speedState.sid = cur;
+    speedState.samples.length = 0;
+  }
   const now = Date.now();
   const len = (text || "").length;
   const s = speedState.samples;
@@ -139,15 +149,19 @@ function speedDelta(text) {
 
 function speedTick() {
   const s = speedState.samples;
+  // 当前会话没在生成就别往它头上写估算值(估算只属于正在生成的那一刻)。
+  if (!getState().running) { stopSpeedTicker(); return; }
   if (s.length >= 2) {
     const t0 = s[0][0], l0 = s[0][1];
     const t1 = s[s.length - 1][0], l1 = s[s.length - 1][1];
     const dt = (t1 - t0) / 1000;
     if (dt > 0.5 && l1 > l0) dispatch({ type: "speed", value: (l1 - l0) / dt / 3, accurate: false });
   }
-  if (!getState().running) stopSpeedTicker();
 }
 
 export function stopSpeedTicker() {
   if (speedState.timer) { clearInterval(speedState.timer); speedState.timer = null; }
+  // 清样本不清展示值:store 里最后那个数按计划留在表头上。
+  speedState.samples.length = 0;
+  speedState.sid = null;
 }

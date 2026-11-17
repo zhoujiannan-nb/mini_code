@@ -21,6 +21,9 @@ const FILE_TOOLS = new Set(["read", "write", "edit", "read_image",
 const FILE_KEYS = ["file_path", "path", "file", "target", "dest"];
 
 // collectRun(rows, liveSteps):把历史轮 + 当前轮的过程步骤汇成一份摘要输入。
+// 两遍扫:文件/步数是"从最新往回"收(截 12 条要留最近的),待办却是"从最旧往下"
+// 收 —— 同一轮里 todo_write 会被反复改写法重发(状态从 pending 走到 completed),
+// 先到先得等于永远显示刚列出来的那一份,用户看到的"待办不跟着动"就是这么来的。
 export function summarize(rows, liveSteps) {
   let todos = null;
   const files = [];
@@ -30,7 +33,6 @@ export function summarize(rows, liveSteps) {
     for (const s of list || []) {
       if (s.kind === "think") continue;
       steps += 1;
-      if (!todos) todos = todoItemsOf(s.name, s.args);
       if (!FILE_TOOLS.has(String(s.name || "").toLowerCase())) continue;
       const o = toolArgsOf(s.args);
       if (!o) continue;
@@ -44,13 +46,23 @@ export function summarize(rows, liveSteps) {
       }
     }
   };
-  // 从最新一轮往回找:待办要的是"最后一份计划",倒着走一次就够。
+  // 待办:正着走,后写的赢。liveSteps(当前轮)排在所有历史行之后,天然就是最新一份;
+  // 参数还在流式生成的 prep 步读不出清单(todoItemsOf 给 null),不会抢跑。
+  const scanTodos = (list) => {
+    for (const s of list || []) {
+      if (s.kind === "think") continue;
+      const t = todoItemsOf(s.name, s.args);
+      if (t) todos = t;
+    }
+  };
   const arr = rows || [];
   for (let i = arr.length - 1; i >= 0; i--) {
     const r = arr[i];
     if (r.steps) visit(r.steps);
   }
   visit(liveSteps);
+  for (const r of arr) scanTodos(r.steps);
+  scanTodos(liveSteps);
   return { todos, files, steps };
 }
 

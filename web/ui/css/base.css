@@ -101,23 +101,32 @@
   }
   html[data-theme="dark"] {
     color-scheme: dark;
-    --edge: #000000;
-    --bg: #0b0b0e;      /* v3.9:内框底色 = 官方图标 E7 的黑底,和 ico 同色 */
-    --surface: #16161a;
-    --surface2: #1f1f24;
-    --surface-a: rgba(22,22,26,.86);
-    --card-a: #121216;
-    --side: #121216;
-    --side-a: #121216;
+    /* VS Code 化(v3.12):整个深色主题从「近黑」搬到「中灰」。
+       阶梯照搬 VS Code Darcula:编辑器 #2B2B2B → 当前行 #323232 →
+       侧栏/面板 #3C3F41,层与层只差一档明度,靠色相中性不靠发蓝。 */
+    --edge: #4c5052;    /* = VS Code 的边框色。--edge 在深色下大量被 super 面板
+                           当边框用(super.css 满地的 1px solid var(--edge)),纯黑
+                           搁在中灰底上就是一道黑线,旧值在这里从来不是"窗口外那条黑边" */
+    --bg: #2b2b2b;      /* 内框(聊天区)。旧值 #0b0b0e 是为对齐官方图标 E7 的黑底,
+                           这次让位给观感:底抬亮一档 + 字压暗一档,正文对比从
+                           16.7:1 降到 6.9:1,久看不刺眼;外框同步跟(见 layers.css) */
+    --surface: #323232; /* 顶栏 / 卡片 / 输入卡 = VS Code 当前行灰 */
+    --surface2: #3c3f41;/* 再上一层浮起面 = VS Code 侧栏/面板灰 */
+    --surface-a: rgba(50,50,52,.86);
+    --card-a: #323232;  /* super 面板历史行底色 = 当前行灰,和列表悬停同一档 */
+    --side: #3c3f41;
+    --side-a: #3c3f41;
     --glow1: transparent;
     --glow2: transparent;
     --border: rgba(255,255,255,.09);
     --border2: rgba(255,255,255,.17);
-    --text: #ececf1;
-    --text2: #b9b9c2;
-    --text3: #94949e;
-    --title: #f4f4f6;
-    --title2: #d6d6dd;
+    /* 前景同一次改动:近白 #ececf1 换成 Darcula 的灰蓝。舒服一半来自这里 ——
+       #a9b7c6 on #2b2b2b 是 6.9:1,原来 #ececf1 on #0b0b0e 是 16.7:1。 */
+    --text: #a9b7c6;
+    --text2: #99a2ac;
+    --text3: #7a8288;   /* VS Code 自家的 #606366 太暗,UI 次要文字在中灰底上会糊掉 */
+    --title: #c8cdd2;
+    --title2: #b4bbc2;
     --accent: #6aa6ff;
     --accent-btn: #3b74d8;
     --accent-btn-h: #4d84e2;
@@ -142,14 +151,14 @@
     --red-l: rgba(219,101,92,.14);
     --red-b: rgba(219,101,92,.42);
     --red-btn: #a3272c;
-    --ghost-bg: #212126;
-    --ghost-bg-h: #2a2a30;
+    --ghost-bg: #3a3d41;    /* VS Code 的输入/按钮面,比侧栏再亮一丢丢 */
+    --ghost-bg-h: #45484d;
     --ghost-fg: #c3c3cc;
     --ghost-fg-h: #e9e9ee;
     --hover: rgba(255,255,255,.06);
     --hover-2: rgba(255,255,255,.09);
-    --track: #2a2a30;
-    --code-bg: #0b0b0d;
+    --track: #44464a;
+    --code-bg: #252526;     /* 代码块比中灰编辑器底深一档 = VS Code panel 灰 */
     --code-fg: #dfe2df;
     --mask: rgba(0,0,0,.62);
     --sh1: rgba(0,0,0,.36);
@@ -157,8 +166,8 @@
     --sh3: rgba(0,0,0,.48);
     --sh4: rgba(0,0,0,.54);
     --sh5: rgba(0,0,0,.72);
-    --scroll: #2a2a30;
-    --scroll-h: #4a4a52;
+    --scroll: #64646466;  /* VS Code 的滑块是半透明灰,不靠"比底色亮一大截"刷存在感 */
+    --scroll-h: #646464aa;
     --ring: rgba(106,166,255,.4);
     --ring-soft: rgba(106,166,255,.18);
     --grad: linear-gradient(180deg, #f4f4f1, #e2e2de);
