@@ -587,7 +587,7 @@ function TicketsPanel({ ov }) {
       <div class="sup-kpi"><b>${readyN}</b><span>待人类验收</span></div>
     </div>
     <div class="sup-note">工单生命周期 <b>queued → running → ready → closed</b>:采集事件与人类交办都先成单;能落地立即派发(原话一字不改 + ≤30字备注),
-      并发满排队;回合结束自动记 ready 并冒泡审计;<b>closed 只由人类验收</b>(点下方"验收"或吩咐 Router 记完结)。ready 的工单被同源新事件追上时 = resume 原会话。</div>
+      并发满排队;回合结束自动记 ready 并冒泡审计;关单记 closed 是 <b>人类验收或 Router 确认办结</b> 均可——ready 的工单被同源新事件追上时 = resume 原会话。</div>
     <table class="sup-table">
       <thead><tr><th>工单</th><th>来源</th><th>标题(≤30字转述)</th><th>状态</th><th>thread</th><th>开单</th><th></th></tr></thead>
       <tbody>

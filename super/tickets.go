@@ -247,7 +247,8 @@ func (s *Service) CreateTicket(srcID, text, note, title, sessID, actor string) (
 	return t, nil
 }
 
-// CloseTicket 人类验收(或 router 记录完结)→ closed。
+// CloseTicket 关闭工单记完结 → closed。Router 与人类同权：人类验收，
+// 或 Router 确认 ready 工单已在 thread 办结，都可关。
 func (s *Service) CloseTicket(id, actor string) error {
 	t, err := s.store.GetTicket(id)
 	if err != nil || t == nil {
@@ -259,7 +260,12 @@ func (s *Service) CloseTicket(id, actor string) error {
 	if err := s.store.TicketSetState(id, "closed", ""); err != nil {
 		return err
 	}
-	s.audit(orNone2(actor, "human"), "ticket.close", id, "验收:「"+t.Title+"」", id+","+t.Session)
+	act := orNone2(actor, "human")
+	verb := "Router记完结"
+	if act == "human" {
+		verb = "人类验收"
+	}
+	s.audit(act, "ticket.close", id, verb+"：「"+t.Title+"」", id+","+t.Session)
 	go s.PickUpTickets()
 	return nil
 }

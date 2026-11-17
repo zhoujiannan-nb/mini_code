@@ -115,7 +115,7 @@ func (t *ticketTool) Description() string {
 	return `工单中心（你只开单、看单、记完结）。
 action=create：人类交办一件事时开人工工单——text 填人类原话（一字不改），note 填你的转述（≤30字），title 可省（自动取原话）；session 填目标 thread 会话（人类指明了才填），src 填采集源 id（人类的话是对某个源说的才填）。落地点都没有也能开，会排队等人类在面板绑定。并发满自动排队，不要你等。
 action=list：查看工单（可按 state=queued|running|ready|closed 过滤）。
-action=close：人类亲口确认验收后记完结（id）。ready 的工单平时不用你动——验收是人类在工单中心的事。`
+action=close：关闭工单记完结（id），关单是你的正当权限：人类说验收/关掉，或 ready 工单的事项已在 thread 里办结出结论，你都可以直接关；拿不准就不关，留给人工。`
 }
 func (t *ticketTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
