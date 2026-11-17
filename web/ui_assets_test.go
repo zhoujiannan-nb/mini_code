@@ -1,8 +1,12 @@
 package web
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -40,6 +44,64 @@ func TestUIAssetsEmbedded(t *testing.T) {
 	}
 }
 
+// TestUIFontTableEmbedded guards the embedded monospace font. css/fonts.css
+// carries the @font-face rules and ui/css/fonts/ carries the woff2 blobs, and
+// those two drift apart quietly: a renamed or dropped subset still renders the
+// UI, just in whatever mono font the machine happens to have — the exact failure
+// the embedding exists to remove. So check both directions (a rule naming a file
+// nobody embedded, and an embedded file no rule names, which is just weight in
+// the binary), and that the blobs really are woff2.
+func TestUIFontTableEmbedded(t *testing.T) {
+	assets, err := loadUIAssets()
+	if err != nil {
+		t.Fatalf("loadUIAssets: %v", err)
+	}
+	table := assets["/css/fonts.css"]
+	if table == nil {
+		t.Fatal("/css/fonts.css is not embedded, but index.html @imports it")
+	}
+	css := string(table.body)
+	if !strings.Contains(css, "font-family: 'JetBrains Mono'") {
+		t.Error("css/fonts.css declares no JetBrains Mono family")
+	}
+	srcs := regexp.MustCompile(`url\("([^"]+)"\)`).FindAllStringSubmatch(css, -1)
+	if len(srcs) == 0 {
+		t.Fatal("css/fonts.css has no @font-face src to check")
+	}
+	refs := make(map[string]bool, len(srcs))
+	for _, m := range srcs {
+		// A src is relative to the stylesheet, same way a browser resolves it.
+		p := path.Join("/css", m[1])
+		refs[p] = true
+		a := assets[p]
+		if a == nil {
+			t.Errorf("css/fonts.css references %q but it is not embedded", p)
+			continue
+		}
+		if !bytes.HasPrefix(a.body, []byte("wOF2")) {
+			t.Errorf("%s is not a woff2 blob (%d bytes)", p, len(a.body))
+		}
+	}
+	for p, a := range assets {
+		if !strings.HasSuffix(p, ".woff2") {
+			continue
+		}
+		if !refs[p] {
+			t.Errorf("%s is embedded (%d bytes) but no @font-face names it", p, len(a.body))
+		}
+	}
+	// The latin subset is what carries plain ASCII: without it the code blocks
+	// would keep rendering in Consolas and nothing but a font nerd would notice.
+	if assets["/css/fonts/jetbrainsmono-normal-latin.woff2"] == nil {
+		t.Error("the latin subset is not embedded")
+	}
+	// SIL OFL 1.1 requires the licence to travel with the fonts. A .txt is not a
+	// served extension, so the guard is on the source tree, not the binary.
+	if _, err := os.Stat("ui/css/fonts/OFL.txt"); err != nil {
+		t.Errorf("ui/css/fonts/OFL.txt: %v", err)
+	}
+}
+
 // TestUIAssetRouteServes exercises the static route: 200 + content type for a
 // real asset, 304 for a matching If-None-Match, 404 for a missing one, and
 // pass-through (not a 404 from the asset route) for paths without a whitelisted
@@ -57,10 +119,15 @@ func TestUIAssetRouteServes(t *testing.T) {
 	// /favicon.ico has its own dedicated route (handleFavicon) registered ahead
 	// of "/", so it is checked separately below.
 	for ref, wantCT := range map[string]string{
-		"/css/base.css":  "text/css",
+		"/css/base.css":   "text/css",
 		"/css/layers.css": "text/css",
-		"/js/main.js":    "javascript",
-		"/js/lib/api.js": "javascript",
+		"/js/main.js":     "javascript",
+		"/js/lib/api.js":  "javascript",
+		// The embedded mono font rides along so its explicit content type stays
+		// pinned: on Windows mime.TypeByExtension consults the registry, and a box
+		// that never registered .woff2 would hand back octet-stream under nosniff
+		// — a silent fall back to Consolas.
+		"/css/fonts/jetbrainsmono-normal-latin.woff2": "font/woff2",
 	} {
 		resp, err := http.Get(srv.URL + ref)
 		if err != nil {

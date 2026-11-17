@@ -81,8 +81,12 @@
    /* 聊天风格统一变量 */
    --ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei",
          "PingFang SC", "Noto Sans CJK SC", sans-serif;
-   --mono: "JetBrains Mono", "JetBrainsMono Nerd Font", "Cascadia Mono", "Cascadia Code",
-           Consolas, ui-monospace, monospace;
+   /* 等宽只认这一条:JetBrains Mono 由 css/fonts.css 内嵌(@font-face),不再
+      指望用户机器装没装;后面的 Consolas/ui-monospace 是字体表没加载出来时的
+      退路。中文必须显式接雅黑 —— JetBrains Mono 没有汉字,不写就逐字掉到系统
+      通用等宽,一行里中英基线乱飘。 */
+   --mono: "JetBrains Mono", Consolas, ui-monospace,
+           "Microsoft YaHei UI", "Microsoft YaHei", monospace;
    --msg-avatar: 28px;
    --msg-gap: 10px;
    --msg-radius: 16px;
@@ -312,7 +316,7 @@ aside {
 .wk-note-area {
   width: 100%; height: min(52vh, 460px); resize: vertical; box-sizing: border-box;
   background: var(--bg); color: var(--text); border: 1px solid var(--border2);
-  border-radius: var(--r-sm); padding: 10px; font: 12px/1.6 ui-monospace, Consolas, monospace;
+  border-radius: var(--r-sm); padding: 10px; font: 12px/1.6 var(--mono);
 }
 .wk-note-area:focus { outline: none; border-color: var(--accent); }
 .wk-note-foot { display: flex; align-items: center; gap: 8px; }
@@ -1027,7 +1031,7 @@ details.m-think[open] summary { margin-bottom: 6px; }
 .j-btn:hover { background: var(--hover); color: var(--text); }
 .j-out {
   margin: 0 18px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 9px;
-  padding: 8px 12px; font: 11.5px/1.6 Consolas, Menlo, monospace; color: var(--text2);
+  padding: 8px 12px; font: 11.5px/1.6 var(--mono); color: var(--text2);
   white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow: auto;
 }
 .job-stop.armed { background: var(--red-l); color: var(--red, #d33); }

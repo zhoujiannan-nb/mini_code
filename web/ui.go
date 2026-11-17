@@ -19,6 +19,11 @@ import (
 // whole directory put ~23 MB of toolchain files into every binary (and exposed
 // them over /node_modules/...). Only what the page actually serves is shipped.
 //
+// ui/css also carries the woff2 font table (ui/css/fonts/: JetBrains Mono
+// subsets, ~175 KB) that css/fonts.css declares. Fonts ride along in the binary
+// on purpose: a monospace UI whose rendering depends on which fonts the machine
+// happens to have installed is not one look but several.
+//
 //go:embed ui/index.html ui/css ui/js ui/favicon.ico
 var uiFS embed.FS
 
@@ -90,6 +95,13 @@ func loadUIAssets() (map[string]*uiAsset, error) {
 			}
 			if ext == ".svg" {
 				ct = "image/svg+xml"
+			}
+			// .woff2 的类型也给死:Windows 上 mime.TypeByExtension 查的是系统
+			// 注册表,没登记过 .woff2 的机器会退回 application/octet-stream,再
+			// 配上下面的 nosniff,就是一次静默的字体加载失败(界面悄悄退回
+			// Consolas)。内嵌字体的渲染结果不该看宿主机的脸色,见 css/fonts.css。
+			if ext == ".woff2" {
+				ct = "font/woff2"
 			}
 			sum := sha256.Sum256(body)
 			out["/"+strings.TrimPrefix(p, "ui/")] = &uiAsset{

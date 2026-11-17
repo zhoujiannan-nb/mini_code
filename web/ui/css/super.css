@@ -75,7 +75,7 @@
 .sup-empty { color: var(--ghost-fg); font-size: 12.5px; padding: 14px 4px; opacity: .8; }
 .sup-note { font-size: 12px; color: var(--ghost-fg); margin: 4px 0 10px; line-height: 1.6; }
 .sup-note code, .sup-wdir {
-  font-family: var(--mono, ui-monospace, Consolas, monospace); font-size: 11.5px;
+  font-family: var(--mono); font-size: 11.5px;
   background: var(--ghost-bg); padding: 1px 5px; border-radius: 4px;
 }
 
@@ -159,7 +159,7 @@
 .sup-table td { padding: 6px 8px; border-bottom: 1px solid color-mix(in srgb, var(--edge) 55%, transparent); vertical-align: top; }
 .sup-table tr.off td { opacity: .5; }
 .sup-table tr.onrun { background: var(--accent-l); }
-.sup-table .mono { font-family: var(--mono, ui-monospace, Consolas, monospace); font-size: 11.5px; }
+.sup-table .mono { font-family: var(--mono); font-size: 11.5px; }
 .sup-table .wrap { max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
 .sup-table .dim { color: var(--ghost-fg); }
 .sup-table .ok { color: var(--ok-dot); }
