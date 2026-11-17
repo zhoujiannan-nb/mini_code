@@ -90,6 +90,12 @@ const janitorInterval = 6 * time.Hour
 // short enough that a long-lived install does not grow without bound.
 const eventRetention = 90 * 24 * time.Hour
 
+// orphanGrace is how long conversation rows may exist without a sessions row
+// before the janitor treats them as garbage. One day is far beyond the
+// create-then-append window of any healthy session (the sessions row is written
+// before the loop starts), so a sweep can never clip a live conversation.
+const orphanGrace = 24 * time.Hour
+
 // startJanitor launches the retention pass and the boot sweep.
 func (s *SessionStore) startJanitor() {
 	s.janitorStop = make(chan struct{})
@@ -108,12 +114,26 @@ func (s *SessionStore) startJanitor() {
 	}()
 }
 
-// runJanitor prunes the ledger past retention and sweeps the spill folder.
+// runJanitor prunes the ledger past retention, sweeps the spill folder, and
+// removes rows orphaned by deletes from older binaries.
 func (s *SessionStore) runJanitor() {
 	if n, err := s.PruneEvents(time.Now().Add(-eventRetention)); err != nil {
 		slog.Warn("ledger retention pass failed", "err", err)
 	} else if n > 0 {
 		slog.Info("ledger retention pass removed events", "rows", n, "retention_days", int(eventRetention.Hours()/24))
+	}
+	ev, msg, err := s.PruneOrphans(time.Now().Add(-orphanGrace))
+	if err != nil {
+		slog.Warn("orphan sweep failed", "err", err)
+	} else if ev+msg > 0 {
+		slog.Info("orphan sweep removed rows of deleted sessions", "events", ev, "messages", msg)
+		// Hand the freed pages back to the filesystem: sweeps otherwise leave
+		// the file grown to its high-water mark forever. A no-op unless the
+		// database runs with auto_vacuum=INCREMENTAL (set it once with
+		// "PRAGMA auto_vacuum=INCREMENTAL; VACUUM;" while the server is down).
+		if _, err := s.db.Execute("PRAGMA incremental_vacuum(16384)"); err != nil {
+			slog.Warn("incremental vacuum failed", "err", err)
+		}
 	}
 	cleanupSpillDir(s.spillDir)
 }
@@ -708,10 +728,13 @@ func (s *SessionStore) SetModelKey(sessionID, key string) error {
 }
 
 func (s *SessionStore) Delete(sessionID string) error {
-	// 连带删掉被删会话的事件账本:append-only 的流水留着只会是永远查不到的
-	// 垃圾行(会话都删了,没人再按 id 去查它)。子会话整排删,账本也整排删。
+	// 连带删掉被删会话的事件账本与消息行:append-only 的流水留着只会是永远查不到的
+	// 垃圾行(会话都删了,没人再按 id 去查它)。子会话整排删,账本和消息行也整排删。
+	// session_message 表上线(F2)时,F5 只补了 sessions/session_event 的级联,
+	// 消息行漏删,是线上孤儿行(83%)的主要来源——这里补上,并由 janitor 的
+	// PruneOrphans 清掉修复前留下的存量。
 	//
-	// 全部放进一个事务:以前是五条独立语句,中途崩溃会留下"父会话已删、子会话
+	// 全部放进一个事务:以前是几条独立语句,中途崩溃会留下"父会话已删、子会话
 	// 或账本行还在"的孤儿数据(F5)。
 	return s.db.ExecTx(func(tx *sql.Tx) error {
 		rows, err := tx.Query("SELECT session_id FROM sessions WHERE parent_id = ?", sessionID)
@@ -732,11 +755,12 @@ func (s *SessionStore) Delete(sessionID string) error {
 		if _, err := tx.Exec("DELETE FROM sessions WHERE session_id = ?", sessionID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec("DELETE FROM session_event WHERE session_id = ?", sessionID); err != nil {
-			return err
-		}
-		for _, k := range kidIDs {
-			if _, err := tx.Exec("DELETE FROM session_event WHERE session_id = ?", k); err != nil {
+		doomed := append([]string{sessionID}, kidIDs...)
+		for _, id := range doomed {
+			if _, err := tx.Exec("DELETE FROM session_event WHERE session_id = ?", id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec("DELETE FROM session_message WHERE session_id = ?", id); err != nil {
 				return err
 			}
 		}

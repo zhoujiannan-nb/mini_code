@@ -137,8 +137,11 @@ func TestEventSeqIsReturnedExactly(t *testing.T) {
 }
 
 // TestDeleteRemovesChildrenAndLedgerAtomically covers F5's transaction: after a
-// delete, neither the child session rows nor any ledger row of either session
-// survive.
+// delete, neither the child session rows nor any ledger or message row of
+// either session survive. (Message rows must be written here, not assumed: an
+// earlier version of this test passed vacuously with zero rows and missed the
+// session_message cascade never being wired up — the source of the orphan rows
+// the janitor's PruneOrphans now sweeps.)
 func TestDeleteRemovesChildrenAndLedgerAtomically(t *testing.T) {
 	mgr := newTestManager(t)
 	parent := mustSession(t, mgr, "parent")
@@ -154,6 +157,15 @@ func TestDeleteRemovesChildrenAndLedgerAtomically(t *testing.T) {
 	if _, err := store.AppendEvent(child.ID(), EventTaskStart, 1, nil); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.AppendMessages(pid, []provider.Message{providerMessage("user", "parent turn")}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendMessages(child.ID(), []provider.Message{providerMessage("user", "child turn")}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if msgCount(t, mgr, pid) != 1 || msgCount(t, mgr, child.ID()) != 1 {
+		t.Fatal("setup: message rows missing")
+	}
 
 	if err := store.Delete(pid); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -164,6 +176,7 @@ func TestDeleteRemovesChildrenAndLedgerAtomically(t *testing.T) {
 		{"SELECT COUNT(*) AS n FROM session_event WHERE session_id = ?", pid},
 		{"SELECT COUNT(*) AS n FROM session_event WHERE session_id = ?", child.ID()},
 		{"SELECT COUNT(*) AS n FROM session_message WHERE session_id = ?", pid},
+		{"SELECT COUNT(*) AS n FROM session_message WHERE session_id = ?", child.ID()},
 	} {
 		row, err := store.db.FetchOne(q.sql, q.arg)
 		if err != nil {
@@ -172,6 +185,62 @@ func TestDeleteRemovesChildrenAndLedgerAtomically(t *testing.T) {
 		if n := asInt(row["n"]); n != 0 {
 			t.Fatalf("%s (%s) left %d rows, want 0", q.sql, q.arg, n)
 		}
+	}
+}
+
+// TestOrphanSweepRemovesRowsOfDeletedSessions covers the janitor's cleanup of
+// rows an older delete path left behind: rows whose session is gone and past
+// the grace window go; live sessions' rows stay, even backdated.
+func TestOrphanSweepRemovesRowsOfDeletedSessions(t *testing.T) {
+	mgr := newTestManager(t)
+	s := mustSession(t, mgr, "orphaned")
+	store := mgr.GetStore()
+	if _, err := store.AppendEvent(s.ID(), EventTaskStart, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendMessages(s.ID(), []provider.Message{providerMessage("user", "gone")}, 1); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the old delete path: the sessions row goes, the rows stay.
+	if _, err := store.db.Execute("DELETE FROM sessions WHERE session_id = ?", s.ID()); err != nil {
+		t.Fatal(err)
+	}
+	// Backdate so the sweep's grace window has passed.
+	old := time.Now().Add(-orphanGrace - time.Hour).Format(time.RFC3339Nano)
+	for _, q := range []string{"UPDATE session_event SET created_at = ? WHERE session_id = ?",
+		"UPDATE session_message SET created_at = ? WHERE session_id = ?"} {
+		if _, err := store.db.Execute(q, old, s.ID()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A live session with fresh rows must not be touched.
+	live := mustSession(t, mgr, "live")
+	if _, err := store.AppendEvent(live.ID(), EventTaskStart, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	ev, msg, err := store.PruneOrphans(time.Now().Add(-orphanGrace))
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if ev != 1 || msg != 1 {
+		t.Fatalf("swept events=%d messages=%d, want 1/1", ev, msg)
+	}
+	row, err := store.db.FetchOne("SELECT COUNT(*) AS n FROM session_event WHERE session_id = ?", live.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asInt(row["n"]) != 1 {
+		t.Fatalf("live session lost rows to the sweep: %+v", row)
+	}
+
+	// Backdating the live session's rows must still spare them: the sessions
+	// row exists, so they are not orphans.
+	if _, err := store.db.Execute("UPDATE session_event SET created_at = ? WHERE session_id = ?", old, live.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if ev, _, err := store.PruneOrphans(time.Now().Add(-orphanGrace)); err != nil || ev != 0 {
+		t.Fatalf("backdated live rows swept: ev=%d err=%v", ev, err)
 	}
 }
 

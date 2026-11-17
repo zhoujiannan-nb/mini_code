@@ -6,23 +6,25 @@ import (
 )
 
 // addUsageTotal accumulates across calls and survives a store round-trip
-// (JSON loads numbers back as float64, which must not break the sum).
+// (JSON loads numbers back as float64, which must not break the sum). cached
+// (KV-cache-served prompt tokens) accumulates next to prompt/completion.
 func TestAddUsageTotal(t *testing.T) {
 	s := &Session{record: &SessionRecord{Metadata: map[string]interface{}{}}}
-	s.addUsageTotal(1000, 40)
-	s.addUsageTotal(250, 10)
+	s.addUsageTotal(1000, 950, 40)
+	s.addUsageTotal(250, 250, 10)
 	tot := s.record.Metadata[usageTotalMetadataKey].(map[string]interface{})
-	if tot["prompt"] != int64(1250) || tot["completion"] != int64(50) {
-		t.Fatalf("in-memory totals = %v, want 1250/50", tot)
+	if tot["prompt"] != int64(1250) || tot["cached"] != int64(1200) || tot["completion"] != int64(50) {
+		t.Fatalf("in-memory totals = %v, want 1250/1200/50", tot)
 	}
 	// Simulate a reload from the store: JSON numbers come back as float64.
+	// Old rows without the cached key read as 0 rather than breaking the sum.
 	s.record.Metadata[usageTotalMetadataKey] = map[string]interface{}{
 		"prompt": float64(1250), "completion": float64(50),
 	}
-	s.addUsageTotal(7, 3)
+	s.addUsageTotal(7, 5, 3)
 	tot = s.record.Metadata[usageTotalMetadataKey].(map[string]interface{})
-	if tot["prompt"] != int64(1257) || tot["completion"] != int64(53) {
-		t.Fatalf("post-reload totals = %v, want 1257/53", tot)
+	if tot["prompt"] != int64(1257) || tot["cached"] != int64(5) || tot["completion"] != int64(53) {
+		t.Fatalf("post-reload totals = %v, want 1257/5/53", tot)
 	}
 }
 

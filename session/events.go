@@ -140,6 +140,30 @@ func (s *SessionStore) PruneEvents(before time.Time) (int64, error) {
 	return n, nil
 }
 
+// PruneOrphans deletes ledger and message rows whose session no longer exists,
+// returning (events, messages) counts. The delete path cascades these rows since
+// F5 — and since the fix that also cascaded session_message — but rows written
+// by older binaries stay forever: nothing queries a session id the sessions
+// table does not have. The cutoff is a grace window, not retention: a session
+// row is inserted before any conversation row references it, so a healthy row
+// is never orphaned; anything older than the window with no session is garbage.
+func (s *SessionStore) PruneOrphans(olderThan time.Time) (events, messages int64, err error) {
+	cut := olderThan.Format(time.RFC3339Nano)
+	res, err := s.db.Execute(`DELETE FROM session_event
+		WHERE created_at < ? AND session_id NOT IN (SELECT session_id FROM sessions)`, cut)
+	if err != nil {
+		return 0, 0, err
+	}
+	events, _ = res.RowsAffected()
+	res, err = s.db.Execute(`DELETE FROM session_message
+		WHERE created_at < ? AND session_id NOT IN (SELECT session_id FROM sessions)`, cut)
+	if err != nil {
+		return events, 0, err
+	}
+	messages, _ = res.RowsAffected()
+	return events, messages, nil
+}
+
 // ListEvents returns up to limit events with seq > after, oldest first.
 // limit <= 0 uses the default (500), capped at 5000.
 func (s *SessionStore) ListEvents(sessionID string, after int64, limit int) ([]EventRecord, error) {

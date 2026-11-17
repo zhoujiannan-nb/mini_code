@@ -318,18 +318,21 @@ func (s *Session) recordLastUsage(prompt, cached, completion int, reported bool,
 	// provider call, not just the last). The sub-agent list needs per-task
 	// token totals, which last_usage alone cannot answer (it only holds the
 	// final turn). Same metadata map, same Update — no extra write.
-	s.addUsageTotal(prompt, completion)
+	s.addUsageTotal(prompt, cached, completion)
 	s.persistLocked()
 	s.mu.Unlock()
 }
 
 // usageTotalMetadataKey holds the session-wide token totals
-// ({"prompt": N, "completion": M}) accumulated by recordLastUsage.
+// ({"prompt": N, "cached": C, "completion": M}) accumulated by recordLastUsage.
 const usageTotalMetadataKey = "usage_total"
 
 // addUsageTotal adds one call's tokens to the session-wide totals. The caller
-// holds s.mu; the write rides the caller's store.Update.
-func (s *Session) addUsageTotal(prompt, completion int) {
+// holds s.mu; the write rides the caller's store.Update. cached — prompt tokens
+// served from the provider's KV prefix cache — accumulates next to prompt so a
+// session's cache hit rate survives the ledger's retention horizon; rows
+// written before the key existed simply read it as 0.
+func (s *Session) addUsageTotal(prompt, cached, completion int) {
 	tot, _ := s.record.Metadata[usageTotalMetadataKey].(map[string]interface{})
 	if tot == nil {
 		tot = map[string]interface{}{}
@@ -346,6 +349,7 @@ func (s *Session) addUsageTotal(prompt, completion int) {
 		return 0
 	}
 	tot["prompt"] = as64(tot["prompt"]) + int64(prompt)
+	tot["cached"] = as64(tot["cached"]) + int64(cached)
 	tot["completion"] = as64(tot["completion"]) + int64(completion)
 	s.record.Metadata[usageTotalMetadataKey] = tot
 }

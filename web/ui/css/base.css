@@ -87,7 +87,7 @@
       通用等宽,一行里中英基线乱飘。 */
    --mono: "JetBrains Mono", Consolas, ui-monospace,
            "Microsoft YaHei UI", "Microsoft YaHei", monospace;
-   --msg-avatar: 44px;
+   --msg-avatar: 28px;
    --msg-gap: 10px;
    --msg-radius: 16px;
    --msg-text: 14.5px;
@@ -252,8 +252,11 @@ aside {
 .sess-item {
   padding: 7px 10px; border-radius: var(--r-sm); cursor: pointer; margin-bottom: 2px;
   border: 1px solid transparent; position: relative;
+  display: flex; align-items: center; gap: 10px;
   transition: background .12s ease, border-color .12s ease;
 }
+/* 头像独占左侧一列,高过两行文字(标题+状态都排在它右边) */
+.sess-main { flex: 1 1 auto; min-width: 0; }
 .sess-item:hover { background: var(--hover); }
 .sess-item.active { background: var(--hover-2); border-color: var(--border2); }
 /* 选中项这块底比侧栏亮,里面的次级小字升一级才保住 ≥7:1 */
@@ -277,14 +280,14 @@ aside {
 .sess-skeleton .sk-meta { width: 38%; height: 9px; margin-top: 8px; animation-delay: .15s; }
 @keyframes sess-sk { 0%, 100% { opacity: .85; } 50% { opacity: .3; } }
 .del-btn {
-  position: absolute; right: 8px; top: 8px; width: 20px; height: 20px;
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 20px; height: 20px;
   border: none; border-radius: var(--r-xs); background: transparent; color: var(--text3);
   font-size: 13px; cursor: pointer; display: none; line-height: 20px;
 }
 .sess-item:hover .del-btn { display: block; }
 .del-btn:hover { background: var(--red-btn); color: #fff; }
 .rename-btn {
-  position: absolute; right: 32px; top: 8px; width: 20px; height: 20px;
+  position: absolute; right: 32px; top: 50%; transform: translateY(-50%); width: 20px; height: 20px;
   border: none; border-radius: var(--r-xs); background: transparent; color: var(--text3);
   font-size: 12px; cursor: pointer; display: none; line-height: 20px;
 }
@@ -1086,12 +1089,12 @@ details.m-think[open] summary { margin-bottom: 6px; }
   display: none; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 700; color: #fff;
 }
-/* 会话列表项头像(agent 首字+哈希色,与消息区同一套取色) */
+/* 会话列表项头像:独占左列,高占标题+状态两行 */
 .sess-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sess-ava {
-  width: 28px; height: 28px; flex: 0 0 28px; border-radius: var(--r-xs);
+  width: 46px; height: 46px; flex: 0 0 46px; border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 700; color: #fff;
+  font-size: 16px; font-weight: 700; color: #fff;
 }
 /* 用户头像弹窗 */
 .ua-body { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 8px 0 2px; }

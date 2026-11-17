@@ -54,17 +54,19 @@ function SessionItem({ s }) {
       : ({ completed: "已完成", failed: "失败", interrupted: "已中断" }[s.status] || "")));
   return html`<div class=${"sess-item" + (s.session_id === current ? " active" : "")}
     onClick=${(e) => { if (e.target.closest("button")) return; selectSession(s.session_id); }}>
-    <div class="sess-title-row">
-      <${AgentAvatar} cls="sess-ava" tag="span" />
-      <div class="sess-title">${s.title || "未命名会话"}</div>
-      <span class="sess-time">${relTime(s.updated_at)}</span>
-    </div>
-    <div class="sess-meta">
-      <span class=${"s " + dotClass}></span>
-      ${s.mode === "cautious" ? html`<span title="谨慎模式">🛡</span>` : null}
-      ${statusText ? html`<span>${statusText}</span>` : null}
-      <span>${s.message_count || 0} 条</span>
-      ${tailPath(s.work_dir) ? html`<span class="sess-path" title=${s.work_dir}>🗂 ${tailPath(s.work_dir)}</span>` : null}
+    <${AgentAvatar} cls="sess-ava" tag="span" />
+    <div class="sess-main">
+      <div class="sess-title-row">
+        <div class="sess-title">${s.title || "未命名会话"}</div>
+        <span class="sess-time">${relTime(s.updated_at)}</span>
+      </div>
+      <div class="sess-meta">
+        <span class=${"s " + dotClass}></span>
+        ${s.mode === "cautious" ? html`<span title="谨慎模式">🛡</span>` : null}
+        ${statusText ? html`<span>${statusText}</span>` : null}
+        <span>${s.message_count || 0} 条</span>
+        ${tailPath(s.work_dir) ? html`<span class="sess-path" title=${s.work_dir}>🗂 ${tailPath(s.work_dir)}</span>` : null}
+      </div>
     </div>
     <button class="rename-btn" title="重命名会话"
       onClick=${(e) => { e.stopPropagation(); renameSession(s.session_id, s.title); }}>✎</button>
