@@ -135,18 +135,12 @@ func WorkAgentConfig() *AgentConfig {
 func SuperAgentConfig() *AgentConfig {
 	prompt := LoadPrompt("super.txt")
 	return &AgentConfig{
-		Name:        "super",
-		Description: "Resident router agent: dispatches tasks to super workers it manages, never executes work itself.",
-		Prompt:      prompt,
-		Mode:        "primary",
-		// v9: the Router surface is exactly the super trio; anything an
-		// installed plugin contributes is denied by construction (the old
-		// "absent plugin tool passes" exemption is switched off here — the
-		// live incident had the Router calling sessions_read / web_read).
+		Name:            "super",
+		Description:     "Resident router agent: dispatches tasks to super workers it manages, never executes work itself.",
+		Prompt:          prompt,
+		Mode:            "primary",
 		DenyPluginTools: true,
 		Permissions: mergePermissions(map[string]interface{}{
-			// 纯 Router:只审计、只转发,连读文件都不需要——想了解情况,
-			// 看工单中心,或者转发给挂着 thread 的会话去查。
 			// orchestration surface (registered per-task by the super service)
 			"super_workers": "allow",
 			"super_send":    "allow",
