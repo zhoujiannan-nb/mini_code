@@ -87,7 +87,7 @@
       通用等宽,一行里中英基线乱飘。 */
    --mono: "JetBrains Mono", Consolas, ui-monospace,
            "Microsoft YaHei UI", "Microsoft YaHei", monospace;
-   --msg-avatar: 36px;
+   --msg-avatar: 44px;
    --msg-gap: 10px;
    --msg-radius: 16px;
    --msg-text: 14.5px;
