@@ -477,7 +477,7 @@ function sourceName(ov, id) {
 
 function SourcesPanel({ ov }) {
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ kind: "git-watch", name: "", path: "", branch: "", poll_sec: 300, bind_mode: "auto", bind_session: "", ttl: "3d" });
+  const [f, setF] = useState({ kind: "git-watch", name: "", path: "", branch: "", on_event: "", poll_sec: 300, bind_mode: "auto", bind_session: "", ttl: "3d" });
   if (!ov) return html`<div class="sup-empty">加载中…</div>`;
   const kinds = ov.kinds || [];
   const sessions = [];
@@ -494,7 +494,7 @@ function SourcesPanel({ ov }) {
   };
   const create = () => {
     if (!f.name || (f.kind === "git-watch" && !f.path)) { toast("名称与仓库目录必填", "err"); return; }
-    const config = f.kind === "git-watch" ? { path: f.path, branch: f.branch } : {};
+    const config = f.kind === "git-watch" ? { path: f.path, branch: f.branch, on_event: (f.on_event || "").trim() } : { on_event: (f.on_event || "").trim() };
     post(ROUTES.superSourceCreate, {
       kind: f.kind, name: f.name, config,
       poll_sec: parseInt(String(f.poll_sec || "300"), 10),
@@ -519,6 +519,9 @@ function SourcesPanel({ ov }) {
           <label class="wide">仓库目录<input type="text" placeholder="D:\\project_ai\\mini_code" value=${f.path} onInput=${(e) => set("path", e.target.value)}/></label>
           <label>branch<input type="text" placeholder="留空 = 当前分支" value=${f.branch} onInput=${(e) => set("branch", e.target.value)}/></label>` : null}
         <label>轮询(s)<input type="number" min="60" max="86400" value=${f.poll_sec} onInput=${(e) => set("poll_sec", e.target.value)}/></label>
+        <label class="wide">处理要求 · 更新后要干啥(可留空,原样附在事件正文里)
+          <textarea rows="2" placeholder="例:fetch 后对比新旧提交,梳理值得跟进的变更并产出处理报告;无关紧要的更新记录一句即可。" value=${f.on_event} onInput=${(e) => set("on_event", e.target.value)}></textarea>
+        </label>
         <label>落地方式<select value=${f.bind_mode} onInput=${(e) => set("bind_mode", e.target.value)}>
           <option value="auto">A · 自动派发首绑(首笔事件自动建 thread)</option>
           <option value="assign">B · 指定已有会话</option>
@@ -539,6 +542,12 @@ function SourcesPanel({ ov }) {
         ${(ov.sources || []).length === 0 ? html`<tr><td colspan="7" class="sup-empty">还没有采集源 —— 展开「建采集源」建第一个(如监控 mini_code 上游仓库)</td></tr>` : null}
         ${(ov.sources || []).map((src) => {
           const b = (ov.bindings || {})[src.id];
+          let onReq = "";
+          try { onReq = (JSON.parse(src.config_json || "{}").on_event) || ""; } catch (e) { /* 老数据无此字段 */ }
+          const editOn = () => {
+            const t = prompt("处理要求 —— 收到更新后要让落地的会话干什么(留空 = 清除):\n会原样附在每条事件正文里。", onReq);
+            if (t !== null) post(ROUTES.superSourceSetOn, { id: src.id, on_event: t }, "处理要求已更新");
+          };
           return html`<tr key=${src.id} class=${src.enabled ? "" : " off"}>
             <td><button class=${"sup-sw" + (src.enabled ? " on" : "")} title=${src.enabled ? "停用" : "启用"}
               onClick=${() => post(ROUTES.superSourceToggle, { id: src.id })}><span></span></button></td>
@@ -546,6 +555,7 @@ function SourcesPanel({ ov }) {
               <b>${src.name}</b>
               <span class="sup-tag task">${src.kind}</span>
               ${src.ttl === "forever" ? html`<span class="sup-tag" title="退订宽限=永久">永久</span>` : null}
+              ${onReq ? html`<span class="sup-tag" title=${onReq}>⚙有处理要求</span>` : html`<span class="sup-tag" title="点右侧「处理要求」配置更新后要干啥">无处理要求</span>`}
               ${src.err_count > 0 ? html`<span class="sup-tag bad" title=${src.last_err}>错${src.err_count}</span>` : null}
             </td>
             <td class="mono" title=${src.cursor || "未建基线(首轮静默)"}>${(src.cursor || "—").slice(-8)}</td>
@@ -562,6 +572,7 @@ function SourcesPanel({ ov }) {
             </td>
             <td>
               <button class="sup-linkbtn" onClick=${() => test(src.id)}>测连通</button>
+              <button class="sup-linkbtn" title="配置/修改收到更新后的处置动作" onClick=${editOn}>处理要求</button>
               ${b && b.state === "active" ? html`<button class="sup-linkbtn" title="退订:关闭绑定进入宽限期"
                 onClick=${() => post(ROUTES.superSourceUnbind, { id: src.id, forever: false }, "已退订(3 天宽限)")}>退订</button>` : null}
               ${b && b.state === "unsubscribed" && !b.forever ? html`<button class="sup-linkbtn" title="改为永久宽限"

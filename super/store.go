@@ -795,6 +795,12 @@ func (s *Store) SourceSetEnabled(id string, on bool) error {
 	return err
 }
 
+// SourceSetConfig replaces a source's config_json(面板改「处理要求」用)。
+func (s *Store) SourceSetConfig(id, configJSON string) error {
+	_, err := s.db.Execute("UPDATE super_source SET config_json = ?, updated_at = ? WHERE id = ?", configJSON, nowStr(), id)
+	return err
+}
+
 // SourceSetResult records one poll outcome: run timestamp, and either the
 // advanced cursor (ok) or the error line (fail counter moves on its own).
 func (s *Store) SourceSetResult(id, runAt, cursor, failErr string) error {

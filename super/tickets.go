@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -82,6 +83,60 @@ func (s *Service) CreateSource(kind, name, configJSON string, pollSec int, bindM
 	s.audit(orNone2(actor, "human"), "source.create", src.ID,
 		fmt.Sprintf("%s「%s」· 每 %ds · 落地=%s", kind, name, pollSec, bindMode), src.ID)
 	return src, nil
+}
+
+// sourceDirective 取源配置里的「处理要求」(config_json.on_event,可空)。
+func sourceDirective(src *Source) string {
+	var cfg map[string]interface{}
+	if json.Unmarshal([]byte(src.ConfigJSON), &cfg) != nil {
+		return ""
+	}
+	d, _ := cfg["on_event"].(string)
+	return strings.TrimSpace(d)
+}
+
+// SourceSetOnEvent 更新源的处理要求(merge 进 config_json.on_event)。
+func (s *Service) SourceSetOnEvent(id, onEvent, actor string) error {
+	src, err := s.store.GetSource(id)
+	if err != nil {
+		return err
+	}
+	var cfg map[string]interface{}
+	if json.Unmarshal([]byte(src.ConfigJSON), &cfg) != nil {
+		cfg = map[string]interface{}{}
+	}
+	onEvent = strings.TrimSpace(onEvent)
+	if onEvent == "" {
+		delete(cfg, "on_event")
+	} else {
+		cfg["on_event"] = onEvent
+	}
+	b, _ := json.Marshal(cfg)
+	if err := s.store.SourceSetConfig(id, string(b)); err != nil {
+		return err
+	}
+	s.audit(orNone2(actor, "human"), "source.seton", id,
+		fmt.Sprintf("「%s」处理要求=%q", src.Name, onEvent), id)
+	return nil
+}
+
+// pickFailSeen 给 pick.fail 审计去重:同一工单失败原因不变就不重复记,
+// 免得排队/待人工的票每 15s tick 刷一条同样的行(人类验收时的刷屏实锤)。
+var (
+	pickFailMu   sync.Mutex
+	pickFailSeen = map[string]string{}
+)
+
+func auditPickFail(s *Service, tkID, reason string) {
+	reason = truncate(reason, 200)
+	pickFailMu.Lock()
+	if pickFailSeen[tkID] == reason {
+		pickFailMu.Unlock()
+		return
+	}
+	pickFailSeen[tkID] = reason
+	pickFailMu.Unlock()
+	_ = s.store.AuditInsert("runner", "ticket.pick.fail", tkID, reason, tkID)
 }
 
 // TestSource runs the kind Probe against the stored config (面板的"测连通")。
@@ -296,14 +351,14 @@ func (s *Service) pickOne() bool {
 	for _, t := range qs {
 		sess, delivered, err := s.resolveLanding(t)
 		if err != nil {
-			_ = s.store.AuditInsert("runner", "ticket.pick.fail", t.ID, truncate(err.Error(), 200), t.ID)
+			auditPickFail(s, t.ID, err.Error())
 			continue
 		}
 		if !delivered {
 			// 首绑路径已把开场白装进 spawn task(delivered=true),不再重复投递。
 			opening := s.openingText(t)
 			if err := s.mgr.DeliverToSession(sess, opening); err != nil {
-				_ = s.store.AuditInsert("runner", "ticket.pick.fail", t.ID, "投递失败: "+truncate(err.Error(), 150), t.ID)
+				auditPickFail(s, t.ID, "投递失败: "+err.Error())
 				continue
 			}
 		}
@@ -410,6 +465,10 @@ func (s *Service) openingText(t *Ticket) string {
 // resume+新工单 / 未绑定 → 建单交给 PickUpTickets(auto 首绑或 assign 复挂)。
 func (s *Service) HandleTrigger(src *Source, tr *Trigger) {
 	tr.SrcKey = src.ID
+	// 源配置的「处理要求」随事件正文一起落地(直投/建单/resume 三条路全覆盖)。
+	if d := sourceDirective(src); d != "" && !strings.Contains(tr.Text, "处理要求：") {
+		tr.Text += "\n处理要求：" + d
+	}
 	b, _ := s.store.GetBinding(src.ID)
 	if b != nil {
 		alive := false

@@ -34,6 +34,7 @@ func (s *server) registerSuperRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/super/sources/test", sRequireSuper(s.handleSuperSourceTest))
 	mux.HandleFunc("POST /api/super/sources/bind", sRequireSuper(s.handleSuperSourceBind))
 	mux.HandleFunc("POST /api/super/sources/unbind", sRequireSuper(s.handleSuperSourceUnbind))
+	mux.HandleFunc("POST /api/super/sources/seton", sRequireSuper(s.handleSuperSourceSetOn))
 	mux.HandleFunc("POST /api/super/tickets/close", sRequireSuper(s.handleSuperTicketClose))
 }
 
@@ -62,6 +63,23 @@ func (s *server) handleSuperEnsure(w http.ResponseWriter, r *http.Request) {
 // GET /api/super/overview — one round trip for every panel tab.
 func (s *server) handleSuperOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, superS.Overview())
+}
+
+// POST /api/super/sources/seton — 改源的处理要求(config_json.on_event)。
+func (s *server) handleSuperSourceSetOn(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID      string `json:"id"`
+		OnEvent string `json:"on_event"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
+		writeErr(w, http.StatusBadRequest, "id 必填")
+		return
+	}
+	if err := superS.SourceSetOnEvent(req.ID, req.OnEvent, "human"); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // POST /api/super/config — the human boundary settings (audited per field).

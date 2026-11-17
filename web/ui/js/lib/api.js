@@ -137,5 +137,6 @@ export const ROUTES = Object.freeze({
   superSourceTest: "/api/super/sources/test",
   superSourceBind: "/api/super/sources/bind",
   superSourceUnbind: "/api/super/sources/unbind",
+  superSourceSetOn: "/api/super/sources/seton",
   superTicketClose: "/api/super/tickets/close",
 });
