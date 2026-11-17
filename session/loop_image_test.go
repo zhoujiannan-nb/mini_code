@@ -11,8 +11,6 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// TestBuildUserMessagePlain verifies that without images the initial user
-// message stays a plain text message (legacy behavior).
 func TestBuildUserMessagePlain(t *testing.T) {
 	l := &AgentLoop{}
 	m := l.buildUserMessage("hello")
@@ -21,7 +19,6 @@ func TestBuildUserMessagePlain(t *testing.T) {
 	}
 }
 
-// TestBuildUserMessageWithImages verifies text + image parts in order.
 func TestBuildUserMessageWithImages(t *testing.T) {
 	l := &AgentLoop{}
 	l.SetUserImages([]string{"data:image/png;base64,AAA", "data:image/jpeg;base64,BBB"})
@@ -43,7 +40,6 @@ func TestBuildUserMessageWithImages(t *testing.T) {
 	}
 }
 
-// TestBuildUserMessageImagesOnly verifies an image-only message (no text).
 func TestBuildUserMessageImagesOnly(t *testing.T) {
 	l := &AgentLoop{}
 	l.SetUserImages([]string{"data:image/png;base64,AAA"})
@@ -63,8 +59,6 @@ func multimodalUser(t *testing.T, text, img string) provider.Message {
 	return m
 }
 
-// TestUserMessageMatches covers the dedup predicate: identical messages
-// match; same text with/without (or with different) images must not.
 func TestUserMessageMatches(t *testing.T) {
 	plain := provider.Message{Role: "user", Content: "hi"}
 	plain2 := provider.Message{Role: "user", Content: "hi"}
@@ -90,8 +84,6 @@ func TestUserMessageMatches(t *testing.T) {
 	}
 }
 
-// TestRunAttachesImagesToUserMessage verifies the request actually sent to
-// the model carries the initial user message as multimodal parts.
 func TestRunAttachesImagesToUserMessage(t *testing.T) {
 	var captured struct {
 		Messages []map[string]interface{} `json:"messages"`
@@ -117,7 +109,6 @@ func TestRunAttachesImagesToUserMessage(t *testing.T) {
 		t.Fatalf("expected success, got error: %q", res.Error)
 	}
 
-	// system + multimodal user.
 	if len(captured.Messages) != 2 {
 		t.Fatalf("expected 2 messages (system + user), got %d", len(captured.Messages))
 	}
@@ -138,9 +129,6 @@ func TestRunAttachesImagesToUserMessage(t *testing.T) {
 	}
 }
 
-// TestRunDoesNotReAppendSameMultimodalUserMessage verifies interrupt-recovery
-// dedup: when the history already ends with the identical multimodal user
-// message, it is not appended twice.
 func TestRunDoesNotReAppendSameMultimodalUserMessage(t *testing.T) {
 	var userCount int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -177,9 +165,6 @@ func TestRunDoesNotReAppendSameMultimodalUserMessage(t *testing.T) {
 	}
 }
 
-// TestRunReAppendsWhenImagesDiffer verifies the inverse: history ends with
-// the same text as a plain message, but this run carries images — the
-// multimodal message must still be appended (images would be lost otherwise).
 func TestRunReAppendsWhenImagesDiffer(t *testing.T) {
 	var userCount int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -205,7 +190,7 @@ func TestRunReAppendsWhenImagesDiffer(t *testing.T) {
 
 	history := []provider.Message{
 		{Role: "system", Content: "system"},
-		{Role: "user", Content: "look at this"}, // same text, no images
+		{Role: "user", Content: "look at this"},
 	}
 
 	if _, err := loop.Run(context.Background(), "system", "look at this", history); err != nil {

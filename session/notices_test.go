@@ -6,10 +6,6 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// The transcript must be able to tell the human's words apart from context the
-// runtime injected as a user turn (see notices.go). Each case is built the way
-// the injector builds it, so a change of wording that drops the marker fails
-// here instead of silently painting a system message as the user.
 func TestNoticeKind(t *testing.T) {
 	cases := []struct {
 		name string
@@ -20,9 +16,6 @@ func TestNoticeKind(t *testing.T) {
 		{"human question", provider.Message{Role: "user", Content: "要不要现在开跑?"}, ""},
 		{"worker note", BuildWorkerNotice("公约更新", noteMarker("w-1", 2)), NoticeWorker},
 		{"worker join", BuildWorkerNotice("这条会话属于 worker「x」", workerNoticeJoin), NoticeWorker},
-		// Legacy rows: the 80%/85% usage notices are no longer injected (they
-		// pointed at the unregistered compact_context tool), but sessions written
-		// before that still carry them and must not read as the user speaking.
 		{"context 80 (legacy)", provider.Message{Role: "user", Content: "Context usage is now at 80% of the usable input budget (1000 / 2000 tokens). " + usageNoticeMarker(80)}, NoticeContext},
 		{"context 85 (legacy)", provider.Message{Role: "user", Content: "Context usage is now at 85% of the usable input budget (1000 / 2000 tokens). " + usageNoticeMarker(85)}, NoticeContext},
 		{"subagent", provider.Message{Role: "user", Content: "<subagent id=\"abc12345\" state=\"completed\">Result: done</subagent>"}, NoticeSubagent},
@@ -47,8 +40,6 @@ func TestNoticeKind(t *testing.T) {
 	}
 }
 
-// TestCompactRequestIsNotice: the synthesized compaction instruction rides in as
-// a user turn too, so it must carry a label.
 func TestCompactRequestIsNotice(t *testing.T) {
 	m := BuildCompactRequest("")
 	if !IsCompactRequest(m) {

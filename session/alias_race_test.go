@@ -14,26 +14,7 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// TestQueueDuringRunningTaskNoCorruption guards the record/loop slice
-// aliasing fix. The turn hook used to store the loop's LIVE working slice
-// straight into s.record.Messages (s.record.Messages = messages). While a
-// task ran, the loop's unlocked appends and QueueUserMessage's append could
-// then hit the same backing slot: queued messages got clobbered by the next
-// tool result, and the json.Marshal inside store.Update could read a slot
-// mid-write and persist torn garbage. A later restore (restart / next task)
-// would replay a prefix that was never actually requested — cold prefix
-// cache. The record must hold a COPY; the two sides may never share an array.
-//
-// The test drives a REAL Session.Prompt (real turn hook, real store): the
-// fake model answers its first turn with a pwsh tool call whose command
-// blocks ~5s; while the tool runs, group-style messages are queued and the
-// view is snapshotted. The final persisted history must be exactly the
-// expected sequence — each queued message once, tool result intact, final
-// answer present — and the DB row must round-trip byte-equivalent content.
 func TestQueueDuringRunningTaskNoCorruption(t *testing.T) {
-	// The blocking command below is exactly the sleep-shape the discipline
-	// gate refuses; this test wants the tool to RUN and block ~5s, so the
-	// gate is off for the duration of the test.
 	t.Setenv("MC_EXEC_GATE", "0")
 	block := "sleep 5"
 	if runtime.GOOS == "windows" {
@@ -45,14 +26,9 @@ func TestQueueDuringRunningTaskNoCorruption(t *testing.T) {
 		n := atomic.AddInt64(&requests, 1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		if n == 1 {
-			// First turn: text plus a pwsh tool call that blocks ~5s. The
-			// arguments carry "description" because the advertised pwsh
-			// schema (dsh surface) declares it required — the dispatch-layer
-			// validator refuses calls without it.
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":"running the check"}}]}`)
 			writeSSEChunk(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_exec","type":"function","function":{"name":"pwsh","arguments":"{\"description\":\"blocking sleep check\",\"command\":\"` + block + `\"}"}}]},"finish_reason":"tool_calls"}]}`)
 		} else {
-			// Second turn: final answer.
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":"all done"},"finish_reason":"stop"}]}`)
 		}
 		w.Write([]byte("data: [DONE]\n\n"))
@@ -89,8 +65,6 @@ func TestQueueDuringRunningTaskNoCorruption(t *testing.T) {
 		resCh <- promptResult{c, err}
 	}()
 
-	// Wait until the pre-tool persist has landed (assistant reply with the
-	// tool call is in the view) — the blocking command is running now.
 	deadline := time.Now().Add(15 * time.Second)
 	preToolSeen := false
 	for time.Now().Before(deadline) && !preToolSeen {
@@ -107,13 +81,9 @@ func TestQueueDuringRunningTaskNoCorruption(t *testing.T) {
 		t.Fatal("timed out waiting for the assistant tool-call reply to be persisted")
 	}
 
-	// Group-style messages arrive while the task is running.
 	sess.QueueUserMessage("queued one")
 	sess.QueueUserMessage("queued two")
 
-	// While the window is open the view must stay well-formed: every message
-	// is one of the expected shapes. A torn read of a slot mid-write would
-	// yield garbage strings here.
 	expected := map[string]bool{
 		"do the thing":      true,
 		"running the check": true,
@@ -130,10 +100,6 @@ func TestQueueDuringRunningTaskNoCorruption(t *testing.T) {
 					t.Fatalf("empty system message: %+v", m)
 				}
 			case "user", "assistant":
-				// A runtime-injected notice (a job or sub-agent settlement, a
-				// context reminder) is a well-formed message by design, so it is
-				// not what this test looks for: a torn read of a slot mid-write,
-				// which shows up as garbage text, not as an extra notice.
 				if m.Role == "user" && IsInjectedNotice(m) {
 					continue
 				}
@@ -163,8 +129,6 @@ func TestQueueDuringRunningTaskNoCorruption(t *testing.T) {
 		t.Fatal("timed out waiting for the task to finish")
 	}
 
-	// Final persisted history: exactly the expected sequence, queued
-	// messages each exactly once, in queue order, after the tool result.
 	final := sess.SnapshotMessages()
 	wantRoles := []string{"system", "user", "assistant", "tool", "user", "user", "assistant"}
 	if len(final) != len(wantRoles) {
@@ -182,8 +146,6 @@ func TestQueueDuringRunningTaskNoCorruption(t *testing.T) {
 		t.Fatalf("final history mismatch: %+v", final)
 	}
 
-	// The DB row must round-trip the same content (a torn marshal would show
-	// up as invalid or divergent JSON in the database).
 	rec, err := sess.store.Get(sess.ID())
 	if err != nil {
 		t.Fatalf("store.Get: %v", err)

@@ -13,7 +13,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// echoTool is a trivial tool for the ledger tests: it returns a fixed string.
 type echoTool struct{}
 
 func (echoTool) Name() string        { return "echotool" }
@@ -26,7 +25,6 @@ func (echoTool) Execute(ctx context.Context, params map[string]interface{}) (*to
 	return tools.NewTextResult("echo-result"), nil
 }
 
-// eventRecorder collects ledger events in order.
 type eventRecorder struct {
 	mu     sync.Mutex
 	events []struct {
@@ -73,10 +71,6 @@ func newLedgerClient(t *testing.T, handler http.HandlerFunc) (*provider.ModelCli
 	return client, func() { client.Close(); srv.Close() }
 }
 
-// TestLoopEventLedger runs one tool round followed by a final answer and
-// asserts the ledger recorded the full fact sequence in order:
-// turn/start → assistant/message(with tool_calls) → tool/call → tool/result →
-// turn/start → assistant/message → task/end(completed).
 func TestLoopEventLedger(t *testing.T) {
 	var requests int
 	srvHandler := func(w http.ResponseWriter, r *http.Request) {
@@ -135,9 +129,6 @@ func TestLoopEventLedger(t *testing.T) {
 	}
 }
 
-// TestLoopEventLedgerInterrupted cancels the task before its first turn: the
-// ledger must still close the run with task/end(interrupted) — an open run
-// in the ledger is exactly what the UI resync looks for.
 func TestLoopEventLedgerInterrupted(t *testing.T) {
 	client, closeFn := newLedgerClient(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Error("LLM must not be called after cancel")

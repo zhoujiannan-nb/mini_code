@@ -1,8 +1,3 @@
-// Package approval implements the cautious-mode approval flow: a
-// destructive tool call is held by the runtime gate, this service pushes
-// the request to the UI over the message hub and blocks until the user
-// approves, denies, the task is canceled, or the request times out
-// (auto-deny).
 package approval
 
 import (
@@ -16,8 +11,6 @@ import (
 	"github.com/user/mini_code/util"
 )
 
-// DefaultTimeout is how long an approval request waits for a decision
-// before it is auto-denied.
 const DefaultTimeout = 5 * time.Minute
 
 type pending struct {
@@ -27,8 +20,6 @@ type pending struct {
 	done     chan channels.ApprovalResolvedPayload
 }
 
-// Service holds the pending approval requests and emits their lifecycle
-// events into the message hub. It implements session.Approver.
 type Service struct {
 	hub     *channels.Hub
 	mgr     *session.SessionManager
@@ -38,9 +29,6 @@ type Service struct {
 	reqs map[string]*pending
 }
 
-// NewService creates the approval service bound to the hub and session
-// manager (the manager resolves parent-session titles for sub-agent
-// requests).
 func NewService(hub *channels.Hub, mgr *session.SessionManager) *Service {
 	return &Service{
 		hub:     hub,
@@ -50,15 +38,12 @@ func NewService(hub *channels.Hub, mgr *session.SessionManager) *Service {
 	}
 }
 
-// SetTimeout overrides the approval timeout (tests).
 func (s *Service) SetTimeout(d time.Duration) {
 	if d > 0 {
 		s.timeout = d
 	}
 }
 
-// RequestApproval pushes the request to the UI and blocks until it is
-// decided, the task context is canceled, or the timeout elapses (auto-deny).
 func (s *Service) RequestApproval(ctx context.Context, req session.ApprovalRequest) session.ApprovalDecision {
 	id := util.RandomHex(12)
 	deadline := time.Now().Add(s.timeout)
@@ -111,8 +96,6 @@ func (s *Service) RequestApproval(ctx context.Context, req session.ApprovalReque
 	return session.ApprovalDecision{Approved: resolved.Approved, Reason: resolved.Reason}
 }
 
-// settle records a decision that did not come from the user (timeout /
-// cancel) so a late UI click is ignored.
 func (s *Service) settle(p *pending, d channels.ApprovalResolvedPayload) {
 	select {
 	case p.done <- d:
@@ -120,8 +103,6 @@ func (s *Service) settle(p *pending, d channels.ApprovalResolvedPayload) {
 	}
 }
 
-// Resolve applies a user decision to a pending request. It reports whether
-// the request existed and was still open.
 func (s *Service) Resolve(id string, approved bool) (channels.ApprovalResolvedPayload, bool) {
 	s.mu.Lock()
 	p, ok := s.reqs[id]
@@ -138,14 +119,12 @@ func (s *Service) Resolve(id string, approved bool) (channels.ApprovalResolvedPa
 	case p.done <- d:
 		return d, true
 	default:
-		return channels.ApprovalResolvedPayload{}, false // already settled (timeout/cancel)
+		return channels.ApprovalResolvedPayload{}, false
 	}
 }
 
-// PendingInfo is the JSON view of one open request (GET /api/approvals).
 type PendingInfo = channels.ApprovalRequestPayload
 
-// Pending lists the open requests (UI sync after a reload).
 func (s *Service) Pending() []PendingInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()

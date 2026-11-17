@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// TestExecInputSchema verifies the pwsh tool exposes dsh's verbatim parameter
-// surface. The `input` (stdin) capability stays as an mc extension but is not
-// advertised on the schema (the behaviour test below still covers it).
 func TestExecInputSchema(t *testing.T) {
 	tt := NewExecTool(0, "")
 	params := tt.Parameters()
@@ -27,12 +24,6 @@ func TestExecInputSchema(t *testing.T) {
 	}
 }
 
-// stdinEchoCommand returns a command that reads all of stdin and writes it
-// back to stdout, so the test can observe what the child actually received.
-// On Windows this must NOT be `more`: when pwsh is absent from PATH the tool
-// falls back to powershell.exe, whose `more` alias does not read redirected
-// stdin (it prints a bare newline and eats the payload). [Console]::In reads
-// the pipe identically on both shells.
 func stdinEchoCommand() string {
 	if runtime.GOOS == "windows" {
 		return "[Console]::In.ReadToEnd()"
@@ -40,9 +31,6 @@ func stdinEchoCommand() string {
 	return "cat"
 }
 
-// TestExecInputFeedsStdin is the integration test for the `input` parameter:
-// a command that echoes its stdin must return the fed text. This proves the
-// parameter is actually wired to cmd.Stdin, not merely declared in the schema.
 func TestExecInputFeedsStdin(t *testing.T) {
 	tt := NewExecTool(30, "")
 	payload := "hello_stdin_roundtrip_123"
@@ -61,8 +49,6 @@ func TestExecInputFeedsStdin(t *testing.T) {
 	}
 }
 
-// TestExecInputMultiLine feeds multi-line data (the case shell redirection
-// handles poorly) and checks every line round-trips.
 func TestExecInputMultiLine(t *testing.T) {
 	tt := NewExecTool(30, "")
 	payload := "line_one_alpha\nline_two_beta\nline_three_gamma"
@@ -83,9 +69,6 @@ func TestExecInputMultiLine(t *testing.T) {
 	}
 }
 
-// TestExecInputOmittedKeepsDefault: without `input`, a command that reads
-// stdin must see EOF immediately (stdin defaults to NUL/devnull) and must
-// not hang. Guards against the new parameter changing default behavior.
 func TestExecInputOmittedKeepsDefault(t *testing.T) {
 	tt := NewExecTool(10, "")
 	res, err := tt.Execute(context.Background(), map[string]interface{}{

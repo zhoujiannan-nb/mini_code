@@ -5,16 +5,11 @@ import (
 	"testing"
 )
 
-// TestEstimateTextFallbackIsCJKAware pins the offline estimator that every
-// context decision falls back to when the tiktoken BPE file cannot be loaded
-// (no internet on first use). The old estimate was len(bytes)/4, which for
-// Chinese text spends ~0.75 tokens per character and under-counts by about
-// half — the direction that makes compaction fire too late.
 func TestEstimateTextFallbackIsCJKAware(t *testing.T) {
 	cases := []struct {
 		name    string
 		text    string
-		minMult float64 // tokens per rune, lower bound
+		minMult float64
 		maxMult float64
 	}{
 		{"ascii", strings.Repeat("a", 400), 0.20, 0.26},
@@ -33,8 +28,6 @@ func TestEstimateTextFallbackIsCJKAware(t *testing.T) {
 	}
 }
 
-// TestEstimateTextFallbackNeverUnderCountsChinese is the property that matters:
-// the fallback must not be cheaper than the naive byte estimate it replaced.
 func TestEstimateTextFallbackNeverUnderCountsChinese(t *testing.T) {
 	text := strings.Repeat("上下文压缩会消耗很多 token。", 50)
 	naiveBytes := len(text) / 4
@@ -43,8 +36,6 @@ func TestEstimateTextFallbackNeverUnderCountsChinese(t *testing.T) {
 	}
 }
 
-// TestEstimateTextFallbackEmpty: empty input costs nothing, so a conversation of
-// empty strings cannot inflate the budget.
 func TestEstimateTextFallbackEmpty(t *testing.T) {
 	if got := EstimateTextFallback(""); got != 0 {
 		t.Fatalf("empty string = %d tokens, want 0", got)

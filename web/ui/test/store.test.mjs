@@ -1,12 +1,8 @@
-// SSE 事件归约的真测试:不靠字符串包含,直接喂 channels.Message 形状的事件,
-// 断言 state 形状。这里覆盖流式累积、工具配对、用量/状态、审批,以及断线对账幂等。
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { initialState, applyEvent, applyResync, setState, getState } from "../js/lib/store.js";
 
-// 每个用例一份独立 state:initialState 里只放不可变的初值,
-// 这里把会被 reducer 改写的容器换新,避免用例之间互相污染。
 function makeState(extra) {
   return Object.assign({}, initialState, {
     current: "s1",
@@ -65,7 +61,6 @@ test("store: tool_start/tool_end 按工具名配对,重复 tool_end 不重复落
   assert.equal(s.run.steps[0].phase, "done");
   assert.equal(s.run.steps[0].result, "hi\n");
 
-  // 重复的 tool_end(SSE 重放 / 断线对账之后)不能再造出一步,也不能改结果。
   const again = applyEvent(s, { kind: "tool_end", session_id: "s1", tool_name: "exec", tool_result: "别覆盖" });
   assert.equal(again.run.steps.length, 1);
   assert.equal(again.run.steps[0].result, "hi\n");
@@ -80,7 +75,6 @@ test("store: 工具步骤在批次结束时并入正文,纯过程轮独立成条
   assert.equal(s.rows[0].steps.length, 1, "这一轮的步骤并进了答案卡");
   assert.equal(s.run.steps.length, 0, "新一轮从空过程开始");
 
-  // 整轮没有正文:过程条独立成卡,信息不丢。
   let t = makeState();
   t = applyEvent(t, { kind: "tool_start", session_id: "s1", tool_name: "exec", tool_args: "{}" });
   t = applyEvent(t, { kind: "assistant", session_id: "s1", content: "", reasoning: "只想了想" });
@@ -127,7 +121,6 @@ test("store: 审批请求/解决跨会话处理,队列与展示 id 同步", () =
 });
 
 test("store: 断线 resync 回填已在账本里的结果,同一事件不会重复", () => {
-  // 模拟断流:调用已经发出,结果事件在断流窗口里丢了。
   let s = makeState({ running: true });
   s = applyEvent(s, { kind: "tool_start", session_id: "s1", tool_name: "exec", tool_args: '{"command":"sleep 5"}' });
   assert.equal(s.run.steps[0].phase, "run");
@@ -141,11 +134,9 @@ test("store: 断线 resync 回填已在账本里的结果,同一事件不会重�
   assert.equal(r.run.steps[0].phase, "done");
   assert.equal(r.run.steps[0].result, "done");
 
-  // 对账之后,迟到的 tool_end 落到已完成的步骤上:什么都不该再发生。
   const again = applyEvent(r, { kind: "tool_end", session_id: "s1", tool_name: "exec", tool_result: "重复" });
   assert.equal(again.run.steps.length, 1);
   assert.equal(again.run.steps[0].result, "done");
-  // 幂等:再跑一次对账也不会多出步骤。
   const twice = applyResync(again, events, false);
   assert.equal(twice.run.steps.length, 1);
 });
@@ -177,7 +168,6 @@ test("store: 任务已结束的 resync 把剩余步骤标成已执行未收到�
 test("store: setState 的函数式 patch 也只当补丁合并,不许整份替换", () => {
   const keep = getState();
   try {
-    // 漏写 ...s 的函数式 patch(新会话接管当年的写法):只能改它写了的字段。
     setState((s) => ({ current: "s9", rows: s.rows }));
     const st = getState();
     assert.equal(st.current, "s9", "写了的字段生效");
@@ -187,7 +177,7 @@ test("store: setState 的函数式 patch 也只当补丁合并,不许整份替�
     assert.ok(st.boot && typeof st.boot === "object", "boot 还在(读 boot.play 的地方不再炸)");
     assert.ok(Array.isArray(st.models), "models 还在(读 models.find 的地方不再炸)");
   } finally {
-    setState(() => keep); // keep 是满字段对象,合并即恢复
+    setState(() => keep); 
   }
   assert.equal(getState().current, keep.current, "用例之间不留残留");
 });

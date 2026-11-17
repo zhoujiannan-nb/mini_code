@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// withFakeOpener swaps the OS opener for the duration of a test so a passing
-// run never launches Explorer.
 func withFakeOpener(t *testing.T, seen *[]string) {
 	t.Helper()
 	old := fsOpener
@@ -22,9 +20,6 @@ func withFakeOpener(t *testing.T, seen *[]string) {
 	t.Cleanup(func() { fsOpener = old })
 }
 
-// TestResolveOpenPath covers the decorations a chat message puts around a path:
-// quotes, backticks, trailing punctuation, a file:// URL, and a relative path
-// that has to be resolved against the session work dir.
 func TestResolveOpenPath(t *testing.T) {
 	base := `D:\proj`
 	cases := []struct {
@@ -40,7 +35,7 @@ func TestResolveOpenPath(t *testing.T) {
 		{in: `web/ui/index.html`, base: base, want: `D:\proj\web\ui\index.html`},
 		{in: `.\web\index.html`, base: base, want: `D:\proj\web\index.html`},
 		{in: `file:///D:/proj/index.html`, base: "", want: `D:\proj\index.html`},
-		{in: `web/index.html`, base: "", wantErr: true}, // relative with no base
+		{in: `web/index.html`, base: "", wantErr: true},
 		{in: `   `, wantErr: true},
 	}
 	for _, c := range cases {
@@ -61,9 +56,6 @@ func TestResolveOpenPath(t *testing.T) {
 	}
 }
 
-// TestFsOpenAPIOpensExistingPath: a real file is handed to the opener, a
-// missing one is a 404 (a typo must not open a stray window), and a relative
-// path is resolved against the posted base directory.
 func TestFsOpenAPIOpensExistingPath(t *testing.T) {
 	be := &savingBackend{}
 	srv := httptest.NewServer(NewServer(be))
@@ -89,7 +81,6 @@ func TestFsOpenAPIOpensExistingPath(t *testing.T) {
 		return resp, out
 	}
 
-	// 1) absolute path to a real file
 	body, _ := json.Marshal(map[string]string{"path": file})
 	resp, out := post(string(body))
 	if resp.StatusCode != http.StatusOK {
@@ -102,7 +93,6 @@ func TestFsOpenAPIOpensExistingPath(t *testing.T) {
 		t.Errorf("kind = %q, want file", out["kind"])
 	}
 
-	// 2) relative path resolved against the posted base
 	seen = nil
 	body, _ = json.Marshal(map[string]string{"path": "index.html", "base": dir})
 	resp, out = post(string(body))
@@ -113,7 +103,6 @@ func TestFsOpenAPIOpensExistingPath(t *testing.T) {
 		t.Fatalf("relative: opener saw %v, want [%s]", seen, file)
 	}
 
-	// 3) a path that does not exist is a 404, and nothing is opened
 	seen = nil
 	body, _ = json.Marshal(map[string]string{"path": filepath.Join(dir, "nope.html")})
 	resp, out = post(string(body))
@@ -127,7 +116,6 @@ func TestFsOpenAPIOpensExistingPath(t *testing.T) {
 		t.Errorf("missing: error = %q, want a 文件不存在 message", out["error"])
 	}
 
-	// 4) a directory is accepted too (Explorer / Finder window)
 	sub := filepath.Join(dir, "sub")
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -142,14 +130,12 @@ func TestFsOpenAPIOpensExistingPath(t *testing.T) {
 		t.Errorf("dir: kind = %q, want dir", out["kind"])
 	}
 
-	// 5) a relative path with no base cannot be resolved
 	resp, _ = post(`{"path":"web/index.html"}`)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("no base: status = %d, want 400", resp.StatusCode)
 	}
 }
 
-// TestFsOpenRejectsBadBody keeps the endpoint from panicking on garbage.
 func TestFsOpenRejectsBadBody(t *testing.T) {
 	be := &savingBackend{}
 	srv := httptest.NewServer(NewServer(be))

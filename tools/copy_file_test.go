@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// runCopy invokes the copy_file tool with workspace-relative paths and
-// returns the result text.
 func runCopy(t *testing.T, ws, src, dst string, recursive bool) string {
 	t.Helper()
 	tool := NewCopyFileTool(ws)
@@ -43,7 +41,6 @@ func TestCopyFileBasic(t *testing.T) {
 	if string(got) != "hello\n" {
 		t.Fatalf("content mismatch: %q", got)
 	}
-	// The source must remain in place.
 	if _, err := os.Stat(filepath.Join(dir, "a.txt")); err != nil {
 		t.Fatalf("source must remain, got: %v", err)
 	}
@@ -71,7 +68,6 @@ func TestCopyFileIntoExistingDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Destination is an existing directory: copy into it, keeping base name.
 	out := runCopy(t, dir, "a.txt", "sub", false)
 	if !strings.Contains(out, "Successfully copied") {
 		t.Fatalf("expected success, got: %s", out)
@@ -79,7 +75,6 @@ func TestCopyFileIntoExistingDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "sub", "a.txt")); err != nil {
 		t.Fatalf("expected copy at sub/a.txt: %v", err)
 	}
-	// Trailing separator means the same.
 	out = runCopy(t, dir, "a.txt", "sub2/", false)
 	if !strings.Contains(out, "Successfully copied") {
 		t.Fatalf("expected success with trailing separator, got: %s", out)
@@ -174,7 +169,6 @@ func TestCopyDirRecursive(t *testing.T) {
 			t.Fatalf("missing copied file %s: %v", rel, err)
 		}
 	}
-	// Source tree must remain intact.
 	if _, err := os.Stat(filepath.Join(dir, "a", "sub", "deep", "f3.txt")); err != nil {
 		t.Fatalf("source tree must remain, got: %v", err)
 	}
@@ -203,8 +197,6 @@ func TestCopyDirIntoItselfRejected(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "a", "f.txt"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Copying a directory into one of its own subdirectories must be
-	// rejected up front (it would otherwise recurse forever).
 	out := runCopy(t, dir, "a", "a/sub2", true)
 	if !strings.HasPrefix(out, "Error:") {
 		t.Fatalf("expected self-copy rejection, got: %s", out)

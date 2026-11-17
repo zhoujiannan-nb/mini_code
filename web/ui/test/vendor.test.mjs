@@ -1,8 +1,3 @@
-// Structural checks for the vendored runtime + import map. These guard the two
-// constraints the Go static route and the browser impose:
-//   1. vendor files must be served as ".js" (ui.go extension whitelist);
-//   2. vendored modules must import each other by bare specifier, so the import
-//      map can dedupe them ("hooks.js" importing "preact" must hit the same URL).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, stat } from "node:fs/promises";
@@ -47,7 +42,6 @@ test("vendored hooks.js imports preact by bare specifier", async () => {
 });
 
 test("vendor files are byte-identical to their recorded sources", async () => {
-  // Cheap integrity guard: sizes recorded in js/vendor/README.md at copy time.
   const expected = {
     "preact.js": 11970,
     "hooks.js": 3628,

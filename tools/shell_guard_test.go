@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// TestExecWorkingDirNotExist: a non-existent working_dir must produce a clear
-// error that names the cause, instead of the cryptic "failed to start
-// command" that cmd.Start used to return.
 func TestExecWorkingDirNotExist(t *testing.T) {
 	tool := NewExecTool(60, t.TempDir())
 	badDir := filepath.Join(t.TempDir(), "no-such-dir-xyz")
@@ -26,8 +23,6 @@ func TestExecWorkingDirNotExist(t *testing.T) {
 	}
 }
 
-// TestExecWorkingDirIsFile: a working_dir that points at a file (not a
-// directory) must also be rejected with a clear error.
 func TestExecWorkingDirIsFile(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "afile.txt")
@@ -47,7 +42,6 @@ func TestExecWorkingDirIsFile(t *testing.T) {
 	}
 }
 
-// TestExecWorkingDirValid: a valid working_dir must still run the command.
 func TestExecWorkingDirValid(t *testing.T) {
 	dir := t.TempDir()
 	tool := NewExecTool(60, dir)
@@ -64,9 +58,6 @@ func TestExecWorkingDirValid(t *testing.T) {
 	}
 }
 
-// TestExecTooLongCommand: a command over the shell command-line limit must be
-// rejected with a clear error pointing at the script-file workaround, instead
-// of failing with a cryptic "filename or extension is too long".
 func TestExecTooLongCommand(t *testing.T) {
 	tool := NewExecTool(60, t.TempDir())
 	longCmd := "echo " + strings.Repeat("a", 9000)
@@ -79,7 +70,6 @@ func TestExecTooLongCommand(t *testing.T) {
 	}
 }
 
-// TestExecNormalCommandUnaffected: a normal-length command must run as before.
 func TestExecNormalCommandUnaffected(t *testing.T) {
 	tool := NewExecTool(60, t.TempDir())
 	t.Cleanup(func() { _ = tool.Close() })

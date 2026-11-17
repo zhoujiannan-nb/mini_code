@@ -2,9 +2,6 @@ package provider
 
 import "testing"
 
-// TestModelClientWithReasoning pins the per-session thinking override: the
-// derived client carries the new thinking switch + effort, the shared base
-// client is left untouched, and an empty override returns the receiver.
 func TestModelClientWithReasoning(t *testing.T) {
 	mc := &ModelClient{provider: NewSGLangProvider("http://x", "k", "m", 100, 1000, 0.6, 0.9, "", "")}
 
@@ -12,7 +9,6 @@ func TestModelClientWithReasoning(t *testing.T) {
 	if derived == mc {
 		t.Fatal("expected a derived client for a non-empty override")
 	}
-	// The base provider must not be mutated (the registry client is shared).
 	if p := mc.provider.(*SGLangProvider); p.Thinking != "" || p.ReasoningEffort != "" {
 		t.Fatalf("base provider was mutated: %+v", p)
 	}
@@ -25,14 +21,11 @@ func TestModelClientWithReasoning(t *testing.T) {
 		t.Fatalf("derived reasoning_effort = %q, want low", req.ReasoningEffort)
 	}
 
-	// An empty override is a no-op (returns the receiver).
 	if mc.WithReasoning("", "") != mc {
 		t.Fatal("empty override should return the receiver")
 	}
 }
 
-// TestUsageCacheReported pins the cache-report detection used to tell a real
-// 0% hit apart from a deployment that does not report cache hits at all.
 func TestUsageCacheReported(t *testing.T) {
 	if (&Usage{}).CacheReported() {
 		t.Fatal("empty usage should not report cache")

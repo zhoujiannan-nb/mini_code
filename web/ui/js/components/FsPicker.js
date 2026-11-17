@@ -1,5 +1,3 @@
-// @ 文件夹选择器(纯展示)。数据、防抖、键盘导航都在 Composer 里 —— 它需要
-// 直接操作输入框的光标位置,放在同一个组件里比拼两处状态更可靠。
 import { h } from "preact";
 import htm from "htm";
 

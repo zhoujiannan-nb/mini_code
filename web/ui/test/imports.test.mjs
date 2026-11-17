@@ -1,7 +1,4 @@
-﻿// The browser module graph: every import specifier in js/ must resolve to a
-// file under web/ui (relative or root-absolute) or to an import-map bare
-// specifier. Neither node --check nor the jsdom tests would catch a typo here,
-// and in a browser it is a blank page.
+﻿
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

@@ -1,19 +1,5 @@
 package tools
 
-// dsh_newtools.go — the tools dsh exposes that MiniCode did not have.
-//
-// Each one carries dsh's verbatim schema (dsh_surface.go); the behaviour is
-// MiniCode's own honest implementation. One deliberate deviation stays:
-//   - wait_agent cannot see the user's typing (in MiniCode user input starts
-//     a task by itself); the no-agent mode waits on the session's injection
-//     queue, which is where sub-agent messages, settlement notices and live
-//     steering all land.
-//
-// Goal and todo live on the SESSION, not per task: the session package owns
-// one GoalStore/TodoTool per conversation, restores them from record
-// metadata, persists every accepted change (SetOnChanged), and drives
-// automatic continuation rounds (goal-round-driver equivalent) — see
-// session/goalround.go for the driver half.
 
 import (
 	"context"
@@ -30,33 +16,26 @@ import (
 	"time"
 )
 
-// ---- todo_write ----
 
 type todoItem struct {
 	Content string `json:"content"`
 	Status  string `json:"status"`
 }
 
-// TodoTool records and updates the session's task list (dsh's todo_write).
-// The instance lives on the SESSION (one per conversation), not per task:
-// the list a long task built must still be there when the next task starts,
-// and SetOnChanged/Restore give the session its persistence hook.
 type TodoTool struct {
 	mu        sync.Mutex
 	items     []todoItem
-	onChanged func() // called after every accepted write, WITHOUT mu held
+	onChanged func()
 }
 
 func NewTodoTool() *TodoTool { return &TodoTool{} }
 
-// SetOnChanged installs the persistence hook (nil clears it).
 func (t *TodoTool) SetOnChanged(f func()) {
 	t.mu.Lock()
 	t.onChanged = f
 	t.mu.Unlock()
 }
 
-// Snapshot renders the list as JSON for the session store ("" when empty).
 func (t *TodoTool) Snapshot() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -70,9 +49,6 @@ func (t *TodoTool) Snapshot() string {
 	return string(b)
 }
 
-// Restore loads a Snapshot written by Snapshot. Errors are ignored on
-// purpose: a corrupt blob is worse than no blob, but never worth failing
-// the task that merely wanted to register the tool.
 func (t *TodoTool) Restore(s string) {
 	if s == "" {
 		return
@@ -102,10 +78,6 @@ func (t *TodoTool) Execute(ctx context.Context, params map[string]interface{}) (
 		}
 		content, _ := m["content"].(string)
 		status, _ := m["status"].(string)
-		// dsh's stable texts (dsh-tool-todo/src/index.ts). The status enum is
-		// schema-validated (dispatch reports it); the tool-level guards are the
-		// content checks — a duplicate content is an update the model cannot
-		// address by name, so it is rejected, not merged.
 		if strings.TrimSpace(content) == "" {
 			return NewTextResult("Error: invalid todo: `content` must be a non-empty string"), nil
 		}
@@ -126,11 +98,9 @@ func (t *TodoTool) Execute(ctx context.Context, params map[string]interface{}) (
 	hook := t.onChanged
 	t.mu.Unlock()
 	if hook != nil {
-		hook() // session-side persistence, outside our lock (it takes the session lock)
+		hook()
 	}
 
-	// dsh's exact success line: counts only, no list echo — the list is the
-	// model's own input, repeating it back is pure token cost.
 	var p, i, c int
 	for _, it := range items {
 		switch it.Status {
@@ -145,59 +115,41 @@ func (t *TodoTool) Execute(ctx context.Context, params map[string]interface{}) (
 	return NewTextResult(fmt.Sprintf("Updated todo list: %d pending, %d in progress, %d completed.", p, i, c)), nil
 }
 
-// ---- create_goal / get_goal / update_goal ----
 
 type goalRecord struct {
 	ID            string `json:"goal_id"`
 	Revision      int    `json:"revision"`
 	Objective     string `json:"objective"`
 	MaxGoalRounds int    `json:"max_goal_rounds,omitempty"`
-	Status        string `json:"status"` // active | paused | completed | blocked
+	Status        string `json:"status"`
 	BlockedReason string `json:"blocked_reason,omitempty"`
 }
 
-// DefaultGoalMaxRounds bounds automatic continuation when create_goal did
-// not name a cap. dsh's driver always has a safe-integer bound; this is
-// MiniCode's, chosen so a stalling model cannot burn the session forever.
 const DefaultGoalMaxRounds = 8
 
-// MinBlockedRounds is dsh's floor: marking a goal blocked takes at least
-// this many automatic rounds of trying (schema: "blocked is rejected before
-// the configured minimum round count").
 const MinBlockedRounds = 3
 
-// GoalSnapshot is the persisted shape of a GoalStore (exported so the
-// session package can name the JSON surface in its metadata).
 type GoalSnapshot struct {
 	Cur    *goalRecord `json:"cur"`
 	Rounds int         `json:"rounds"`
 }
 
-// GoalStore is one session's goal — the state dsh's goal-round-driver reads.
-// The store also answers the driver's questions (NeedsDrive/BeginRound) and
-// enforces the human-round-only rule the update_goal schema promises:
-// edit/pause/resume need a direct human round; complete/blocked also pass
-// in an automatic continuation, and blocked additionally takes
-// MinBlockedRounds delivered rounds.
 type GoalStore struct {
 	mu        sync.Mutex
 	cur       *goalRecord
-	rounds    int  // automatic continuation rounds delivered for cur
-	autoRound bool // the task currently running was started by the driver
+	rounds    int
+	autoRound bool
 	onChanged func()
 }
 
 func NewGoalStore() *GoalStore { return &GoalStore{} }
 
-// SetOnChanged installs the persistence hook (nil clears it). It is invoked
-// after every accepted change, without the store lock held.
 func (s *GoalStore) SetOnChanged(f func()) {
 	s.mu.Lock()
 	s.onChanged = f
 	s.mu.Unlock()
 }
 
-// fire persists after the mutation landed (never under the store lock).
 func (s *GoalStore) fire() {
 	s.mu.Lock()
 	f := s.onChanged
@@ -207,24 +159,18 @@ func (s *GoalStore) fire() {
 	}
 }
 
-// SetAutoRound marks whether the task now running came from the goal driver
-// (the session sets it at task start from the round marker). It is per-task,
-// never persisted.
 func (s *GoalStore) SetAutoRound(auto bool) {
 	s.mu.Lock()
 	s.autoRound = auto
 	s.mu.Unlock()
 }
 
-// View returns the driver-side reading: the current goal (possibly nil) and
-// the rounds delivered. The record must not be mutated by callers.
 func (s *GoalStore) View() (*goalRecord, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.cur, s.rounds
 }
 
-// MaxRounds returns the effective automatic-round cap.
 func (s *GoalStore) MaxRounds() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -237,7 +183,6 @@ func (s *GoalStore) MaxRounds() int {
 	return DefaultGoalMaxRounds
 }
 
-// BeginRound counts one delivered automatic round.
 func (s *GoalStore) BeginRound() {
 	s.mu.Lock()
 	s.rounds++
@@ -248,8 +193,6 @@ func (s *GoalStore) BeginRound() {
 	}
 }
 
-// Snapshot renders {cur, rounds} for the session store ("" when there is no
-// goal at all).
 func (s *GoalStore) Snapshot() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -263,9 +206,6 @@ func (s *GoalStore) Snapshot() string {
 	return string(b)
 }
 
-// Restore loads a Snapshot written by Snapshot. Corrupt input is ignored.
-// The autoRound flag is deliberately not restored: no task is running while
-// a session is loaded.
 func (s *GoalStore) Restore(str string) {
 	if str == "" {
 		return
@@ -320,7 +260,7 @@ func (t *CreateGoalTool) Execute(ctx context.Context, params map[string]interfac
 		Status:        "active",
 	}
 	t.store.cur = g
-	t.store.rounds = 0 // a new goal counts its own automatic rounds from zero
+	t.store.rounds = 0
 	t.store.mu.Unlock()
 	t.store.fire()
 	return NewTextResult(goalJSON(g)), nil
@@ -360,10 +300,6 @@ func (t *UpdateGoalTool) Execute(ctx context.Context, params map[string]interfac
 	action := strParam(params, "action")
 	rev, _ := params["revision"].(float64)
 
-	// Root-permission judgement (dsh goal-round-driver): the store knows
-	// whether the running task is an automatic goal round. Human-only
-	// actions are refused inside automatic rounds; blocked additionally
-	// needs the minimum round count. complete passes anywhere.
 	t.store.mu.Lock()
 	auto := t.store.autoRound
 	rounds := t.store.rounds
@@ -433,7 +369,6 @@ func (t *UpdateGoalTool) Execute(ctx context.Context, params map[string]interfac
 	return NewTextResult(goalJSON(g)), nil
 }
 
-// ---- web_fetch ----
 
 type WebFetchTool struct{}
 
@@ -444,10 +379,6 @@ func (t *WebFetchTool) Description() string                { return dshDesc("web
 func (t *WebFetchTool) Parameters() map[string]interface{} { return dshParams("web_fetch") }
 func (t *WebFetchTool) IsHidden() bool                     { return false }
 
-// dsh's declared caps: one response body read to 5,000,000 bytes, one output
-// capped at 200,000 characters with the footer below. mc's old 1 MiB / 20,000
-// trio returned strictly less of every document than dsh, forcing a second
-// fetch to read what the first should have carried.
 const (
 	webFetchMaxBody      = 5000000
 	webFetchMaxText      = 200000
@@ -456,7 +387,6 @@ const (
 )
 
 var (
-	// RE2 has no backreferences, so the script/style strip is its own pattern.
 	reHTMLScript  = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(?:script|style)>`)
 	reHTMLTag     = regexp.MustCompile(`<[^>]+>`)
 	reWSqueeze    = regexp.MustCompile(`[ \t\r\f]+`)
@@ -465,9 +395,6 @@ var (
 
 func (t *WebFetchTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	url := strParam(params, "url")
-	// dsh fetch.js validation: non-empty, http(s), length cap, no embedded
-	// credentials (a URL carrying user:pass is a prompt-injection vector and
-	// is refused outright).
 	if strings.TrimSpace(url) == "" {
 		return NewTextResult("Error: invalid arguments: url must be a non-empty string"), nil
 	}
@@ -482,9 +409,6 @@ func (t *WebFetchTool) Execute(ctx context.Context, params map[string]interface{
 	}
 	client := &http.Client{
 		Timeout: 30 * time.Second,
-		// dsh follows only same-origin redirects; a cross-origin hop is a
-		// hand-off the model did not ask for, so the redirect response
-		// itself is the result.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) > 0 && req.URL.Host != via[0].URL.Host {
 				return http.ErrUseLastResponse
@@ -499,9 +423,6 @@ func (t *WebFetchTool) Execute(ctx context.Context, params map[string]interface{
 	if err != nil {
 		return NewTextResult("Error: " + err.Error()), nil
 	}
-	// A product UA: WAFs and CDNs routinely reject the Go default client
-	// string, and one 403 costs the model another round (or pushes it to the
-	// shell). This is the tool's identity, not a disguise.
 	req.Header.Set("User-Agent", "mini-code/1.0 (+https://github.com/user/mini_code)")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -549,11 +470,7 @@ func htmlToText(s string) string {
 	return s
 }
 
-// ---- workflow ----
 
-// WorkflowTool exposes dsh's workflow schema. MiniCode has no JavaScript
-// orchestration engine; the tool says so plainly instead of pretending, and the
-// model falls back to subagent (which the description points at).
 type WorkflowTool struct{}
 
 func NewWorkflowTool() *WorkflowTool { return &WorkflowTool{} }
@@ -567,17 +484,11 @@ func (t *WorkflowTool) Execute(ctx context.Context, params map[string]interface{
 	return NewTextResult("Error: this build does not run workflow scripts. Delegate the work with one or more subagent calls instead."), nil
 }
 
-// ---- working_directory ----
 
-// WorkingDirHost is what the working_directory tool uses to move the shell's
-// default directory with the session's stated directory.
 type WorkingDirHost interface {
 	SetWorkingDir(dir string)
 }
 
-// WorkingDirectoryTool reads or changes the session's working directory
-// (dsh's working_directory). File tools keep resolving relative paths against
-// the directory they were built with; the shell follows the new one.
 type WorkingDirectoryTool struct {
 	mu   sync.Mutex
 	dir  string
@@ -594,10 +505,6 @@ func (t *WorkingDirectoryTool) SetExecHost(h WorkingDirHost) {
 	t.mu.Unlock()
 }
 
-// SetDir re-seeds the reported directory. The tool is rebuilt per task while
-// the exec tool it drives lives for the whole session, so without this the
-// model would cd once, get a new builder next task, and be told the session
-// sat at the original directory again.
 func (t *WorkingDirectoryTool) SetDir(dir string) {
 	if dir == "" {
 		return
@@ -635,4 +542,3 @@ func (t *WorkingDirectoryTool) Execute(ctx context.Context, params map[string]in
 	return NewTextResult(target), nil
 }
 
-// ---- wait_agent lives in agents.go (WaitAgentTool) ----

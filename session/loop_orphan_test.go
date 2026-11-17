@@ -15,16 +15,12 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// Coverage for history repaired after a run was killed between persisting a
-// tool call and appending its result (see repairOrphanToolCalls).
 
 func orphanCall(id, name string) provider.ToolCall {
 	return provider.ToolCall{ID: id, Type: "function",
 		Function: provider.FuncCall{Name: name, Arguments: `{}`}}
 }
 
-// unanswerable reports assistant messages whose tool calls have no matching
-// tool result anywhere after them.
 func unanswerable(msgs []provider.Message) []string {
 	var bad []string
 	for i, m := range msgs {
@@ -46,7 +42,6 @@ func unanswerable(msgs []provider.Message) []string {
 }
 
 func TestRepairOrphanToolCalls(t *testing.T) {
-	// A healthy history comes back untouched.
 	clean := []provider.Message{
 		{Role: "user", Content: "go"},
 		{Role: "assistant", ToolCalls: []provider.ToolCall{orphanCall("a", "exec")}},
@@ -57,8 +52,6 @@ func TestRepairOrphanToolCalls(t *testing.T) {
 		t.Fatalf("a complete history was rewritten: %d messages", len(got))
 	}
 
-	// A call left without a result gets exactly one, with the right id, and the
-	// messages before it are not touched (that is the cached prefix).
 	history := []provider.Message{
 		{Role: "user", Content: "go"},
 		{Role: "assistant", Content: "let me look", ToolCalls: []provider.ToolCall{
@@ -79,7 +72,6 @@ func TestRepairOrphanToolCalls(t *testing.T) {
 		t.Fatalf("still unanswerable after repair: %v", bad)
 	}
 
-	// Every call of one assistant message is answered, in call order.
 	parallel := []provider.Message{
 		{Role: "user", Content: "go"},
 		{Role: "assistant", ToolCalls: []provider.ToolCall{
@@ -96,9 +88,6 @@ func TestRepairOrphanToolCalls(t *testing.T) {
 	}
 }
 
-// TestOrphanHistorySurvivesReload is the regression: a session whose stored
-// history ends on an unanswered tool call must still be able to send a request
-// after an app restart, instead of replaying a request every server rejects.
 func TestOrphanHistorySurvivesReload(t *testing.T) {
 	var mu sync.Mutex
 	var bodies [][]byte
@@ -132,7 +121,6 @@ func TestOrphanHistorySurvivesReload(t *testing.T) {
 		t.Fatalf("CreateSessionRecord: %v", err)
 	}
 	sid := sess.ID()
-	// The state a kill leaves behind: the reply was persisted, its result was not.
 	sess.mu.Lock()
 	sess.record.Messages = []provider.Message{
 		{Role: "user", Content: "跑一个长命令"},
@@ -172,7 +160,6 @@ func TestOrphanHistorySurvivesReload(t *testing.T) {
 	if !bytes.Contains(bodies[0], []byte("call_dead")) {
 		t.Fatal("the repaired call disappeared from the request entirely")
 	}
-	// The repair must be additive: the original history still leads the request.
 	var sys, user bool
 	for _, m := range req.Messages {
 		switch {

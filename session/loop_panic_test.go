@@ -11,8 +11,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// panicTool is a tool whose Execute always panics — used to prove that a
-// tool bug fails the single call instead of crashing the agent process.
 type panicTool struct{}
 
 func (panicTool) Name() string        { return "boom" }
@@ -25,19 +23,14 @@ func (panicTool) Execute(ctx context.Context, params map[string]interface{}) (*t
 	panic("simulated tool bug: index out of range")
 }
 
-// TestToolPanicContained verifies that a panicking tool does not crash the
-// agent loop: the panic is converted into a tool error result, the model is
-// asked for the next step, and the task completes normally.
 func TestToolPanicContained(t *testing.T) {
 	var requests int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt64(&requests, 1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		if n == 1 {
-			// First turn: the model calls the panicking tool.
 			writeSSEChunk(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"boom","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)
 		} else {
-			// Second turn: the model gives up on the tool and answers.
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}`)
 		}
 		w.Write([]byte("data: [DONE]\n\n"))
@@ -61,7 +54,6 @@ func TestToolPanicContained(t *testing.T) {
 	if res.Content != "done" {
 		t.Fatalf("expected content %q, got %q", "done", res.Content)
 	}
-	// The panicking call must have produced a tool error message the model saw.
 	found := false
 	for _, m := range res.Messages {
 		if m.Role == "tool" && strings.Contains(m.Content, "crashed (panic:") {
@@ -76,8 +68,6 @@ func TestToolPanicContained(t *testing.T) {
 	}
 }
 
-// TestToolPanicDoesNotPoisonBatch verifies that a panic in one tool of a
-// batched turn does not prevent the sibling call from executing.
 func TestToolPanicDoesNotPoisonBatch(t *testing.T) {
 	var requests int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

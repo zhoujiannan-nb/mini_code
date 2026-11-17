@@ -14,16 +14,11 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// Permission modes. The mode is a per-session attribute (not a per-agent
-// one): the same role behaves differently depending on the session's mode.
-// Sub-agent sessions snapshot their parent's mode at dispatch time.
 const (
-	ModeFull     = "full"     // all permitted operations run directly
-	ModeCautious = "cautious" // destructive operations need UI approval
+	ModeFull     = "full"
+	ModeCautious = "cautious"
 )
 
-// NormalizeMode maps any input to a valid mode; unknown/empty values fall
-// back to full (legacy sessions have no mode column value).
 func NormalizeMode(m string) string {
 	if strings.EqualFold(strings.TrimSpace(m), ModeCautious) {
 		return ModeCautious
@@ -39,84 +34,36 @@ type Session struct {
 	manager         *SessionManager
 	onToolCallStart func(name string, params map[string]interface{})
 	onToolCallEnd   func(name string, params map[string]interface{}, result string)
-	// onToolOutput forwards a streaming tool's live output to the channel layer.
 	onToolOutput func(name string, chunk string)
-	// onToolArgs forwards the arguments the model is still generating, so the UI
-	// can show a long write_file as it is being typed (display only).
 	onToolArgs       func(name string, argsSoFar string)
 	onAssistantReply func(content string, reasoning string)
 	onContextUsage   func(tokens int)
 	onUsage          func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64)
 
-	// mu guards record.Messages against concurrent writers (the loop's
-	// per-turn persistence, settlement-notice appends, manual compaction)
-	// and readers (web API, fork snapshots). The store.Update call is kept
-	// inside the critical section because it marshals the messages.
 	mu sync.Mutex
 
-	// pendingInjects holds user messages queued while a task is running
-	// (e.g. messages queued for a busy session); the agent loop drains
-	// them at the start of each turn (AgentLoop.SetInjections). Guarded by mu.
 	pendingInjects []string
 
-	// writeAhead counts the user rows QueueUserMessage appended to
-	// record.Messages but that no task start has taken over yet (see
-	// Prompt's reconcile). Guarded by mu.
 	writeAhead int
 
-	// injectWake is wait_agent's doorbell: QueueUserMessage pings it (never
-	// blocks, buffered 1) so a blocked WaitForInput wakes without polling.
-	// Created lazily under mu; waiters re-check pendingInjects first, so an
-	// edge lost to the buffered channel cannot drop input.
 	injectWake chan struct{}
 
-	// goalStore and sessionTodo are this conversation's goal and task list
-	// (dsh's goal/todo live on the session, not the task — see
-	// goalround.go). Built lazily by GoalState/TodoState from the persisted
-	// metadata snapshot, with the tools' OnChanged hook writing every
-	// accepted change back. Guarded by mu.
 	goalStore   *tools.GoalStore
 	sessionTodo *tools.TodoTool
 
-	// execTool is the session's one exec tool, kept across tasks. It owns the
-	// shell pool and the background-command registry, and both are session state
-	// by definition: rebuilding the tool per task would cold-start every shell,
-	// orphan the shells and background commands the previous task left running,
-	// and leave job ids that no longer resolve. execDir remembers which working
-	// directory it was built for, because joining a worker can move the directory.
-	// Guarded by mu.
 	execTool *tools.ExecTool
 	execDir  string
 
-	// obs is the session's file memory: which files this conversation has read
-	// (the write-before-read gate) and which it mutated blind (the ledger). It
-	// hangs off the session rather than the loop because a loop is built per
-	// task: a per-task memory would demand a fresh read of everything at the
-	// start of every task, which is exactly the tax the gate must not add.
-	// Guarded by mu.
 	obs *tools.Observation
 
-	// Persistence health (F1). A failed write used to be invisible: the task went
-	// on believing its turn was stored, and a crash resumed from an older history
-	// than the user had seen, so the transcript and the file on disk silently
-	// diverged. Every write now goes through persistLocked, which counts failures,
-	// raises a ledger row, and tells the model once per task that the ground under
-	// it is no longer durable. Guarded by mu.
 	persistFailures int
 	persistErr      string
 	persistNoticed  bool
 
-	// Append fast path bookkeeping (F2): how many messages are known to be in
-	// session_message, and the JSON of the last one. A turn that only appended
-	// can write just its new messages; anything else (compaction shrank the
-	// conversation, a fork replaced it) falls back to the full rewrite.
-	// Guarded by mu.
 	msgRows     int
 	msgLastJSON string
 }
 
-// lastMessageJSON renders the trailing message for the append guard; "" for an
-// empty conversation.
 func lastMessageJSON(msgs []provider.Message) string {
 	if len(msgs) == 0 {
 		return ""
@@ -128,22 +75,10 @@ func lastMessageJSON(msgs []provider.Message) string {
 	return string(b)
 }
 
-// persistFailureNotice is the runtime message injected once per task when the
-// conversation cannot be written to disk. It is a user-role message because that
-// is the only role every chat template honours mid-conversation (see notices.go),
-// and it is marked so the transcript shows it as runtime text, not as the user
-// speaking.
 const persistFailureNotice = "__MC_PERSIST_FAILED__ The conversation could not be saved to disk; see the app log for the underlying error. " +
 	"Your work is still in memory and you can keep going, but if the app crashes now that work is lost. " +
 	"Finish the current step, tell the user that persistence is failing, and stop unless they ask you to continue."
 
-// persistRetry attempts a persistence write a few times with a short backoff.
-// Concurrent sessions share one SQLite file: a deferred transaction that
-// upgrades to a write gets SQLITE_BUSY back immediately — the connection's
-// busy_timeout does not cover that case — and a moment's patience almost
-// always clears it. Without this, one busy moment injects the persist-failure
-// notice and the agent stops mid-task. Both wrapped writes (Update,
-// AppendMessages) are single transactions, so a retry never double-applies.
 func persistRetry(fn func() error) error {
 	var err error
 	for attempt := 0; attempt < 5; attempt++ {
@@ -157,12 +92,6 @@ func persistRetry(fn func() error) error {
 	return err
 }
 
-// persistLocked writes the session record and records the outcome. Callers must
-// hold s.mu (it touches record.Messages and the health counters).
-//
-// It reports whether the write succeeded. Callers that can surface an error
-// (the metadata setters) may ignore it; the task path must not, because that is
-// the one an interrupted run depends on.
 func (s *Session) persistLocked() bool {
 	if err := persistRetry(func() error { return s.store.Update(s.record) }); err != nil {
 		s.notePersistFailure(err)
@@ -174,15 +103,11 @@ func (s *Session) persistLocked() bool {
 	return true
 }
 
-// notePersistFailure records a failed write and tells the model about it once
-// per task. Caller holds s.mu.
 func (s *Session) notePersistFailure(err error) {
 	s.persistFailures++
 	s.persistErr = err.Error()
 	slog.Error("session persist failed",
 		"session", s.ID(), "failures", s.persistFailures, "err", err)
-	// The ledger is best-effort by contract: if the database is the thing that
-	// is broken, this append fails too and only the log line survives.
 	if _, e := s.store.AppendEvent(s.ID(), EventPersistFailed, 0, map[string]any{
 		"error": err.Error(), "failures": s.persistFailures,
 	}); e != nil {
@@ -190,26 +115,16 @@ func (s *Session) notePersistFailure(err error) {
 	}
 	if !s.persistNoticed {
 		s.persistNoticed = true
-		// Queued on the session, so the loop feeds it to the model at its next
-		// turn (and an idle session still shows it in the transcript).
 		s.pendingInjects = append(s.pendingInjects, persistFailureNotice)
 		s.record.Messages = append(s.record.Messages, provider.Message{Role: "user", Content: persistFailureNotice})
 	}
 }
 
-// persistTurnLocked writes the conversation after a turn.
-//
-// The normal case is append-only: the loop hands over the conversation with new
-// messages at the tail, so only those are written (F2 — the previous version
-// re-marshaled and rewrote the whole conversation, images included, several times
-// per turn). Anything else — compaction shrank it, a fork replaced it, an
-// external write invalidated the prefix — falls back to the full rewrite, which
-// is correct by construction.
 func (s *Session) persistTurnLocked() {
 	msgs := s.record.Messages
 	n := len(msgs)
 	if n == s.msgRows && lastMessageJSON(msgs) == s.msgLastJSON {
-		return // nothing new to write
+		return
 	}
 	prefixUnchanged := s.msgRows == 0 || (n > s.msgRows && lastMessageJSON(msgs[:s.msgRows]) == s.msgLastJSON)
 	if prefixUnchanged && n > s.msgRows {
@@ -227,16 +142,12 @@ func (s *Session) persistTurnLocked() {
 	s.persistLocked()
 }
 
-// PersistHealth reports persistence failures for this conversation: how many
-// writes have failed and the last error. The web layer exposes it so a
-// degraded conversation is visible instead of silently losing history.
 func (s *Session) PersistHealth() (failures int, lastErr string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.persistFailures, s.persistErr
 }
 
-// observation returns the session's file memory, creating it on first use.
 func (s *Session) observation() *tools.Observation {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -256,10 +167,6 @@ func (s *Session) ModelKey() string       { return s.record.ModelKey }
 func (s *Session) ChannelKey() string     { return s.record.ChannelKey }
 func (s *Session) Record() *SessionRecord { return s.record }
 
-// ReasoningOverride returns the session's per-session thinking depth override
-// (empty = use the model's configured default). It backs the composer's
-// thinking control: the same model can think at different depths per
-// conversation without editing the model config.
 func (s *Session) ReasoningOverride() (thinking, effort string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -268,9 +175,6 @@ func (s *Session) ReasoningOverride() (thinking, effort string) {
 	return
 }
 
-// SetReasoningOverride sets the per-session thinking depth and persists it.
-// Empty values clear that part of the override (fall back to the model's
-// configured default). It applies from the session's next task on.
 func (s *Session) SetReasoningOverride(thinking, effort string) {
 	s.mu.Lock()
 	if s.record.Metadata == nil {
@@ -289,15 +193,8 @@ func (s *Session) SetReasoningOverride(thinking, effort string) {
 	s.mu.Unlock()
 }
 
-// lastUsageMetadataKey holds the session's most recent per-call provider
-// usage report (cache-hit + output speed) in the session metadata, so the
-// UI composer stats survive session switches, page refreshes and restarts.
 const lastUsageMetadataKey = "last_usage"
 
-// recordLastUsage persists the last per-call provider usage into the session
-// metadata (whole-row update under the session lock). It is called from the
-// agent loop after each successful LLM call, so the stored value is always the
-// conversation's "last one" — exactly what the UI shows after the task settles.
 func (s *Session) recordLastUsage(prompt, cached, completion int, reported bool, speed float64) {
 	if prompt <= 0 && completion <= 0 {
 		return
@@ -311,27 +208,16 @@ func (s *Session) recordLastUsage(prompt, cached, completion int, reported bool,
 		"cached":     cached,
 		"completion": completion,
 		"reported":   reported,
-		"speed":      speed, // tokens/second, average of the last LLM call; 0 = not reported
+		"speed":      speed,
 		"at":         time.Now().Format(time.RFC3339),
 	}
-	// usage_total accumulates tokens across the whole session lifetime (every
-	// provider call, not just the last). The sub-agent list needs per-task
-	// token totals, which last_usage alone cannot answer (it only holds the
-	// final turn). Same metadata map, same Update — no extra write.
 	s.addUsageTotal(prompt, cached, completion)
 	s.persistLocked()
 	s.mu.Unlock()
 }
 
-// usageTotalMetadataKey holds the session-wide token totals
-// ({"prompt": N, "cached": C, "completion": M}) accumulated by recordLastUsage.
 const usageTotalMetadataKey = "usage_total"
 
-// addUsageTotal adds one call's tokens to the session-wide totals. The caller
-// holds s.mu; the write rides the caller's store.Update. cached — prompt tokens
-// served from the provider's KV prefix cache — accumulates next to prompt so a
-// session's cache hit rate survives the ledger's retention horizon; rows
-// written before the key existed simply read it as 0.
 func (s *Session) addUsageTotal(prompt, cached, completion int) {
 	tot, _ := s.record.Metadata[usageTotalMetadataKey].(map[string]interface{})
 	if tot == nil {
@@ -339,7 +225,7 @@ func (s *Session) addUsageTotal(prompt, cached, completion int) {
 	}
 	as64 := func(v interface{}) int64 {
 		switch n := v.(type) {
-		case float64: // after a JSON round-trip through the store
+		case float64:
 			return int64(n)
 		case int64:
 			return n
@@ -354,8 +240,6 @@ func (s *Session) addUsageTotal(prompt, cached, completion int) {
 	s.record.Metadata[usageTotalMetadataKey] = tot
 }
 
-// LastUsage returns the persisted last-call usage report (see
-// recordLastUsage); nil when the session has no LLM call recorded yet.
 func (s *Session) LastUsage() map[string]interface{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -363,18 +247,6 @@ func (s *Session) LastUsage() map[string]interface{} {
 	return m
 }
 
-// QueueUserMessage appends a user message to be injected into the running
-// agent loop at its next turn (a message arriving while the session is busy).
-// For an idle session use SessionManager.DeliverToSession, which starts a task
-// instead.
-//
-// The message is ALSO persisted immediately (write-ahead): a web refresh
-// re-renders only persisted history (SnapshotMessages), so without this a
-// queued message would vanish from the view until the next turn drained it.
-// No duplication: the loop's next persist overwrites the record with its own
-// conversation (task-start snapshot + drained injections, the message once);
-// the settle-drain path likewise appends it once via deliverIdle after the
-// final save.
 func (s *Session) QueueUserMessage(text string) {
 	s.mu.Lock()
 	s.pendingInjects = append(s.pendingInjects, text)
@@ -385,26 +257,18 @@ func (s *Session) QueueUserMessage(text string) {
 	}
 	select {
 	case s.injectWake <- struct{}{}:
-	default: // a wake-up is already pending
+	default:
 	}
 	s.persistLocked()
 	s.mu.Unlock()
 }
 
-// HasPendingInput reports whether inputs are queued for the loop's next drain.
-// Implements tools.InputWaiter (wait_agent's session-side half).
 func (s *Session) HasPendingInput() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.pendingInjects) > 0
 }
 
-// WaitForInput blocks until the next queued input arrives or the timeout
-// fires; ctx cancellation (user stop) unblocks it too. It deliberately does
-// NOT consume pendingInjects: the loop still drains them at the start of the
-// next turn, so the wait result and the drained user message describe the
-// same input instead of racing over who delivers it.
-// Implements tools.InputWaiter.
 func (s *Session) WaitForInput(ctx context.Context, timeout time.Duration) bool {
 	s.mu.Lock()
 	if len(s.pendingInjects) > 0 {
@@ -429,9 +293,6 @@ func (s *Session) WaitForInput(ctx context.Context, timeout time.Duration) bool 
 	}
 }
 
-// DrainUserMessages returns and clears all queued user messages (called by
-// the agent loop at the start of each turn, and once more when a task
-// settles).
 func (s *Session) DrainUserMessages() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -440,7 +301,6 @@ func (s *Session) DrainUserMessages() []string {
 	return out
 }
 
-// metadataString reads one string field of a session record's metadata blob.
 func metadataString(rec *SessionRecord, key string) string {
 	if rec == nil || rec.Metadata == nil {
 		return ""
@@ -449,22 +309,11 @@ func metadataString(rec *SessionRecord, key string) string {
 	return s
 }
 
-// Worker metadata keys: the display name and the shared directory, written when
-// the session joins. The 公约 itself lives in the worker row with a version, so a
-// running session can be told about a newer one mid-work (see WorkerNotice).
 const (
 	workerNameMetaKey = "worker_name"
 	workerDirMetaKey  = "worker_dir"
 )
 
-// SetWorkerMembership attaches the session to a worker (workerID == "" detaches
-// it) and records the worker's name and shared directory, which becomes the
-// session's own working directory.
-//
-// workDir == "" leaves the session's directory alone — that is the detach case,
-// where the files it wrote stay put. It is a whole-row
-// write under the session lock, and it is only ever called while the session is
-// between tasks (join/leave happen at the start of a task or from the UI).
 func (s *Session) SetWorkerMembership(workerID, name, workDir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -485,10 +334,6 @@ func (s *Session) SetWorkerMembership(workerID, name, workDir string) {
 	s.persistLocked()
 }
 
-// setWorkerNameLabel refreshes only the worker NAME this session carries in its
-// metadata (rendered into its system prompt). Rename is the only thing that does
-// this after the join: the directory and the membership stay as they were, so the
-// session's files and paths never move.
 func (s *Session) setWorkerNameLabel(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -499,8 +344,6 @@ func (s *Session) setWorkerNameLabel(name string) {
 	s.persistLocked()
 }
 
-// WorkerSnapshot returns what this session carries for its worker (id, display
-// name, shared directory).
 func (s *Session) WorkerSnapshot() (workerID, name, dir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -509,13 +352,6 @@ func (s *Session) WorkerSnapshot() (workerID, name, dir string) {
 		metadataString(s.record, workerDirMetaKey)
 }
 
-// sharedExec returns the session's exec tool, building it on first use. It is
-// cached on purpose: the tool owns the shell pool and the background-command
-// registry, so a fresh instance per task would cold-start every shell, orphan the
-// shells and jobs the previous task left running, and hand out job ids that stop
-// resolving as soon as the next task begins. A moved working directory (joining a
-// worker relocates the session) is the one change that rebuilds it — and retires
-// the old shells with it.
 func (s *Session) sharedExec(dir string) *tools.ExecTool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -523,17 +359,13 @@ func (s *Session) sharedExec(dir string) *tools.ExecTool {
 		return s.execTool
 	}
 	if old := s.execTool; old != nil {
-		go old.Close() // those shells were opened in a directory this session left
+		go old.Close()
 	}
 	s.execTool = tools.NewExecTool(120, dir)
 	s.execDir = dir
 	return s.execTool
 }
 
-// stopBackground ends the session's background commands and frees its shells.
-// Called when the conversation goes away (deleted, or the app closing): work
-// nobody will ever read is stopped rather than left running, and the settlement
-// is marked as teardown so no notice is injected into a session that is gone.
 func (s *Session) stopBackground(reason string) {
 	s.mu.Lock()
 	ex := s.execTool
@@ -548,15 +380,6 @@ func (s *Session) stopBackground(reason string) {
 	ex.Close()
 }
 
-// preparePromptTools assembles the agent config, the prompt builder (tool set
-// and system-prompt inputs) and the per-task context state.
-//
-// It is deliberately shared by Prompt (a live agent turn) and the manual
-// compaction path: the tool schemas are rendered into the prompt PREFIX, so a
-// compaction request must carry exactly the same schemas and system prompt as
-// the session's normal turns. Any difference makes the request stop being a
-// prefix of the previous one, the provider recomputes the whole conversation,
-// and the user pays for it — hence one single source of truth.
 func (s *Session) preparePromptTools() (*agent.AgentConfig, *PromptBuilder, *tools.ContextState, error) {
 	cfg := s.agentCfg
 	if cfg == nil {
@@ -568,77 +391,35 @@ func (s *Session) preparePromptTools() (*agent.AgentConfig, *PromptBuilder, *too
 	}
 
 	pb := NewPromptBuilder(cfg, s.record.WorkDir)
-	// The todo list belongs to the conversation, not the task: hand the
-	// builder this session's instance (restored from metadata, persist hook
-	// installed) in place of the placeholder it built for itself.
 	pb.Tools.Register(s.TodoState())
-	// One pwsh tool per session, not per task (see sharedExec). Registering it
-	// here replaces the instance the builder created for itself, and it has to
-	// happen before the job tools are attached: they take the job registry from
-	// the pwsh tool, so "what is running in this session" can only ever mean the
-	// commands this session's own pwsh started.
 	ex := s.sharedExec(s.record.WorkDir)
 	pb.Tools.Register(ex)
-	// ...and the working_directory tool has to follow the same swap: it was
-	// built against the placeholder instance this Register just displaced, so
-	// re-attach it to the long-lived exec tool (and seed its reported
-	// directory from the exec tool's live one — a previous task's cd survives
-	// the per-task builder, and the model must be told the truth about it).
 	if cd, ok := pb.Tools.Get("working_directory").(*tools.WorkingDirectoryTool); ok {
 		cd.SetExecHost(ex)
 		cd.SetDir(ex.WorkingDir())
 	}
 	isRootSession := s.record.ParentID == ""
 	if s.record.AgentRole == "super" && s.manager != nil && s.manager.Super() != nil {
-		// The Router role replaces the sub-agent orchestration surface with
-		// its own super_* tools: a super session dispatches workers, it does
-		// not fork sub-agents. One constant schema per session, registered on
-		// every task like EnableAgentTools, so the request prefix is stable.
 		pb.goalStore = s.GoalState()
 		s.manager.Super().RegisterTools(pb.Tools, s.ID())
 	} else if cfg.Mode == "primary" && s.manager != nil && isRootSession {
-		// The goal belongs to the conversation: the goal tools this enables
-		// must bind to the session's store (restored from metadata, persist
-		// hook installed), not to the per-builder throwaway one.
 		pb.goalStore = s.GoalState()
 		pb.EnableAgentTools(s.manager, s.ID())
 	}
-	// Background commands (pwsh jobs), the tools that read and stop them, and the
-	// notice a command gets when it ends after its wait was given up on. Every
-	// session, children included: the job ids it hands out must resolve in the
-	// conversation that received them.
 	if s.manager != nil {
 		pb.EnableJobTools(s.manager, s.ID())
 	}
-	// Context-management state (used to auto-compact at the threshold). The
-	// context_usage / compact_context tools are NOT registered — dsh's surface
-	// has none — but the state still drives the automatic compaction in the loop.
 	ctxState := tools.NewContextState()
 
-	// Worker (工作大类): nothing goes into the system prompt. The join reminder
-	// and the 公约 travel as one user message the loop appends once per task
-	// (Session.WorkerNotice), which keeps the request an exact extension of the
-	// cached prefix. The workers tool is not registered either (dsh's surface has
-	// no such tool); the service and the notice path are untouched.
 	return cfg, pb, ctxState, nil
 }
 
-// Prompt runs one agent task and returns the final reply text together with
-// the reasoning_content the model produced for it (may be empty).
-//
-// images optionally carries image data URLs (data:image/...;base64,...) that
-// are attached to the initial user message as multimodal content, so the
-// model sees them on the first turn (e.g. screenshots pasted in the web UI).
-//
-// Panic containment: any panic inside the task (LLM path, compaction, tool
-// execution, persistence) is converted into a clean task failure instead of
-// crashing the whole process — the server keeps serving other sessions.
 func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxTurns int) (content string, reasoning string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("agent task panicked, contained", "session", s.ID(), "panic", r)
 			func() {
-				defer func() { recover() }() // never let the bookkeeping itself re-panic
+				defer func() { recover() }()
 				s.updateStatus("failed")
 				s.store.AppendEvent(s.ID(), EventTaskEnd, 0, map[string]any{"status": "failed", "error": fmt.Sprintf("panic: %v", r)})
 			}()
@@ -648,9 +429,6 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		}
 	}()
 	s.updateStatus("running")
-	// One persistence warning per task, not one per session: a task that keeps
-	// piling work onto an unpersisted history should hear it once, and the next
-	// task gets its own chance to say so again.
 	s.mu.Lock()
 	s.persistNoticed = false
 	s.mu.Unlock()
@@ -660,13 +438,7 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		s.updateStatus("failed")
 		return "", "", err
 	}
-	// Whose round is this? The driver's notice carries the <goal_round tag;
-	// anything else is a human round, and the goal store gates update_goal
-	// accordingly (goalround.go).
 	s.markGoalRoundOrigin(goal)
-	// Name the model in the persona placeholder ("a coding agent powered by the
-	// {{model}} model"), dsh-style. The session keeps its client for life, so
-	// this cannot change the prompt of an ongoing conversation.
 	s.mu.Lock()
 	mdl := s.client
 	s.mu.Unlock()
@@ -676,17 +448,6 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	systemPrompt := pb.BuildSystemPrompt(s.record.WorkDir, "")
 	defs := pb.GetFilteredDefinitions(cfg)
 
-	// Persist the accumulated conversation to the database after every
-	// completed turn, so an interrupted task can be resumed from the last
-	// good state (interrupt recovery).
-	//
-	// The slice is COPIED before storing: the loop keeps appending to its
-	// working slice after this call returns, without holding s.mu. Aliasing
-	// it into the record would let the loop's next append race with
-	// QueueUserMessage's append (both writing the same backing slot) and
-	// with the json.Marshal inside store.Update — torn DB rows, clobbered
-	// queued messages, and a restored history that no longer matches what
-	// was actually requested (cold prefix cache).
 	turnHook := func(turn int, messages []provider.Message) {
 		if len(messages) == 0 {
 			return
@@ -697,10 +458,6 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		s.mu.Unlock()
 	}
 
-	// Snapshot the session's client under the session lock: a concurrent
-	// SetModel may swap it, and this task must run to completion on the
-	// client it started with. Apply the per-session thinking override (the
-	// composer's control) on top of the model's configured default.
 	s.mu.Lock()
 	client := s.client
 	thinking, _ := s.record.Metadata["thinking"].(string)
@@ -710,56 +467,29 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		client = client.WithReasoning(thinking, effort)
 	}
 	loop := NewAgentLoop(client, maxTurns, pb.Tools, defs, s.onToolCallStart, s.onToolCallEnd, s.onAssistantReply, turnHook)
-	// Session event ledger: every conversation fact the loop produces is
-	// appended to session_event (the messages column stays as the projection
-	// the model and history view read). Best-effort: a ledger failure logs
-	// and the task continues.
 	loop.SetEventSink(func(typ string, turn int, payload map[string]any) {
 		if _, err := s.store.AppendEvent(s.ID(), typ, turn, payload); err != nil {
 			slog.Error("session event append failed", "session", s.ID(), "type", typ, "err", err)
 		}
 	})
-	// Oversized tool results spill their full text next to the database so
-	// the pruned history copy can point at it (prune.go).
 	loop.SetSpillDir(s.store.SpillDir(), s.ID())
-	// Background commands belong to this session: the loop passes the id to the
-	// job runtime, and every async-capable tool starts its work under it. No owner
-	// means no job runtime, which is the correct fallback for a loop built without
-	// a session (tests, the one-shot CLI).
 	loop.SetJobOwner(s.ID())
-	// What this session has read (the write-before-read gate) and which files it
-	// mutated blind (the ledger). Session-scoped, not task-scoped: see the obs
-	// field comment.
 	loop.SetObservation(s.observation(), s.record.WorkDir)
-	// Live tool output (UI only) rides the same callback set; tools that cannot
-	// stream simply never call it.
 	loop.SetOnToolOutput(s.onToolOutput)
 	loop.SetOnToolArgs(s.onToolArgs)
 	if s.manager != nil {
 		loop.compactionOn = s.manager.CompactionEnabled()
-		// Runtime permission gate: role permissions + cautious-mode
-		// approval. Applied to every tool call, including in sub-agent
-		// sessions (which snapshot the parent's mode at dispatch time).
 		loop.SetGate(s.gateFor(cfg))
 	}
 	if len(images) > 0 {
 		loop.SetUserImages(images)
 	}
-	// Mid-task user messages (queued for a running session) are
-	// drained from the session at the start of every turn.
 	loop.SetInjections(s.DrainUserMessages)
-	// Worker notice (special user message): rendered once per task, at the start of
-	// the run — the join reminder, or the latest 公约 when this conversation carries
-	// an older version. Appended, never a rewritten prefix.
 	if s.manager != nil && s.manager.Workers() != nil {
 		loop.SetWorkerNotice(s.WorkerNotice)
 	}
-	// Wire the shared context state (context tools).
 	loop.SetContextState(ctxState)
 	loop.SetOnContextUsage(s.onContextUsage)
-	// Wrap the usage callback: first persist the last per-call usage into the
-	// session (DB) so the composer stats restore after a stop/refresh, then
-	// forward it to the channel for the live UI update.
 	if s.onUsage != nil {
 		loop.SetOnUsage(func(prompt, cached, completion int, reported bool, speed float64) {
 			s.recordLastUsage(prompt, cached, completion, reported, speed)
@@ -767,19 +497,9 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		})
 	}
 
-	// Name the session from this message right now, not after the task. A first task
-	// can run for an hour — or fail — and the sidebar should not sit on
-	// "现在有一个活, 就是 C:\Users…" the whole time. Fire-and-forget, once per
-	// session, and only when the title is still the untouched truncation (title.go).
 	s.maybeGenerateTitle([]provider.Message{{Role: "user", Content: goal}})
 	s.mu.Lock()
 	history := s.record.Messages
-	// Reconcile with write-ahead rows (QueueUserMessage): a message that raced
-	// this task start can already sit in the history snapshot. Leave it in the
-	// queue and the loop's turn-one drain would inject the same text a second
-	// time, persisting the row twice when the loop overwrites the record.
-	// Queue entries persist as trailing user rows in queue order, so a
-	// trailing-window match means those rows are exactly those injections.
 	if n := len(s.pendingInjects); n > 0 {
 		m := 0
 		for m < n && m < len(history) {
@@ -794,10 +514,6 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 			s.writeAhead -= m
 		}
 	}
-	// Same story for the goal itself: if the final save of the previous task
-	// raced a queued message that then persisted behind it (settle-drain
-	// window), the row is already in history; the loop re-adds it as the goal,
-	// so drop the copy. Only rows QueueUserMessage wrote are eligible.
 	if s.writeAhead > 0 && len(history) > 0 {
 		if last := history[len(history)-1]; last.Role == "user" && last.GetText() == goal {
 			history = history[:len(history)-1]
@@ -805,10 +521,6 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		}
 	}
 	s.mu.Unlock()
-	// The run begins: record the task (and the user message it answers) in
-	// the ledger. The loop records everything after this point; the matching
-	// task/end comes from the loop's return points (and from the panic
-	// guard above, should the task never return).
 	startPayload := map[string]any{"goal": goal, "images": len(images)}
 	if client != nil {
 		startPayload["model"] = client.ModelName()
@@ -822,15 +534,9 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 		return "", "", err
 	}
 
-	// Always save accumulated messages, even on interrupt. Copy for the
-	// same reason as the turn hook above: the record must never alias a
-	// slice owned by (a possibly still-running) loop.
 	if len(result.Messages) > 0 {
 		s.mu.Lock()
 		s.record.Messages = append([]provider.Message(nil), result.Messages...)
-		// The conversation now owns the history: any write-ahead rows are by
-		// definition either in result.Messages (drained) or re-dispatched
-		// below, so the count starts over.
 		s.writeAhead = 0
 		s.persistLocked()
 		s.mu.Unlock()
@@ -839,34 +545,24 @@ func (s *Session) Prompt(ctx context.Context, goal string, images []string, maxT
 	reasoning = LastAssistantReasoning(result.Messages)
 
 	if result.Interrupted {
-		// Mark the session so a later run can resume from the persisted
-		// messages (interrupt recovery).
 		s.updateStatus("interrupted")
 		return result.Content, reasoning, nil
 	}
 
 	if result.Success {
 		s.updateStatus("completed")
-		// Messages queued between the final turn's drain and task completion
-		// would otherwise wait for the next manual task; dispatch them now as
-		// a fresh task. (Not done after an interrupt: the user may have
-		// cancelled the whole line of work.)
 		if s.manager != nil {
 			if texts := s.DrainUserMessages(); len(texts) > 0 {
 				for _, t := range texts {
 					s.manager.deliverIdle(s.ID(), t)
 				}
 			} else {
-				// Nobody queued a message: if a goal is still active, this is
-				// where the next automatic round is decided (goalround.go).
 				s.driveGoalRound()
 			}
 		}
 		return result.Content, reasoning, nil
 	}
 
-	// Propagate the failure reason to the caller so the channel can show it
-	// instead of silently stopping.
 	s.updateStatus("failed")
 	return result.Content, reasoning, fmt.Errorf("agent task failed after %d turns: %s", result.Turns, result.Error)
 }
@@ -876,27 +572,17 @@ func (s *Session) updateStatus(status string) {
 	s.persistLocked()
 }
 
-// SessionCallbacks carries the per-session event callbacks. A factory that
-// produces one set of callbacks per session ID lets a message hub route each
-// session's tool events into the bus, including sub-agent sessions.
 type SessionCallbacks struct {
 	OnToolStart func(name string, params map[string]interface{})
 	OnToolEnd   func(name string, params map[string]interface{}, result string)
-	// OnToolOutput receives output a tool produced while it is still running
-	// (display only; the model only ever sees the final tool result).
 	OnToolOutput func(name string, chunk string)
-	// OnToolArgs receives the arguments of a tool call the model is still
-	// generating (accumulated so far), so a long write shows up before it runs.
 	OnToolArgs     func(name string, argsSoFar string)
 	OnReply        func(content string, reasoning string)
-	OnContextUsage func(tokens int)                                                                          // per-turn context token count (UI token bar)
-	OnUsage        func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64) // real per-call usage (cache-hit + output-speed indicator)
+	OnContextUsage func(tokens int)
+	OnUsage        func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64)
 }
 
 type SessionManager struct {
-	// models is the registry of configured model clients. Sessions
-	// reference one by name (record.ModelKey); empty/unknown names
-	// resolve to the default model. It is hot-replaced on config save.
 	models          *provider.ModelRegistry
 	store           *SessionStore
 	sessions        map[string]*Session
@@ -904,103 +590,62 @@ type SessionManager struct {
 	callbackFactory func(sessionID string) *SessionCallbacks
 
 	compactionMu sync.RWMutex
-	compactionOn bool // default true (legacy behavior); hot-swappable via SetCompactionEnabled
+	compactionOn bool
 
-	// titleOn / titleModel are the automatic session-title policy (see
-	// title.go): whether a finished first task earns the session a
-	// model-written title, and which model writes it. Off until the
-	// runtime wires it, so a test talking to a fake provider never fires
-	// the extra request.
 	titleMu    sync.RWMutex
 	titleOn    bool
 	titleModel string
 
-	// modes is the authoritative, race-free view of each session's
-	// permission mode. The runtime gate reads it on every tool call while
-	// the web API may change it concurrently, so it has its own lock.
 	modeMu sync.RWMutex
 	modes  map[string]string
 
-	// approver resolves cautious-mode approval requests (wired by the
-	// approval service); nil = approvals are auto-denied.
 	approverMu sync.RWMutex
 	approver   Approver
 
-	// subagents manages background sub-agent jobs (wired at startup).
 	subagentsMu sync.RWMutex
 	subagents   *SubagentService
 
-	// workers is the 工作大类 service (wired at startup; nil = workers off).
 	workersMu sync.RWMutex
 	workers   *WorkerService
 
-	// superRegistrar is the Super-Agent tool hook (wired at startup). The
-	// session package never imports package super: it only holds this
-	// interface, and the super service (which does import session) registers
-	// the super_* tools onto the prompt builder of agent_role=="super"
-	// sessions. nil = the super subsystem is off.
 	superMu          sync.RWMutex
 	superRegistrar   SuperRegistrar
 
-	// deliverHook delivers a user message to an IDLE session (i.e. starts a
-	// task); the runtime wires it to the message hub.
 	deliverMu   sync.RWMutex
 	deliverHook func(sessionID, text string)
 
-	// activeTaskCheck is the authoritative "a task is running in THIS
-	// process right now" check (the runtime wires it to the hub's
-	// in-memory task registry). The persisted status "running" can be
-	// stale after a restart/crash, which would otherwise make deliveries
-	// queue forever into a session that has no live loop.
 	activeCheckMu   sync.RWMutex
 	activeTaskCheck func(sessionID string) bool
 }
 
-// clientFor resolves the model client for a session's model key. Empty or
-// unknown keys fall back to the default model's client (nil when the
-// registry is empty, e.g. in tests that inject prompt functions).
 func (m *SessionManager) clientFor(modelKey string) *provider.ModelClient {
 	return m.models.Client(modelKey)
 }
 
-// SetModels hot-replaces the model registry (startup / config save).
-// Sessions already running keep using their existing client until they
-// finish; idle sessions keep their snapshot too, so a config edit applies
-// to sessions from the next model switch or reload — same semantics as the
-// legacy single-client hot-swap.
 func (m *SessionManager) SetModels(clients map[string]*provider.ModelClient, defaultName string) {
 	m.models.Set(clients, defaultName)
 }
 
-// Models exposes the model registry (read-only use by the web layer).
 func (m *SessionManager) Models() *provider.ModelRegistry {
 	return m.models
 }
 
-// ContextWindowFor returns the context window of the given model key
-// (default model for empty/unknown keys); 0 when nothing resolves.
 func (m *SessionManager) ContextWindowFor(modelKey string) int {
 	return m.models.ContextWindow(modelKey)
 }
 
-// SetCompactionEnabled hot-toggles automatic context compression. It applies
-// to turns started after the call; in-flight turns keep their setting.
 func (m *SessionManager) SetCompactionEnabled(on bool) {
 	m.compactionMu.Lock()
 	m.compactionOn = on
 	m.compactionMu.Unlock()
 }
 
-// CompactionEnabled reports the current compaction toggle (default true).
 func (m *SessionManager) CompactionEnabled() bool {
 	m.compactionMu.RLock()
 	defer m.compactionMu.RUnlock()
 	return m.compactionOn
 }
 
-// NewRegistryWithDefault builds a model registry whose default model is
-// the given client (nil client → empty registry, for tests that inject
-// prompt functions instead of a real model).
 func NewRegistryWithDefault(client *provider.ModelClient) *provider.ModelRegistry {
 	r := provider.NewModelRegistry()
 	if client != nil {
@@ -1009,9 +654,6 @@ func NewRegistryWithDefault(client *provider.ModelClient) *provider.ModelRegistr
 	return r
 }
 
-// NewSessionManager creates a SessionManager. The client (may be nil in
-// tests) is registered as the default model; a multi-model registry can be
-// installed later via SetModels.
 func NewSessionManager(client *provider.ModelClient, dbPath string) (*SessionManager, error) {
 	store, err := NewSessionStore(dbPath)
 	if err != nil {
@@ -1027,7 +669,6 @@ func NewSessionManager(client *provider.ModelClient, dbPath string) (*SessionMan
 	}, nil
 }
 
-// NewDefaultSessionManager creates a SessionManager using the default database path (~/.mini_code/agent.db)
 func NewDefaultSessionManager(client *provider.ModelClient) (*SessionManager, error) {
 	store, err := NewDefaultSessionStore()
 	if err != nil {
@@ -1043,11 +684,7 @@ func NewDefaultSessionManager(client *provider.ModelClient) (*SessionManager, er
 	}, nil
 }
 
-// --- permission mode ---
 
-// ModeOf returns the session's current permission mode (ModeFull /
-// ModeCautious). Unknown sessions fall back to the stored record, then to
-// full.
 func (m *SessionManager) ModeOf(sessionID string) string {
 	m.modeMu.RLock()
 	if mode, ok := m.modes[sessionID]; ok {
@@ -1077,8 +714,6 @@ func (m *SessionManager) ModeOf(sessionID string) string {
 	return mode
 }
 
-// SetMode switches a session's permission mode. It applies to tool calls
-// from the next one on, including for a task that is currently running.
 func (m *SessionManager) SetMode(sessionID, mode string) error {
 	mode = NormalizeMode(mode)
 	if s, err := m.Get(sessionID); err != nil || s == nil {
@@ -1099,12 +734,6 @@ func (m *SessionManager) SetMode(sessionID, mode string) error {
 	return nil
 }
 
-// SetModel switches a session's model (config model name; empty = default
-// model). It applies from the next task on — a task that is currently
-// running keeps the client it started with (same semantics as the legacy
-// global model hot-swap). The in-memory record and client snapshot are
-// synced under the session lock so a concurrent Prompt either sees the old
-// pair or the new pair, never a mix.
 func (m *SessionManager) SetModel(sessionID, name string) error {
 	name = strings.TrimSpace(name)
 	if name != "" && !m.models.Has(name) {
@@ -1125,10 +754,6 @@ func (m *SessionManager) SetModel(sessionID, name string) error {
 	return nil
 }
 
-// SetReasoning sets a session's per-session thinking depth override (thinking
-// switch + reasoning_effort); empty values clear it and fall back to the
-// model's configured default. It applies from the session's next task on — a
-// task that is currently running keeps the client it started with.
 func (m *SessionManager) SetReasoning(sessionID, thinking, effort string) error {
 	s, err := m.Get(sessionID)
 	if err != nil || s == nil {
@@ -1139,16 +764,9 @@ func (m *SessionManager) SetReasoning(sessionID, thinking, effort string) error 
 	return nil
 }
 
-// --- session title ---
 
-// MaxTitleLen caps the length of a user-chosen session title (in runes).
 const MaxTitleLen = 60
 
-// RenameSession renames a session (the sidebar title). It is safe while a
-// task is running: the loop persists the shared record pointer, so its next
-// per-turn write carries the new title; syncing the in-memory record here
-// (like SetMode / SetChannelKey) keeps a later whole-row persistence from
-// resurrecting the old title.
 func (m *SessionManager) RenameSession(sessionID, title string) error {
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -1164,8 +782,6 @@ func (m *SessionManager) RenameSession(sessionID, title string) error {
 	if err := m.store.SetTitle(sessionID, title); err != nil {
 		return err
 	}
-	// A human rename is permanent: automatic titling never touches this session
-	// again (title.go). Column write first, then the in-memory copy.
 	if err := m.store.SetTitleSrc(sessionID, TitleSrcUser); err != nil {
 		slog.Warn("title source not recorded", "session", sessionID, "err", err)
 	}
@@ -1182,9 +798,7 @@ func (m *SessionManager) RenameSession(sessionID, title string) error {
 	return nil
 }
 
-// --- approver (cautious-mode approval) ---
 
-// SetApprover wires the approval service used by the runtime gate.
 func (m *SessionManager) SetApprover(a Approver) {
 	m.approverMu.Lock()
 	m.approver = a
@@ -1197,84 +811,62 @@ func (m *SessionManager) approverRef() Approver {
 	return m.approver
 }
 
-// --- sub-agent service ---
 
-// SetSubagents wires the sub-agent service (the subagent tool).
 func (m *SessionManager) SetSubagents(s *SubagentService) {
 	m.subagentsMu.Lock()
 	m.subagents = s
 	m.subagentsMu.Unlock()
 }
 
-// Subagents returns the wired sub-agent service (nil before wiring).
 func (m *SessionManager) Subagents() *SubagentService {
 	m.subagentsMu.RLock()
 	defer m.subagentsMu.RUnlock()
 	return m.subagents
 }
 
-// --- worker (工作大类) ---
 
-// SetWorkers wires the worker service.
 func (m *SessionManager) SetWorkers(w *WorkerService) {
 	m.workersMu.Lock()
 	m.workers = w
 	m.workersMu.Unlock()
 }
 
-// Workers returns the wired worker service (nil before wiring).
 func (m *SessionManager) Workers() *WorkerService {
 	m.workersMu.RLock()
 	defer m.workersMu.RUnlock()
 	return m.workers
 }
 
-// --- super-agent (Router) ---
 
-// SuperRegistrar is the hook the super service implements: it registers the
-// super_* orchestration tools onto the tool registry of a super session.
-// Declared here so session never depends on package super (which depends on
-// session — the interface is what breaks the cycle).
 type SuperRegistrar interface {
 	RegisterTools(reg *tools.ToolRegistry, sessionID string)
 }
 
-// SetSuperRegistrar wires the super service (nil = feature off).
 func (m *SessionManager) SetSuperRegistrar(r SuperRegistrar) {
 	m.superMu.Lock()
 	m.superRegistrar = r
 	m.superMu.Unlock()
 }
 
-// Super returns the wired super registrar (nil before wiring).
 func (m *SessionManager) Super() SuperRegistrar {
 	m.superMu.RLock()
 	defer m.superMu.RUnlock()
 	return m.superRegistrar
 }
 
-// --- mid-task user message delivery ---
 
-// SetDeliverHook installs the hook used to deliver user messages to idle
-// sessions (i.e. start a task); the runtime wires it to the message hub.
 func (m *SessionManager) SetDeliverHook(fn func(sessionID, text string)) {
 	m.deliverMu.Lock()
 	m.deliverHook = fn
 	m.deliverMu.Unlock()
 }
 
-// SetActiveTaskCheck installs the live-task check used to decide whether a
-// session has a running agent loop in this process. The runtime wires it to
-// the hub's task registry; without it the persisted status is the fallback.
 func (m *SessionManager) SetActiveTaskCheck(fn func(sessionID string) bool) {
 	m.activeCheckMu.Lock()
 	m.activeTaskCheck = fn
 	m.activeCheckMu.Unlock()
 }
 
-// TaskRunning reports whether the session has a live task loop in this
-// process. It prefers the wired live check (never stale) and falls back to
-// the persisted status only when no check is wired (tests, non-web runs).
 func (m *SessionManager) TaskRunning(sessionID string) bool {
 	m.activeCheckMu.RLock()
 	fn := m.activeTaskCheck
@@ -1299,11 +891,6 @@ func (m *SessionManager) deliverIdle(sessionID, text string) {
 	fn(sessionID, text)
 }
 
-// DeliverToSession delivers a user message to a session: when the session has
-// a live task loop the message is queued and injected at the agent loop's
-// next turn; otherwise it is dispatched as a normal task via the deliver
-// hook. TaskRunning (not the persisted status) is the queue-vs-start signal,
-// so a stale "running" row after a restart cannot swallow the message.
 func (m *SessionManager) DeliverToSession(sessionID, text string) error {
 	s, err := m.Get(sessionID)
 	if err != nil || s == nil {
@@ -1318,27 +905,7 @@ func (m *SessionManager) DeliverToSession(sessionID, text string) error {
 	return nil
 }
 
-// --- settlement notifications ---
 
-// InjectMessage appends a system-generated user message (today: a background
-// sub-agent settlement notice) to a session's conversation.
-//
-// It follows the same delivery rule as group chat (DeliverToSession), because
-// that is what makes a notice useful instead of merely stored:
-//
-//   - the session's task is running → queue it on the session itself
-//     (QueueUserMessage) so the agent loop feeds it to the model at the start of
-//     its NEXT turn instead of after the whole task is over. It is persisted
-//     right away (write-ahead, so a UI refresh shows it) and the loop's next
-//     persist rewrites the record from its own copy — once. A notice arriving
-//     after the loop's final drain is dispatched as a fresh task by
-//     Session.Prompt's settle-drain, so nothing is lost or clobbered.
-//   - the session is idle → wake it: the notice is dispatched as a fresh task
-//     through the deliver hook, so the parent digests the result immediately
-//     instead of letting the work stall until the user types again (opencode
-//     resumes the parent for exactly this reason; there is no switch — a
-//     settled sub-agent that nobody reads is dead weight). With no hook wired
-//     (CLI, tests) the notice is only appended to the history.
 func (m *SessionManager) InjectMessage(sessionID, text string) error {
 	s, err := m.Get(sessionID)
 	if err != nil || s == nil {
@@ -1357,7 +924,6 @@ func (m *SessionManager) InjectMessage(sessionID, text string) error {
 	return m.appendMessage(sessionID, text)
 }
 
-// hasDeliverHook reports whether a wake path is wired (the web hub wires one).
 func (m *SessionManager) hasDeliverHook() bool {
 	m.deliverMu.RLock()
 	defer m.deliverMu.RUnlock()
@@ -1381,8 +947,6 @@ func (m *SessionManager) appendMessage(sessionID, text string) error {
 	return nil
 }
 
-// SnapshotMessages returns a copy of the session's persisted conversation
-// (safe to read while a task may be persisting concurrently).
 func (s *Session) SnapshotMessages() []provider.Message {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1391,8 +955,6 @@ func (s *Session) SnapshotMessages() []provider.Message {
 	return out
 }
 
-// CopyMessages returns a snapshot of a session's persisted conversation
-// (safe to read while a task may be persisting concurrently).
 func (m *SessionManager) CopyMessages(sessionID string) []provider.Message {
 	m.mu.RLock()
 	s, ok := m.sessions[sessionID]
@@ -1403,8 +965,6 @@ func (m *SessionManager) CopyMessages(sessionID string) []provider.Message {
 	return s.SnapshotMessages()
 }
 
-// ListChildrenIDs returns the session IDs of all direct sub-agent sessions
-// of the given parent (from the store). Used to cascade cancellations.
 func (m *SessionManager) ListChildrenIDs(parentID string) []string {
 	sums, err := m.store.ListChildren(parentID)
 	if err != nil {
@@ -1417,16 +977,12 @@ func (m *SessionManager) ListChildrenIDs(parentID string) []string {
 	return ids
 }
 
-// SetSessionCallbackFactory registers the per-session callback factory.
-// Every session (including sub-agent sessions) resolves its callbacks by
-// session ID through this factory; it is wired by the message hub.
 func (m *SessionManager) SetSessionCallbackFactory(f func(sessionID string) *SessionCallbacks) {
 	m.mu.Lock()
 	m.callbackFactory = f
 	m.mu.Unlock()
 }
 
-// callbacksFor resolves the effective callbacks for a session ID.
 func (m *SessionManager) callbacksFor(sessionID string) *SessionCallbacks {
 	m.mu.RLock()
 	f := m.callbackFactory
@@ -1439,7 +995,6 @@ func (m *SessionManager) callbacksFor(sessionID string) *SessionCallbacks {
 	return nil
 }
 
-// newSession builds a Session with its event callbacks resolved.
 func (m *SessionManager) newSession(record *SessionRecord) *Session {
 	cfg, _ := agent.GetAgentConfig(record.AgentRole)
 	cbs := m.callbacksFor(record.SessionID)
@@ -1450,9 +1005,6 @@ func (m *SessionManager) newSession(record *SessionRecord) *Session {
 		agentCfg: cfg,
 		manager:  m,
 	}
-	// Baseline for the append fast path (F2): the rows that already exist are
-	// exactly the messages in the loaded record, and the last one is what a
-	// later append must extend.
 	s.msgRows = len(record.Messages)
 	s.msgLastJSON = lastMessageJSON(record.Messages)
 	if cbs != nil {
@@ -1464,8 +1016,6 @@ func (m *SessionManager) newSession(record *SessionRecord) *Session {
 		s.onContextUsage = cbs.OnContextUsage
 		s.onUsage = cbs.OnUsage
 	}
-	// Register the session's mode so the runtime gate can read it without
-	// touching the (concurrently mutated) record.
 	m.modeMu.Lock()
 	if _, ok := m.modes[record.SessionID]; !ok {
 		m.modes[record.SessionID] = NormalizeMode(record.Mode)
@@ -1474,19 +1024,12 @@ func (m *SessionManager) newSession(record *SessionRecord) *Session {
 	return s
 }
 
-// CreateSessionRecord creates a session and returns the concrete *Session
-// (use this when the caller needs session-level APIs such as ID()).
 func (m *SessionManager) CreateSessionRecord(title, agentRole, workDir string, parentID *string) (*Session, error) {
 	pid := ""
 	if parentID != nil {
 		pid = *parentID
 	}
 	record := NewSessionRecord(title, agentRole, workDir, pid)
-	// Root sessions are born inside a worker: the catch-all 其他 bucket, unless
-	// the creator re-files them (the hub moves a sidebar-created chat to the
-	// chosen worker before its first task). "No worker" is no longer a state a
-	// root session passes through — the join reminder that used to ask the
-	// model to fix the missing membership cost two turns per fresh chat.
 	if pid == "" {
 		record.WorkerID = WorkerOtherID
 	}
@@ -1525,9 +1068,6 @@ func (m *SessionManager) Get(sessionID string) (*Session, error) {
 	return session, nil
 }
 
-// GetByChannelKey returns the most recently updated session bound to the given
-// channel key (an external conversation id). It returns nil when the key
-// is not bound to any session.
 func (m *SessionManager) GetByChannelKey(key string) (*Session, error) {
 	if key == "" {
 		return nil, nil
@@ -1544,16 +1084,10 @@ func (m *SessionManager) GetByChannelKey(key string) (*Session, error) {
 	return session, nil
 }
 
-// SetChannelKey binds a stable external channel key (an external
-// conversation id) to a session, so future messages carrying that key are
-// routed to the same session.
 func (m *SessionManager) SetChannelKey(sessionID, key string) error {
 	if err := m.store.SetChannelKey(sessionID, key); err != nil {
 		return err
 	}
-	// Keep the cached in-memory record in sync so that a later whole-row
-	// persistence (store.Update) cannot clobber the binding with a stale
-	// empty key.
 	m.mu.Lock()
 	if s, ok := m.sessions[sessionID]; ok {
 		s.record.ChannelKey = key
@@ -1567,19 +1101,12 @@ func (m *SessionManager) Delete(sessionID string) error {
 	s := m.sessions[sessionID]
 	delete(m.sessions, sessionID)
 	m.mu.Unlock()
-	// A conversation that goes away stops owning work: anything it left running
-	// is stopped, so a build nobody will ever read does not outlive the session
-	// that started it.
 	if s != nil {
 		s.stopBackground("session deleted")
 	}
 	return m.store.Delete(sessionID)
 }
 
-// Close shuts the manager down. Every live session is asked to stop its
-// background commands first: the OS job object would kill the shells when this
-// process exits anyway, but stopping them here is what makes "I closed the app"
-// and "the build is still running somewhere" two different sentences.
 func (m *SessionManager) Close() error {
 	m.mu.Lock()
 	live := make([]*Session, 0, len(m.sessions))
@@ -1593,7 +1120,6 @@ func (m *SessionManager) Close() error {
 	return m.store.Close()
 }
 
-// GetStore returns the session store for external access
 func (m *SessionManager) GetStore() *SessionStore {
 	return m.store
 }

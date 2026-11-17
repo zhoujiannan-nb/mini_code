@@ -9,18 +9,9 @@ import (
 	"testing"
 )
 
-// These tests exercise the persistent-shell engine through the normal exec
-// tool entry points (NewExecTool+Execute), which is also the integration
-// test that the fallback wiring keeps both paths answering in one format.
-// Every tool gets Close() through t.Cleanup: the live shell holds its
-// working directory, and t.TempDir cleanup would fail on the locked dir.
 
 func newShellTool(t *testing.T, dir string, timeout int) *ExecTool {
 	t.Helper()
-	// These tests target the persistent cmd.exe engine specifically. The dsh
-	// tool surface pins it off (one fresh pwsh per call), so the engine is
-	// switched back on here; the discipline gate is off because ping/type in
-	// these files are test fixtures, not model behaviour.
 	t.Setenv("MC_EXEC_GATE", "0")
 	tool := NewExecTool(timeout, dir)
 	tool.noPersistentS = false
@@ -64,7 +55,6 @@ func TestPersistentShellCwdPersists(t *testing.T) {
 	if strings.Contains(out, "[exit code:") {
 		t.Fatalf("cd failed: %s", out)
 	}
-	// the result itself should tell the model where it landed
 	if !strings.Contains(out, filepath.Join(dir, "sub")) {
 		t.Fatalf("cwd note missing from cd result: %s", out)
 	}
@@ -82,8 +72,6 @@ func TestPersistentShellExitCode(t *testing.T) {
 	}
 }
 
-// `exit N` closes the shell itself: the engine must report the shell's own
-// exit code, then transparently boot a fresh one.
 func TestPersistentShellExitAndReborn(t *testing.T) {
 	tool := newShellTool(t, t.TempDir(), 30)
 	out := execCmd(t, tool, "exit 3")
@@ -96,8 +84,6 @@ func TestPersistentShellExitAndReborn(t *testing.T) {
 	}
 }
 
-// A timed-out command must be killed with the shell, and the next call must
-// find a working shell again.
 func TestPersistentShellTimeoutRecovery(t *testing.T) {
 	tool := newShellTool(t, t.TempDir(), 30)
 	out := execCmd(t, tool, "ping -n 8 127.0.0.1 >nul", map[string]interface{}{"timeout": float64(1)})
@@ -110,10 +96,6 @@ func TestPersistentShellTimeoutRecovery(t *testing.T) {
 	}
 }
 
-// `more` without an input param reads stdin: in the persistent shell stdin
-// is the protocol channel, so the engine must starve it with NUL instead of
-// letting it eat the sentinel lines (the one-shot path's NUL/devnull
-// behavior, preserved).
 func TestPersistentShellStdinStarved(t *testing.T) {
 	tool := newShellTool(t, t.TempDir(), 15)
 	out := execCmd(t, tool, "more")
@@ -125,8 +107,6 @@ func TestPersistentShellStdinStarved(t *testing.T) {
 	}
 }
 
-// Output that ends without a trailing newline merges into the sentinel line;
-// the parser must still find the code and keep the text.
 func TestPersistentShellSentinelJoin(t *testing.T) {
 	tool := newShellTool(t, t.TempDir(), 30)
 	out := execCmd(t, tool, `set /p=nolinemarker<nul`)
@@ -147,18 +127,12 @@ func TestPersistentShellWorkingDirSwitch(t *testing.T) {
 	if !strings.Contains(out, base) {
 		t.Fatalf("working_dir switch did not take effect: %s", out)
 	}
-	// and it persists even when the next call passes no working_dir
 	out = execCmd(t, tool, "echo %CD%")
 	if !strings.Contains(out, base) {
 		t.Fatalf("working_dir change did not persist: %s", out)
 	}
 }
 
-// The batch-spelling for-loop must fall back to the one-shot path instead of
-// wedging the persistent shell. The one-shot path is PowerShell now, so the
-// batch spelling is a parse error there — what this test pins is the fallback
-// happening (a ParserError, not a hang) and the persistent shell being
-// perfectly healthy afterwards.
 func TestPersistentShellForLoopFallsBack(t *testing.T) {
 	dir := t.TempDir()
 	tool := newShellTool(t, dir, 30)
@@ -169,15 +143,12 @@ func TestPersistentShellForLoopFallsBack(t *testing.T) {
 	if !strings.Contains(out, "[exit code: 1]") {
 		t.Fatalf("for-loop fallback did not reach the one-shot shell: %s", out)
 	}
-	// the shell must still be healthy afterwards
 	out = execCmd(t, tool, "echo after")
 	if !strings.Contains(out, "after") || strings.Contains(out, "[exit code:") {
 		t.Fatalf("shell unhealthy after for-loop fallback: %s", out)
 	}
 }
 
-// The streaming contract (early chunks, [stderr] marking) must hold on the
-// persistent engine too.
 func TestPersistentShellStreamed(t *testing.T) {
 	dir := t.TempDir()
 	tool := newShellTool(t, dir, 30)
@@ -199,15 +170,15 @@ func TestPersistentShellStreamed(t *testing.T) {
 func TestInsertNulStdin(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"python x.py", "python x.py < NUL"},
-		{"more", "more < NUL"},                             // more.com is external: must be starved
+		{"more", "more < NUL"},
 		{"findstr a f.txt | more", "findstr a f.txt < NUL | more"},
-		{"mkdir x && python y", "mkdir x && python y < NUL"}, // mkdir is internal: no fork-trick
-		{"echo bad 1>&2", "echo bad 1>&2"},                 // redirection ampersand is not a clause join
+		{"mkdir x && python y", "mkdir x && python y < NUL"},
+		{"echo bad 1>&2", "echo bad 1>&2"},
 		{"python x.py 2>&1", "python x.py 2>&1 < NUL"},
-		{"more < file.txt", "more < file.txt"},   // already redirects stdin
-		{"type a ^\nb", "type a ^\nb"},          // caret continuation: hands off
-		{`echo "a & b"`, `echo "a & b"`},        // echo is internal
-		{"set /p A=go", "set /p A=go < NUL"},    // the internal that DOES read stdin
+		{"more < file.txt", "more < file.txt"},
+		{"type a ^\nb", "type a ^\nb"},
+		{`echo "a & b"`, `echo "a & b"`},
+		{"set /p A=go", "set /p A=go < NUL"},
 		{"", ""},
 		{"  ", "  "},
 	}

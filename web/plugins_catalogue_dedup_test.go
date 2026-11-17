@@ -9,14 +9,6 @@ import (
 	"time"
 )
 
-// TestCatalogueDeduplicatesAliasBuckets: index.json may carry the same plugin in
-// two buckets — the plugin repo keeps `appearance` for this host and a
-// `boot-anim` copy for older hosts that only understand that bucket. The market
-// must show one card per plugin, not one per bucket.
-//
-// Without the fix the same clip appeared twice in the market pane, and clicking
-// either one installed the same directory — so "已安装" and the version check
-// disagreed with what the user was looking at.
 func TestCatalogueDeduplicatesAliasBuckets(t *testing.T) {
 	pluginHome(t)
 
@@ -33,9 +25,6 @@ func TestCatalogueDeduplicatesAliasBuckets(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// bootAnimGitHubBase is package state; the whole point of it being a var is
-	// that a host behind a firewall can repoint it. Restore it afterwards so the
-	// other catalogue tests are unaffected.
 	old := bootAnimGitHubBase
 	bootAnimGitHubBase = srv.URL
 	defer func() { bootAnimGitHubBase = old }()
@@ -72,16 +61,12 @@ func TestCatalogueDeduplicatesAliasBuckets(t *testing.T) {
 	if got := payload.Entries[0]; got.ID != "mc-test" || got.Category != "appearance" {
 		t.Errorf("kept the wrong entry: %+v", got)
 	}
-	// The kept one must be the canonical bucket, not the compatibility alias:
-	// the alias is what old hosts read, and it carries no category.
 	if kind := payload.Entries[0].Kind; kind != "appearance" {
 		t.Errorf("kept the alias bucket %q, want appearance (buckets are sorted, "+
 			"so appearance wins)", kind)
 	}
 }
 
-// TestCatalogueKeepsDistinctPluginsAcrossBuckets is the other half: dedup must
-// not be so eager that a real second plugin disappears.
 func TestCatalogueKeepsDistinctPluginsAcrossBuckets(t *testing.T) {
 	pluginHome(t)
 

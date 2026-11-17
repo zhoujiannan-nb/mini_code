@@ -10,7 +10,6 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
-// gbkBytes encodes s as GBK the way a Chinese Windows editor would.
 func gbkBytes(t *testing.T, s string) []byte {
 	t.Helper()
 	b, err := simplifiedchinese.GBK.NewEncoder().Bytes([]byte(s))
@@ -20,10 +19,6 @@ func gbkBytes(t *testing.T, s string) []byte {
 	return b
 }
 
-// TestEditFileGBKRoundTrip is the regression this file exists for: read_file
-// handed the model GBK-decoded text, edit_file matched the raw bytes, so a
-// Chinese old_text copied from a successful read could never match — and a
-// successful ASCII-only edit silently rewrote the whole file as UTF-8.
 func TestEditFileGBKRoundTrip(t *testing.T) {
 	src := "// 配置项\n名称 := \"旧值\"\n"
 	dir := t.TempDir()
@@ -32,7 +27,6 @@ func TestEditFileGBKRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// What the model sees comes from read_file, decoded.
 	read, err := NewReadFileTool(dir).Execute(context.Background(), map[string]interface{}{"path": "conf.go"})
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -41,7 +35,6 @@ func TestEditFileGBKRoundTrip(t *testing.T) {
 		t.Fatalf("read_file did not decode GBK: %s", read.Text)
 	}
 
-	// Edit using the Chinese text the read produced.
 	out, err := NewEditFileTool(dir).Execute(context.Background(), map[string]interface{}{
 		"path":     "conf.go",
 		"old_text": "名称 := \"旧值\"",
@@ -64,8 +57,6 @@ func TestEditFileGBKRoundTrip(t *testing.T) {
 	}
 }
 
-// TestWriteFilePreservesGBKOnOverwrite: rewriting a GBK file in place must keep
-// GBK, not transcode the repository behind the user's back.
 func TestWriteFilePreservesGBKOnOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "a.txt")
@@ -88,8 +79,6 @@ func TestWriteFilePreservesGBKOnOverwrite(t *testing.T) {
 	}
 }
 
-// TestWriteFileAppendPreservesGBK: appending UTF-8 to a GBK file corrupts its
-// tail for every reader. The appended bytes must use the file's own encoding.
 func TestWriteFileAppendPreservesGBK(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "log.txt")
@@ -109,7 +98,6 @@ func TestWriteFileAppendPreservesGBK(t *testing.T) {
 	}
 }
 
-// TestWriteFileNewFileIsUTF8: a file the harness creates is UTF-8, always.
 func TestWriteFileNewFileIsUTF8(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := NewWriteFileTool(dir).Execute(context.Background(), map[string]interface{}{
@@ -124,8 +112,6 @@ func TestWriteFileNewFileIsUTF8(t *testing.T) {
 	}
 }
 
-// TestEditFileUTF8BOMKept: a BOM is invisible in the text but visible to every
-// diff and editor; an edit must not drop it.
 func TestEditFileUTF8BOMKept(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "bom.txt")
@@ -152,9 +138,6 @@ func TestEditFileUTF8BOMKept(t *testing.T) {
 	}
 }
 
-// TestEditFileEmojiInGBKFileFallsBackToUTF8: the edit cannot be represented
-// in GBK, so the file becomes UTF-8 (a safe fallback by content; dsh's
-// contract carries no encoding chatter in the success text).
 func TestEditFileEmojiInGBKFileFallsBackToUTF8(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "e.txt")

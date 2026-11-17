@@ -11,8 +11,6 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// newTestLoop builds an AgentLoop whose model client points at the given
-// test server. Compaction is disabled so no extra LLM calls are made.
 func newTestLoop(t *testing.T, baseURL string) (*AgentLoop, *provider.ModelClient) {
 	t.Helper()
 	client, err := provider.NewModelClient(config.ModelConfig{
@@ -31,26 +29,19 @@ func newTestLoop(t *testing.T, baseURL string) (*AgentLoop, *provider.ModelClien
 	return loop, client
 }
 
-// writeSSEChunk writes one SSE data line.
 func writeSSEChunk(w http.ResponseWriter, payload string) {
 	w.Write([]byte("data: " + payload + "\n\n"))
 }
 
-// TestChatWithRetryRecoversFromMidStreamDrop verifies that a stream which
-// drops mid-response (no finish_reason, no [DONE]) is retried at the loop
-// level and the task still completes with the full content.
 func TestChatWithRetryRecoversFromMidStreamDrop(t *testing.T) {
 	var requests int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt64(&requests, 1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		if n == 1 {
-			// First attempt: partial stream, then the connection ends
-			// without finish_reason/[DONE] (simulated mid-flight drop).
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":"par"}}]}`)
 			return
 		}
-		// Second attempt: a well-formed complete stream.
 		writeSSEChunk(w, `{"choices":[{"delta":{"content":"hello world"},"finish_reason":"stop"}]}`)
 		w.Write([]byte("data: [DONE]\n\n"))
 	}))
@@ -74,16 +65,12 @@ func TestChatWithRetryRecoversFromMidStreamDrop(t *testing.T) {
 	}
 }
 
-// TestChatWithRetryGivesUpAfterMaxAttempts verifies that a persistently
-// dropping stream is retried a bounded number of times (3 total) and then
-// the task fails with a clear error instead of looping forever.
 func TestChatWithRetryGivesUpAfterMaxAttempts(t *testing.T) {
 	var requests int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(&requests, 1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		writeSSEChunk(w, `{"choices":[{"delta":{"content":"partial"}}]}`)
-		// Always drop: no finish_reason, no [DONE].
 	}))
 	defer srv.Close()
 

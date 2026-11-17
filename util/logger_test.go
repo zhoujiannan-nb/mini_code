@@ -17,8 +17,6 @@ func sizeOf(t *testing.T, path string) int64 {
 	return info.Size()
 }
 
-// TestRotatingWriterChain: crossing the cap shifts base → .1 → .2, drops
-// anything older, and keeps the active file under the cap plus one record.
 func TestRotatingWriterChain(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.log")
@@ -31,7 +29,7 @@ func TestRotatingWriterChain(t *testing.T) {
 		w.mu.Unlock()
 	}()
 
-	line := strings.Repeat("x", 90) + "\n" // 91 bytes; the cap admits 3 lines
+	line := strings.Repeat("x", 90) + "\n"
 	for i := 0; i < 10; i++ {
 		if _, err := w.Write([]byte(fmt.Sprintf("%02d %s", i, line))); err != nil {
 			t.Fatalf("write %d: %v", i, err)
@@ -45,11 +43,9 @@ func TestRotatingWriterChain(t *testing.T) {
 			t.Fatalf("%s missing/empty after 10 lines", name)
 		}
 	}
-	// Nothing older than the keep count may exist — not even from a failed shift.
 	if _, err := os.Stat(filepath.Join(dir, "agent.log.3")); err == nil {
 		t.Fatal("agent.log.3 should have been dropped from the chain")
 	}
-	// The newest backup must be the earlier content, the active file the tail.
 	last, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -59,19 +55,16 @@ func TestRotatingWriterChain(t *testing.T) {
 	}
 }
 
-// TestRotatingWriterDemotesOversizeLeftovers: a legacy agent.log far over the
-// cap (and oversize or too-many backups) is cleaned up at open, and the next
-// write lands in a fresh active file.
 func TestRotatingWriterDemotesOversizeLeftovers(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.log")
 	if err := os.WriteFile(path, []byte(strings.Repeat("y", 5000)), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path+".1", []byte(strings.Repeat("z", 5000)), 0644); err != nil { // oversize backup
+	if err := os.WriteFile(path+".1", []byte(strings.Repeat("z", 5000)), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path+".3", []byte("stale"), 0644); err != nil { // past keep count
+	if err := os.WriteFile(path+".3", []byte("stale"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,9 +83,6 @@ func TestRotatingWriterDemotesOversizeLeftovers(t *testing.T) {
 	if got := sizeOf(t, path); got != 6 {
 		t.Fatalf("active log = %d bytes, want a fresh 6-byte file", got)
 	}
-	// The oversized active file became .1 (demoted, not deleted); the previous
-	// oversize backup shifted to .2 (kept until it ages out of the chain); the
-	// stale .3 beyond the keep count is gone.
 	if _, err := os.Stat(filepath.Join(dir, "agent.log.1")); err != nil {
 		t.Fatalf("oversized base was not demoted to .1: %v", err)
 	}

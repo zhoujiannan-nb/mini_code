@@ -1,5 +1,3 @@
-// 配置弹窗:左侧分类导航(外观与启动 / 模型 / 插件中心),右侧内容。
-// 表单是"草稿 → 保存"语义:模型列表在本地编辑,点「保存配置」才 PUT /api/config。
 import { h } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import htm from "htm";
@@ -18,23 +16,18 @@ import { PluginCentre } from "./Plugins.js";
 
 const html = htm.bind(h);
 
-// 纯客户端偏好写 localStorage(隐私模式失败静默)。
 function setLS(key, value) {
   try { localStorage.setItem(key, value); } catch (e) {}
 }
 
-// DeepSeek 官方地址固定,UI 里选了 deepseek 就不用填 base_url。
 export const DS_BASE_URL = "https://api.deepseek.com";
 
 export function modelTemplate() {
-  // 全部留空(0):尺寸和采样参数都不猜 —— 空 = 不发给模型,由框架用它自己的默认值;
-  // 上下文窗口为空时不做自动压缩,点"一键获取参数"从服务端读。
   return { name: "", provider: "vllm", base_url: "", api_key: "", model_name: "",
            max_tokens: 0, context_window: 0, temperature: 0, top_p: 0, top_k: 0,
            thinking: "", reasoning_effort: "" };
 }
 
-// hostOf 把 base_url 收成"主机[:端口]/路径"短形,块卡片里够用
 function hostOf(u) {
   if (!u) return "(未填 Base URL)";
   return String(u).replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -44,7 +37,6 @@ function numOf(v) {
   return (v === "" || v == null || isNaN(Number(v)) ? 0 : Number(v));
 }
 
-/* ---------------- 模型:块列表 ---------------- */
 export function renderModelGrid({ models, defaultModel, onOpen }) {
   const cell = (label, v, fb) =>
     html`<span>${label} <b class=${v ? "" : "auto"}>${v || fb || "自动"}</b></span>`;
@@ -67,16 +59,12 @@ export function renderModelGrid({ models, defaultModel, onOpen }) {
   </div>`);
 }
 
-// probeModel 调后端 /api/llm/probe 问服务端要该模型的上下文窗口 / 最大输出 /
-// 采样默认值,只填服务端真的报出来的字段;没报的保持原样(留空即不发送)。
 async function probeModel(body) {
   return probeModelRequest(body);
 }
 
-/* ---------------- 模型:编辑面板 ---------------- */
 export function renderModelEditor({ model, index, onChange, onBack, onDone, onRemove, onDefault, onProbe, onFetchModels, datalistId, datalist }) {
   const field = (k, label, ph, type) => {
-    // 数字字段:0 就是"未设置",显示成空 —— 不把 0 当成一个填了的值。
     const v = model[k];
     const shown = v == null || (type === "number" && Number(v) === 0) ? "" : v;
     return html`<div class="frow"><label>${label}</label>
@@ -129,7 +117,6 @@ export function renderModelEditor({ model, index, onChange, onBack, onDone, onRe
   </div>`;
 }
 
-/* ---------------- 配置弹窗 ---------------- */
 export function Settings() {
   const open = useStore((s) => s.settingsOpen);
   const page = useStore((s) => s.settingsPage);
@@ -147,7 +134,6 @@ export function Settings() {
   const [datalist, setDatalist] = useState([]);
   const agentFileRef = useRef(null);
 
-  // 打开设置:读服务端配置(模型 / 端口 / 头像),顺便读开机动画与插件列表。
   useEffect(() => {
     if (!open) return;
     setError("");
@@ -156,7 +142,6 @@ export function Settings() {
       setModels(list);
       setDefaultModel(cfg.default_model || (list[0] && list[0].name) || "");
       setWebPort(cfg.web_port || "");
-      // 头像以服务端配置为准(个人信息区同步显示)
       setState({ userAvatar: cfg.user_avatar || "", agentAvatar: cfg.agent_avatar || "" });
       setEditing(-1);
       bootLoadLocal();
@@ -164,7 +149,6 @@ export function Settings() {
     }).catch((e) => setError("读取配置失败:" + e.message));
   }, [open]);
 
-  // Esc 关配置弹窗;但头像选择/审批这些叠在上面的弹窗优先(审批绝不能被 Esc 顺手关掉)。
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => {
@@ -235,8 +219,6 @@ export function Settings() {
       if (!d.models) { toast("获取模型失败", "err"); return; }
       setDatalist(d.models || []);
       if ((d.models || []).length === 1 && !(m.model_name || "").trim()) {
-        // Only auto-fill an EMPTY model_name; never clobber a working one
-        // (e.g. a proxy may report "/model" while the real name is "Qwen3.8-27B-FP8").
         patchModel(editing, "model_name", d.models[0]);
         toast("已填入模型: " + d.models[0], "ok");
       } else if ((d.models || []).length === 0) {
@@ -275,15 +257,13 @@ export function Settings() {
     if (new Set(names).size !== names.length) { toast("模型显示名不能重复", "err"); setSettingsPage("page-model"); return; }
     let defModel = defaultModel;
     if (!names.includes(defModel)) defModel = names[0];
-    // boot_anim 故意不在这份 body 里:它的开关由插件详情单独走 PUT /api/bootanim,
-    // 而这个弹窗从来没有展示过那些设置。服务端对"零值 boot_anim"的处理是保留当前值。
     const st = getState();
     const cfg = {
       web_port: numOf(webPort),
       models: clean,
       default_model: defModel,
-      user_avatar: st.userAvatar, // 透传用户头像,避免整份配置保存时丢失
-      agent_avatar: st.agentAvatar, // 同理透传 agent 头像
+      user_avatar: st.userAvatar, 
+      agent_avatar: st.agentAvatar, 
     };
     try {
       const r = await saveConfig(cfg);

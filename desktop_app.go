@@ -1,6 +1,3 @@
-// Desktop mode wiring for package main: adapts the internal *runtime to the
-// desktop shell (package desktop). The concrete platform shell is selected
-// by newDesktopPlatform() in the platform-specific desktop_app_*.go files.
 package main
 
 import (
@@ -13,7 +10,6 @@ import (
 	"github.com/user/mini_code/web"
 )
 
-// desktopRT adapts the internal *runtime to desktop.Runtime.
 type desktopRT struct {
 	rt *runtime
 }
@@ -27,8 +23,6 @@ func (d desktopRT) Handler() http.Handler { return web.NewServer(d.rt) }
 
 func (d desktopRT) StartHub(ctx context.Context) { go d.rt.hub.Run(ctx) }
 
-// runDesktop implements "mini_code desktop" (and the no-argument default of
-// desktop builds) on Windows / macOS.
 func runDesktop(args []string) {
 	platform := newDesktopPlatform()
 	if platform == nil {

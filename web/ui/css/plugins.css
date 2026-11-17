@@ -1,13 +1,4 @@
-/* ---------------- 插件中心(设置 → 插件中心) ----------------
-   布局参考 VS Code 的扩展页:左边一列紧凑行(图标 + 名字 + 一行描述 + tag),
-   右边是选中项的详情(大图标、标题、动作按钮、说明、分区)。
-   三类插件用的是**同一种行**,分类只是行尾那个 tag —— 分类是标签,不是布局。
 
-   视觉基调:安静。列表行没有边框(只有 hover/选中才有底色),详情是一张
-   "卡片纸",分区标题用小号大写字距而不是加粗大字,颜色一律走主题变量。
-   一句话原则:重量集中在右栏一处,列表只负责"装了什么"。 */
-
-/* ---- 设置页内的分区 ---- */
 .pl-sec {
   margin-top: 14px;
   padding: 12px 14px;
@@ -39,7 +30,6 @@
   background: var(--hover);
 }
 
-/* ---- 列表工具栏:标题 + 筛选 + 动作,一行 ---- */
 .pl-bar {
   display: flex;
   align-items: center;
@@ -101,7 +91,6 @@
 .pl-pane { display: none; }
 .pl-pane.active { display: block; }
 
-/* ---- 造插件(默认收起) ---- */
 .pl-make {
   margin-top: 12px;
   padding: 9px 14px;
@@ -163,10 +152,6 @@
 .pm-name { font-weight: 600; font-size: 13px; }
 .pm-hint { color: var(--text2); font-size: 11px; line-height: 1.4; }
 
-/* ---- 插件网格:一个插件一张卡(和「模型」页的卡片同一套尺寸与节奏) ----
-   卡片上只回答三件事:装了什么、什么类型、一句话它是干什么的。
-   其余(状态、按钮、播放设置、目录)全在"点进去"之后的那一屏。
-   所以卡片高度是固定的:没有展开、没有第二行描述、没有行内按钮。 */
 .pl-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
@@ -174,8 +159,6 @@
   margin-top: 12px;
 }
 
-/* 一张卡:图标 + 名称(徽标同行) + 一行描述 + 右下角"详情 ›"。
-   padding 底部留出那行"详情"的位置,和 .model-tile 完全一致。 */
 .pl-tile {
   position: relative;
   display: flex;
@@ -197,7 +180,6 @@
 .pl-tile.is-off { opacity: .6; }
 .pl-tile.is-off:hover { opacity: .85; }
 
-/* 头顶一行:小图标 + 名称 + 徽标,分类 tag 靠右 */
 .pl-tile-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .pl-tile-ico {
   flex: 0 0 auto;
@@ -214,7 +196,6 @@
   min-width: 0; flex: 0 1 auto;
 }
 .pl-tile-top .pl-tagcat { margin-left: auto; }
-/* 卡片上的一行说明:只一行,多的用省略号 —— 完整描述在详情里。 */
 .pl-tile-desc {
   font-size: 11.5px;
   line-height: 1.5;
@@ -224,9 +205,6 @@
   white-space: nowrap;
   min-width: 0;
 }
-/* 卡片上的一行"状态字":程序插件用它报运行状态,动画插件用它报当前动画。
-   没有可说的时候**留空行但不消失** —— 少一行会让同一排卡片高低不齐
-   (实测 105px vs 84px)。 */
 .pl-tile-stat {
   display: flex; align-items: center; gap: 6px;
   font-size: 11px; color: var(--text3);
@@ -242,7 +220,6 @@
 }
 .pl-tile:hover .pl-tile-go { color: var(--accent-t); }
 
-/* 卡片角上的"当前"小标:一眼看出哪一个是正在用的那个。 */
 .pl-tile-cur {
   position: absolute; right: 10px; top: 10px;
   font-size: 10px; line-height: 1;
@@ -251,10 +228,8 @@
   background: var(--accent-l);
   border: 1px solid transparent;
 }
-/* 有"当前"标时,分类 tag 让位(否则两个都挤在右上角) */
 .pl-tile.has-cur .pl-tile-top .pl-tagcat { margin-right: 46px; }
 
-/* ---- 详情:点卡片进来的一整屏(网格让位给这一屏) ---- */
 .pl-detail {
   min-width: 0;
   margin-top: 12px;
@@ -271,7 +246,6 @@
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: none; }
 }
-/* 返回网格:一颗低调的文字按钮,放在详情最上面 */
 .pl-back {
   display: inline-flex; align-items: center; gap: 5px;
   border: none; background: none; cursor: pointer;
@@ -280,8 +254,6 @@
 }
 .pl-back:hover { color: var(--accent-t); }
 
-/* 分类 tag:这一小块就是"三类插件"的全部差别。
-    卡片上用细描边的小胶囊(安静),详情标题区放大一档。 */
 .pl-tagcat {
   display: inline-flex;
   align-items: center;
@@ -315,7 +287,6 @@
   color: var(--text3);
 }
 
-/* ---- 详情面板 ---- */
 .pl-d-head {
   display: flex;
   align-items: flex-start;
@@ -324,7 +295,6 @@
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
 }
-/* 大图标用主色的极淡底 + 细描边:比一块灰更"有东西",又不抢标题。 */
 .pl-d-icon {
   flex: 0 0 auto;
   width: 44px; height: 44px;
@@ -354,7 +324,6 @@
   overflow-wrap: anywhere;
 }
 .pl-d-sec { margin-top: 16px; }
-/* 分区标题:小号 + 大写字距,像一张规格表的抬头,而不是第二个标题层级。 */
 .pl-d-sec-title {
   font-size: 10.5px; font-weight: 600;
   color: var(--text3);
@@ -367,7 +336,6 @@
 }
 .pl-d-more { margin-top: 16px; }
 
-/* ---- 开机动画的播放设置(住在动画插件的详情里) ---- */
 .pl-play {
   padding: 11px 12px;
   border: 1px solid var(--border);
@@ -381,7 +349,6 @@
   margin-bottom: 9px;
 }
 .pl-play-state.on { color: var(--title); font-weight: 600; }
-/* 播放时机:分段按钮(三选一),比下拉更"一眼看到所有选项"。 */
 .pl-seg {
   display: inline-flex;
   padding: 2px;
@@ -410,12 +377,9 @@
 }
 .pl-play-row { display: flex; align-items: center; gap: 16px; margin-top: 11px; flex-wrap: wrap; }
 
-/* 默认按钮(.mode-btn)在详情里的尺寸略大一点:它是这张卡的主要操作。 */
 .pl-detail .mode-btn { padding: 4px 12px; font-size: 11.5px; }
 .pl-detail .mode-btn:disabled { opacity: .45; cursor: default; }
 
-/* 窄屏:卡片网格自动掉到一两列(grid 的 auto-fill 会自己处理),
-   详情占满整行宽度。 */
 @media (max-width: 760px) {
   .pl-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
   .pl-detail { max-height: none; }
@@ -439,7 +403,6 @@
   word-break: break-word;
 }
 
-/* ---- 程序类:状态 ---- */
 .pl-proc {
   display: flex;
   align-items: center;
@@ -472,7 +435,6 @@
 
 .pl-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
-/* ---- 能力详情:默认折叠 ---- */
 .pl-more {
   font-size: 12px;
   color: var(--text2);
@@ -504,10 +466,8 @@
   color: var(--text2);
 }
 
-/* ---- 标签行(市场的 tags) ---- */
 .pl-look { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
 
-/* ---- 详情底栏:启用开关 + 卸载 ---- */
 .pl-foot {
   display: flex;
   align-items: center;
@@ -535,7 +495,6 @@
   border-color: var(--accent);
 }
 
-/* ---- 空态(数据面板里的一整块) ---- */
 .pl-empty {
   text-align: center;
   padding: 36px 16px;
@@ -546,7 +505,6 @@
 .pl-empty-title { font-weight: 600; color: var(--text2); margin-bottom: 5px; }
 .pl-empty-sub { color: var(--text3); font-size: 12px; line-height: 1.55; }
 
-/* ---- 市场 ---- */
 .pl-market-note {
   margin-top: 10px;
   font-size: 12px;
@@ -570,7 +528,6 @@
   max-width: 320px;
 }
 
-/* ---- 日志模态 ---- */
 .pl-log {
   margin: 0;
   padding: 12px 14px;
@@ -586,9 +543,7 @@
 }
 .modal-620 { width: min(620px, 92vw); }
 
-/* ---------------- 第三类:slot / 动效 ---------------- */
 
-/* slot 容器本身不占位:由插到哪个位置决定宽度。 */
 .mc-slot {
   display: block;
   width: 100%;
@@ -598,7 +553,7 @@
   inset: 0;
   width: 100%;
   height: 100%;
-  pointer-events: none; /* overlay 不吃点击 */
+  pointer-events: none; 
   z-index: 60;
 }
 .mc-slot-frame {
@@ -609,8 +564,6 @@
   overflow: hidden;
 }
 
-/* 事件动效作用在 body 上:插件只提供 class 名,keyframes 由皮肤 CSS 定义。
-   这里给几个内置的,让"只装皮肤不写动画"的插件也能看到反应。 */
 @keyframes mc-motion-shake {
   0%, 100% { translate: 0 0; }
   25% { translate: -3px 0; }
@@ -624,7 +577,6 @@
 body.mc-motion-shake { animation: mc-motion-shake .32s ease-in-out; }
 body.mc-motion-flash { animation: mc-motion-flash .45s ease-in-out; }
 
-/* 系统投了 prefers-reduced-motion:一律不动(可访问性优先于好看)。 */
 @media (prefers-reduced-motion: reduce) {
   body.mc-motion-shake,
   body.mc-motion-flash {

@@ -8,10 +8,6 @@ import (
 	"github.com/user/mini_code/job"
 )
 
-// TestSessionJobsAccessor pins the UI's read path into the job runtime: the
-// web layer reaches a session's background commands through Session.Jobs() and
-// SessionManager.Peek(), so both must be nil-safe in exactly the states the UI
-// polls them in (before any task, and with a live job).
 func TestSessionJobsAccessor(t *testing.T) {
 	mgr := newTestManager(t)
 	dir := t.TempDir()
@@ -20,13 +16,10 @@ func TestSessionJobsAccessor(t *testing.T) {
 		t.Fatalf("CreateSessionRecord: %v", err)
 	}
 
-	// Before any task ran, there is no exec tool and so no registry: the UI
-	// must read nil (rendering 0/0), not panic.
 	if reg := sess.Jobs(); reg != nil {
 		t.Fatal("Jobs() before any exec tool must be nil")
 	}
 
-	// Peek finds the loaded session and does not invent unknown ones.
 	if mgr.Peek(sess.ID()) != sess {
 		t.Error("Peek did not return the loaded session")
 	}
@@ -34,7 +27,6 @@ func TestSessionJobsAccessor(t *testing.T) {
 		t.Error("Peek invented an unknown session")
 	}
 
-	// Building the shared exec tool gives the session its registry.
 	if ex := sess.sharedExec(dir); ex == nil {
 		t.Fatal("sharedExec returned nil")
 	}
@@ -48,8 +40,6 @@ func TestSessionJobsAccessor(t *testing.T) {
 		t.Fatalf("Running = %v, want [%s]", got, j.ID)
 	}
 
-	// The human-kill path (UI stop): Cancel with a wired kill switch settles
-	// the job as killed, which is what the UI then re-reads.
 	j.SetCancel(func() job.Status { return job.StatusKilled })
 	if !j.Cancel("从界面停止") {
 		t.Fatal("Cancel on a running job returned false")

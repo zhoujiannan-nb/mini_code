@@ -25,10 +25,6 @@ func NewSkillsTool(workspace string) *SkillsTool {
 	}
 }
 
-// Name/Description/Parameters: dsh's verbatim "skill" surface — one name,
-// load its full instructions. The historical action/skill_name spelling stays
-// accepted, and an empty call still lists the catalog (dsh's catalog lives in
-// the system prompt; MiniCode's does not, so listing must remain reachable).
 func (t *SkillsTool) Name() string                       { return "skill" }
 func (t *SkillsTool) Description() string                { return dshDesc("skill") }
 func (t *SkillsTool) IsHidden() bool                     { return false }

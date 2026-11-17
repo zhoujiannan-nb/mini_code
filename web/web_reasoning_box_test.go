@@ -7,24 +7,12 @@ import (
 	"testing"
 )
 
-// TestUIRendersReasoningInABox pins the model-thinking display contract.
-//
-// reasoning_content reaches the browser on its own (channels emits
-// reasoning_delta + the assistant message carries Reasoning, and the session
-// detail serves reasoning_content), so the only thing that ever stood between
-// that and the screen was the markup: history messages and tool steps each hid
-// it behind a <details> collapse and the live one carried .m-think-live
-// {display:none}. The UI ships one .think-box for all three paths; since 2026-11
-// it is collapsible by design (live expanded, the rest folded by the component,
-// body still in the DOM under .collapsed) — this test fails if the box ever
-// disappears from a render path again or loses its cap/scroll.
 func TestUIRendersReasoningInABox(t *testing.T) {
 	assets, err := loadUIAssets()
 	if err != nil {
 		t.Fatalf("loadUIAssets: %v", err)
 	}
 
-	// 1) The box component ships and is served to the browser.
 	think := assets["/js/components/ThinkBox.js"]
 	if think == nil {
 		t.Fatal("the UI does not ship /js/components/ThinkBox.js — reasoning has nowhere to render")
@@ -37,7 +25,6 @@ func TestUIRendersReasoningInABox(t *testing.T) {
 		t.Error("the reasoning box is a <details> collapse again — it must be visible without a click")
 	}
 
-	// 2) Both render paths (the message card and the steps card) draw it.
 	js := jsModulesForTest(t)
 	if n := strings.Count(js, `from "./ThinkBox.js"`); n < 2 {
 		t.Errorf(`only %d module(s) import "./ThinkBox.js"; Message.js and Steps.js both must`, n)
@@ -46,7 +33,6 @@ func TestUIRendersReasoningInABox(t *testing.T) {
 		t.Error(`a render path still draws the old <details class="m-think"> collapse`)
 	}
 
-	// 3) The stylesheet caps the box and lets it scroll inside itself.
 	rules := cssRulesForTest(uiStylesForTest(t))
 	capped, scrollable := false, false
 	for _, r := range rules {
@@ -71,16 +57,12 @@ func TestUIRendersReasoningInABox(t *testing.T) {
 		t.Error(`no ".think-box-body" rule sets overflow-y: auto — long thinking would push the page away`)
 	}
 
-	// 4) Nothing unconditionally hides the thinking box anywhere in the shipped
-	// CSS. (The composer's .think-pop popover is legitimately display:none until
-	// opened, and the component's own .collapsed fold is the 2026-11 design:
-	// live expanded, older boxes folded by class, click to open.)
 	for _, r := range rules {
 		if !strings.Contains(r.sel, "think-box") {
 			continue
 		}
 		if strings.Contains(r.sel, ".collapsed") {
-			continue // component-driven fold, toggled by state — not a hide-by-markup
+			continue
 		}
 		if strings.Contains(strings.ReplaceAll(r.body, " ", ""), "display:none") {
 			t.Errorf("the rule for %q hides the reasoning box: %s", r.sel, strings.TrimSpace(r.body))
@@ -88,8 +70,6 @@ func TestUIRendersReasoningInABox(t *testing.T) {
 	}
 }
 
-// jsCodeOnly strips comments from ES module source, so a test that asks "does
-// this code draw a <details>?" is not answered by a comment about one.
 func jsCodeOnly(src string) string {
 	src = strings.ReplaceAll(src, "\r\n", "\n")
 	var b strings.Builder
@@ -101,10 +81,9 @@ func jsCodeOnly(src string) string {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
-	return stripCSSComments(b.String()) // /* */ comments use the same markers here
+	return stripCSSComments(b.String())
 }
 
-// uiStylesForTest returns every embedded stylesheet, concatenated.
 func uiStylesForTest(t *testing.T) string {
 	t.Helper()
 	var b strings.Builder
@@ -117,10 +96,6 @@ func uiStylesForTest(t *testing.T) string {
 
 type cssRule struct{ sel, body string }
 
-// cssRulesForTest splits a stylesheet into selector/declaration pairs. CSS
-// comments are stripped first (this project annotates inside rule bodies), and
-// nested blocks (@media, @keyframes) are flattened to their inner rules — that
-// is all this test needs to ask "which rule would win for this class".
 func cssRulesForTest(src string) []cssRule {
 	src = stripCSSComments(src)
 	var out []cssRule

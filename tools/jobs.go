@@ -10,23 +10,9 @@ import (
 	"github.com/user/mini_code/job"
 )
 
-// The job tools: how the model talks to work it has already walked away from.
-//
-// Promotion only pays off if a backgrounded command is cheap to ask about. These
-// three are deliberately small — read, list, stop — and their descriptions carry
-// the behavioral half of the design: a model that has been told "the output is
-// buffered and you will be notified" still has to be told NOT to babysit it. The
-// polling that a synchronous timeout teaches (sleep, re-run, check again) is the
-// exact cost this machinery exists to remove, so the instruction against it is
-// written where the model will read it at the moment it is tempted.
 
-// jobOutputWaitMax bounds one job_output call, so a wait asked for in the tool
-// cannot become longer than the wait the tool call itself would have had.
 const jobOutputWaitMax = 600 * time.Second
 
-// JobTool is one tool over a session's job registry. All three share the type
-// because they share everything except their text and their parameters: they read
-// the same registry the exec engine writes into, and they never own work.
 type JobTool struct {
 	name        string
 	description string
@@ -35,9 +21,6 @@ type JobTool struct {
 	required    []string
 }
 
-// NewJobTools builds the three tools over one registry, in a stable order. The
-// registry is shared by reference with the exec tool: this is the only way
-// "what is still running" can be answered without asking the processes.
 func NewJobTools(reg *job.Registry) []*JobTool {
 	return []*JobTool{
 		{
@@ -72,8 +55,6 @@ func NewJobTools(reg *job.Registry) []*JobTool {
 
 func (t *JobTool) Name() string { return t.name }
 
-// Description/Parameters come from the embedded dsh spec (dsh_surface.go);
-// the parameter names already matched (job_id / wait / timeout_ms / reason).
 func (t *JobTool) Description() string {
 	if d := dshDesc(t.name); d != "" {
 		return d
@@ -110,10 +91,6 @@ func (t *JobTool) Execute(ctx context.Context, params map[string]interface{}) (*
 	return NewTextResult("Error: unknown job tool " + t.name), nil
 }
 
-// output reads one job, optionally waiting for it. The text of a finished job is
-// the very text exec would have returned synchronously, which is what lets the
-// model treat "it finished while I waited" and "it finished later" as the same
-// piece of information.
 func (t *JobTool) output(ctx context.Context, params map[string]interface{}) *ToolResult {
 	id, _ := params["job_id"].(string)
 	j := t.registry.Get(strings.TrimSpace(id))
@@ -133,9 +110,6 @@ func (t *JobTool) output(ctx context.Context, params map[string]interface{}) *To
 	}
 	snap := j.Snapshot()
 	if snap.Status == job.StatusRunning {
-		// Still running: hand over the tail and say plainly that this is not an
-		// answer yet, so the model does not read a truncated build log as a
-		// successful build.
 		elapsed := time.Since(snap.StartedAt).Round(time.Second)
 		return NewTextResult(fmt.Sprintf(
 			"job %s is still running (%s elapsed, %s of output so far). It is not finished - no need to wait for it here; you will be notified.\n%s",
@@ -144,7 +118,6 @@ func (t *JobTool) output(ctx context.Context, params map[string]interface{}) *To
 	return NewTextResult(j.Output(true))
 }
 
-// list answers "what is still going on" without a process table.
 func (t *JobTool) list() *ToolResult {
 	jobs := t.registry.List("")
 	if len(jobs) == 0 {
@@ -187,9 +160,7 @@ func (t *JobTool) kill(params map[string]interface{}) *ToolResult {
 	return NewTextResult(fmt.Sprintf("job %s was told to stop; its process tree is being killed and it settles as killed.", j.ID))
 }
 
-// ---------------------------------------------------------------- small format
 
-// shortLabel squeezes a command's first line into one table row.
 func shortLabel(s string, n int) string {
 	r := []rune(strings.ReplaceAll(strings.TrimSpace(s), "\n", " "))
 	if len(r) <= n {
@@ -205,8 +176,6 @@ func orNone(s string) string {
 	return s
 }
 
-// tail keeps the end of an output: for a command still running, the interesting
-// part is wherever it got to, not where it started.
 func tail(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
@@ -215,18 +184,10 @@ func tail(s string, n int) string {
 	return fmt.Sprintf("(%d chars skipped)\n", len(r)-n) + string(r[len(r)-n:])
 }
 
-// reJobID matches the ids the job runtime hands out ("<kind>-<8 hex>", e.g.
-// "exec-1a2b3c4d").
 var reJobID = regexp.MustCompile(`^[a-z][a-z0-9]*-[0-9a-f]{8}$`)
 
-// IsJobID reports whether an id has the shape of a background command id.
 func IsJobID(id string) bool { return reJobID.MatchString(strings.TrimSpace(id)) }
 
-// UnknownIDHint is the tail of an "unknown job <id>" error. The confusion is
-// real and keeps happening in runs: a background command id looks exactly like a
-// sub-agent task id, and a model that launched a command in the background
-// reaches for the task tool it already knows. Saying "unknown" alone sends it
-// around that loop again; naming the right tool ends it.
 func UnknownIDHint(id string) string {
 	if IsJobID(id) {
 		return " — that is the shape of a background command id from exec; read it with job_output(job_id=...) and see job_list for the rest"

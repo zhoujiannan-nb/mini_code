@@ -16,8 +16,6 @@ func makeFiles(t *testing.T, dir string, names ...string) {
 	}
 }
 
-// TestFileHintReadNotFound: a mistyped file name must name the closest real
-// files in the same directory.
 func TestFileHintReadNotFound(t *testing.T) {
 	dir := t.TempDir()
 	makeFiles(t, dir, "data_v2.csv", "data.csv", "readme.md", "zzz_unrelated.txt")
@@ -33,9 +31,6 @@ func TestFileHintReadNotFound(t *testing.T) {
 	}
 }
 
-// TestFileHintReadExtensionTypo: a wrong extension is a common typo; the
-// real name must be suggested (platform-independent, unlike a case-only
-// difference which Windows resolves transparently).
 func TestFileHintReadExtensionTypo(t *testing.T) {
 	dir := t.TempDir()
 	makeFiles(t, dir, "Report.docx", "notes.txt")
@@ -48,8 +43,6 @@ func TestFileHintReadExtensionTypo(t *testing.T) {
 	}
 }
 
-// TestFileHintReadNoSimilar: when nothing in the directory is similar, the
-// error must stay a plain not-found (no noisy hint).
 func TestFileHintReadNoSimilar(t *testing.T) {
 	dir := t.TempDir()
 	makeFiles(t, dir, "alpha.txt", "beta.txt")
@@ -62,8 +55,6 @@ func TestFileHintReadNoSimilar(t *testing.T) {
 	}
 }
 
-// TestFileHintReadMissingParent: when the parent directory itself does not
-// exist, no directory hint can be computed.
 func TestFileHintReadMissingParent(t *testing.T) {
 	dir := t.TempDir()
 	out := runRead(t, dir, "no_such_dir/x.txt", nil)
@@ -75,8 +66,6 @@ func TestFileHintReadMissingParent(t *testing.T) {
 	}
 }
 
-// TestFileHintReadDirectory: reading a directory must say it is a directory
-// and point at list_dir.
 func TestFileHintReadDirectory(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "sub")
@@ -101,7 +90,6 @@ func TestFileHintReadDirectory(t *testing.T) {
 	}
 }
 
-// TestFileHintReadSuccessUnchanged: the success path must not carry any hint.
 func TestFileHintReadSuccessUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	makeFiles(t, dir, "ok.txt")
@@ -114,8 +102,6 @@ func TestFileHintReadSuccessUnchanged(t *testing.T) {
 	}
 }
 
-// TestFileHintEditNotFound: edit_file on a mistyped path must also name the
-// closest real files.
 func TestFileHintEditNotFound(t *testing.T) {
 	dir := t.TempDir()
 	makeFiles(t, dir, "config.yaml", "config_old.yaml")
@@ -128,7 +114,6 @@ func TestFileHintEditNotFound(t *testing.T) {
 	}
 }
 
-// TestSimilarFileNamesCap: at most similarHintCap candidates are returned.
 func TestSimilarFileNamesCap(t *testing.T) {
 	dir := t.TempDir()
 	names := []string{"table_1.csv", "table_2.csv", "table_3.csv", "table_4.csv", "table_5.csv", "table_6.csv", "other.log"}

@@ -13,10 +13,6 @@ import (
 //go:embed prompts/*.txt
 var embeddedPrompts embed.FS
 
-// LoadPrompt resolves the prompt text for the given filename (e.g.
-// "build.txt"). A file at CWD-relative agent/prompts/<name> takes
-// precedence so local overrides during development still win; otherwise the
-// embedded copy is used. Returns "" if neither exists.
 func LoadPrompt(filename string) string {
 	if data, err := os.ReadFile(filepath.Join("agent", "prompts", filename)); err == nil {
 		return strings.TrimSpace(string(data))

@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// TestChatStreamExposesToolArgsProgress verifies the onChunk callback can see a
-// tool call WHILE the model is still generating its arguments. Without this the
-// UI has nothing to show during the minutes a big write_file payload takes to
-// type out, because tool_start only fires once the whole reply has arrived.
 func TestChatStreamExposesToolArgsProgress(t *testing.T) {
 	srv, mc := newTestStreamServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -30,12 +26,9 @@ func TestChatStreamExposesToolArgsProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The finish_reason-only chunk carries no delta, so no callback fires for it.
 	if len(snaps) != 3 {
 		t.Fatalf("chunks = %d, want 3", len(snaps))
 	}
-	// Arguments are reported accumulated (not as deltas), matching how Content
-	// is reported, so the consumer can render each snapshot directly.
 	if snaps[0][0].Args != "" {
 		t.Errorf("snapshot0 args = %q, want empty (name arrives before any argument)", snaps[0][0].Args)
 	}
@@ -48,15 +41,11 @@ func TestChatStreamExposesToolArgsProgress(t *testing.T) {
 	if snaps[0][0].Name != "write_file" || snaps[0][0].ID != "call_w" || snaps[0][0].Index != 0 {
 		t.Errorf("snapshot0 = %+v, want name/id/index from the first delta", snaps[0][0])
 	}
-	// The aggregated result must be untouched by the new field.
 	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Function.Arguments != `{"path":"D:\\x.txt","content":"第一行\n第二行"}` {
 		t.Errorf("final tool calls = %+v", resp.ToolCalls)
 	}
 }
 
-// TestChatStreamArgsProgressParallelCalls verifies two tool calls generated in
-// the same reply keep separate progress entries (otherwise their text would
-// interleave into one live view).
 func TestChatStreamArgsProgressParallelCalls(t *testing.T) {
 	srv, mc := newTestStreamServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

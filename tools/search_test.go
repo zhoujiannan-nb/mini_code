@@ -114,7 +114,6 @@ func TestSearchToolMaxResults(t *testing.T) {
 	}
 	if !strings.Contains(res.Text, "(Full grep result stored at: ") ||
 		!strings.Contains(res.Text, "Use read with offset/limit, or grep this path to search within it.)") {
-		// dsh spill footer: the complete formatted result lands in a file.
 		if !strings.Contains(res.Text, "(The complete result could not be saved; narrow pattern, path, or include to see more.)") {
 			t.Fatalf("expected the spill footer: %s", res.Text)
 		}
@@ -164,8 +163,6 @@ func TestSearchToolBadPath(t *testing.T) {
 	}
 }
 
-// dsh grep schema texts (grep.ts:68-92), verbatim under the stable
-// "invalid arguments: " prefix.
 func TestSearchToolArgumentValidation(t *testing.T) {
 	dir := t.TempDir()
 	st := NewSearchTool(dir)
@@ -189,7 +186,6 @@ func TestSearchToolArgumentValidation(t *testing.T) {
 			t.Fatalf("%s: expected %q, got: %s", tc.name, tc.want, res.Text)
 		}
 	}
-	// {a,b} alternation is ONE glob and stays valid.
 	writeFile(t, dir, "a.tsx", "needle\n")
 	res, err := st.Execute(context.Background(), map[string]interface{}{"pattern": "needle", "include": "*.{ts,tsx}"})
 	if err != nil {
@@ -209,7 +205,6 @@ func TestSearchToolContextBasic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Match line uses "path:line:", context lines use "path-line:".
 	if !strings.Contains(res.Text, "a.txt:3: TARGET") {
 		t.Fatalf("missing match line: %s", res.Text)
 	}
@@ -226,8 +221,6 @@ func TestSearchToolContextBasic(t *testing.T) {
 
 func TestSearchToolContextMerge(t *testing.T) {
 	dir := t.TempDir()
-	// Two matches 2 lines apart with context=2 should merge into ONE group
-	// (no "--" separator between them).
 	writeFile(t, dir, "a.txt", "a1\nT1\nx\nT2\na5\na6\n")
 
 	st := NewSearchTool(dir)
@@ -248,7 +241,6 @@ func TestSearchToolContextMerge(t *testing.T) {
 
 func TestSearchToolContextSeparate(t *testing.T) {
 	dir := t.TempDir()
-	// Two matches far apart with context=1 should produce two groups with "--".
 	writeFile(t, dir, "a.txt", "T1\nb2\nb3\nb4\nb5\nT6\n")
 
 	st := NewSearchTool(dir)
@@ -266,7 +258,6 @@ func TestSearchToolContextSeparate(t *testing.T) {
 
 func TestSearchToolContextBoundary(t *testing.T) {
 	dir := t.TempDir()
-	// Match on the very first line: no context before it.
 	writeFile(t, dir, "a.txt", "TARGET\nline2\nline3\n")
 
 	st := NewSearchTool(dir)
@@ -277,7 +268,6 @@ func TestSearchToolContextBoundary(t *testing.T) {
 	if !strings.Contains(res.Text, "a.txt:1: TARGET") {
 		t.Fatalf("missing match: %s", res.Text)
 	}
-	// Context after should show lines 2 and 3, but nothing before line 1.
 	if !strings.Contains(res.Text, "a.txt-2: line2") || !strings.Contains(res.Text, "a.txt-3: line3") {
 		t.Fatalf("missing trailing context: %s", res.Text)
 	}
@@ -295,8 +285,6 @@ func TestSearchToolContextDefaultZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Default (no context param) goes through the dsh grouped rendering: the
-	// match line inside its file group, nothing else.
 	if !strings.Contains(res.Text, "a.txt\nLine 2: TARGET") {
 		t.Fatalf("missing match: %s", res.Text)
 	}

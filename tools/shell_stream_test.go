@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// chunkLog records what a streaming exec reported, with the wall time of each
-// piece, so the test can tell "reported while running" from "reported at the end".
 type chunkLog struct {
 	mu     sync.Mutex
 	items  []string
@@ -40,15 +38,10 @@ func (c *chunkLog) first() (time.Time, bool) {
 	return c.times[0], true
 }
 
-// TestExecStreamedReportsOutputWhileRunning is the point of the whole feature:
-// the UI must see output before the command finishes, and the final result must
-// be exactly what the non-streaming path returns.
 func TestExecStreamedReportsOutputWhileRunning(t *testing.T) {
-	t.Setenv("MC_EXEC_GATE", "0") // the sleep here is the fixture, not model behaviour
+	t.Setenv("MC_EXEC_GATE", "0")
 	command := "echo one; sleep 1; echo two"
 	if runtime.GOOS == "windows" {
-		// The pwsh tool speaks PowerShell on Windows; spell the wait and the
-		// sequence in its own dialect.
 		command = "echo one; Start-Sleep 1; echo two"
 	}
 
@@ -74,15 +67,12 @@ func TestExecStreamedReportsOutputWhileRunning(t *testing.T) {
 	if !first.Before(end) {
 		t.Fatalf("first chunk arrived after the command finished")
 	}
-	// The command waits ~1s in the middle: the first line must have been
-	// reported well before the end, otherwise this is just a dump at close.
 	if end.Sub(first) < 300*time.Millisecond {
 		t.Errorf("first chunk came %v before the end; expected the early part while still running", end.Sub(first))
 	}
 	if first.Before(start) {
 		t.Error("chunk timestamp predates the call")
 	}
-	// The result the model sees is unchanged by the live feed.
 	text := ""
 	if res != nil {
 		text = res.Text
@@ -94,8 +84,6 @@ func TestExecStreamedReportsOutputWhileRunning(t *testing.T) {
 	}
 }
 
-// TestExecStreamedMarksStderr: the live feed separates the two streams, since a
-// merged blob makes a failing command look like normal output.
 func TestExecStreamedMarksStderr(t *testing.T) {
 	command := "echo bad 1>&2"
 	if runtime.GOOS == "windows" {
@@ -117,8 +105,6 @@ func TestExecStreamedMarksStderr(t *testing.T) {
 	}
 }
 
-// TestExecUnstreamedStillWorks guards the delegation: Execute must not start
-// depending on a sink it never passes.
 func TestExecUnstreamedStillWorks(t *testing.T) {
 	tool := NewExecTool(20, t.TempDir())
 	t.Cleanup(func() { _ = tool.Close() })

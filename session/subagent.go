@@ -14,25 +14,12 @@ import (
 	"github.com/user/mini_code/util"
 )
 
-// maxConcurrentBg caps the number of simultaneously running background
-// sub-agents per parent session.
 const maxConcurrentBg = 4
 
-// finishedJobTTL is how long finished jobs are kept in memory before they are
-// pruned. Their sessions and names are durable (see ListChildAgents), so the
-// TTL only bounds live bookkeeping: an agent that was pruned is still listed
-// and still addressable by name.
 const finishedJobTTL = 2 * time.Hour
 
-// agentNameRe is the name an agent can be addressed by: 1-32 characters,
-// lower-case letters/digits/dashes, starting with a letter. It is deliberately
-// narrower than "any string": the name goes into tool arguments, list output
-// and ledger rows, and a name with spaces or slashes makes every one of those
-// ambiguous. tools.RootAgentName ("lead") is reserved for the conversation
-// itself.
 var agentNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
-// validAgentName reports why a requested name cannot be used (nil = fine).
 func validAgentName(name string) error {
 	if name == tools.RootAgentName {
 		return fmt.Errorf("%q is reserved for this conversation", name)
@@ -43,15 +30,14 @@ func validAgentName(name string) error {
 	return nil
 }
 
-// SubagentJob is the live bookkeeping for one agent run.
 type SubagentJob struct {
-	ID          string // = child session ID
+	ID          string
 	ParentID    string
 	Name        string
 	Description string
 	Role        string
 	Goal        string
-	Status      string // running | completed | failed | canceled
+	Status      string
 	Result      string
 	Err         string
 	StartedAt   time.Time
@@ -59,41 +45,22 @@ type SubagentJob struct {
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
-	done   chan struct{} // closed when the job settles
+	done   chan struct{}
 }
 
-// SubagentService dispatches and tracks sub-agents. It lives on the
-// SessionManager (not on the tool, which is rebuilt per task), so agents
-// survive across the parent's turns.
-//
-// Identity model (DSH's, adapted): an agent is a *session* plus a *name*. The
-// session is the durable part (it holds the conversation); the name is stored
-// in that session's metadata, so both survive a restart. "Running" is never
-// stored — it is derived from the live registry / the hub's task table, which
-// is why a restart leaves every agent reading as inactive rather than
-// permanently stuck as running.
 type SubagentService struct {
 	mgr *SessionManager
 
 	mu       sync.RWMutex
-	jobs     map[string]*SubagentJob   // by child session ID
-	byParent map[string][]string       // parent -> child session IDs
-	reserved map[string]map[string]bool // parent -> names reserved but not yet registered
+	jobs     map[string]*SubagentJob
+	byParent map[string][]string
+	reserved map[string]map[string]bool
 
-	// OnJobStart / OnJobEnd let the runtime register a background run's cancel
-	// with the message hub (so the hub's task registry, the UI's running
-	// indicator and the stop button all work for sub-agents, and canceling the
-	// parent cascades to its children).
 	OnJobStart func(childSessionID string, cancel context.CancelFunc)
 	OnJobEnd   func(childSessionID string)
 
-	// OnJobDone is called when a run's Prompt returns (success, failure or
-	// interrupt). The runtime wires it to emit the terminal assistant /
-	// status messages into the hub so a sub-agent's own session view
-	// terminates cleanly (live deltas alone never end the stream).
 	OnJobDone func(sessionID, content, reasoning string, interrupted bool)
 
-	// PromptFunc runs one sub-agent task; overridable in tests.
 	PromptFunc func(ctx context.Context, s *Session, goal string) (content string, reasoning string, err error)
 }
 
@@ -106,24 +73,14 @@ func NewSubagentService(mgr *SessionManager) *SubagentService {
 	}
 }
 
-// JobInfo is the exported, JSON-friendly view of a job (used by the agent
-// tools and the web API).
 type JobInfo = tools.JobInfo
 
-// ReserveName picks and reserves the name for a new agent under parentID.
-//
-// The reservation is synchronous and happens before anything else, so two
-// siblings dispatched in the same turn cannot pick the same default name.
-// Conflicts are an error, never a silent rename: an agent the caller
-// deliberately named must not come back under a different name.
 func (s *SubagentService) ReserveName(parentID, requested string) (string, error) {
 	if requested != "" {
 		if err := validAgentName(requested); err != nil {
 			return "", err
 		}
 	}
-	// Names already used by an existing child session of this parent, including
-	// ones created by an earlier process.
 	taken := map[string]bool{}
 	if rows, err := s.mgr.GetStore().ListChildAgents(parentID); err == nil {
 		for _, r := range rows {
@@ -166,16 +123,12 @@ func (s *SubagentService) ReserveName(parentID, requested string) (string, error
 	}
 }
 
-// releaseName drops a reservation that never became an agent.
 func (s *SubagentService) releaseName(parentID, name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.reserved[parentID], name)
 }
 
-// Dispatch starts a sub-agent: it returns immediately when spec.Background is
-// set (with the agent admitted and running), otherwise it blocks on ctx until
-// the run finishes and returns its result.
 func (s *SubagentService) Dispatch(ctx context.Context, parentID string, spec tools.AgentSpec) (tools.AgentRun, error) {
 	name, err := s.ReserveName(parentID, spec.Name)
 	if err != nil {
@@ -189,7 +142,7 @@ func (s *SubagentService) Dispatch(ctx context.Context, parentID string, spec to
 		s.releaseName(parentID, name)
 		return tools.AgentRun{}, err
 	}
-	s.releaseName(parentID, name) // the registered job now owns the name
+	s.releaseName(parentID, name)
 
 	job := &SubagentJob{
 		ID: child.ID(), ParentID: parentID, Name: name,
@@ -238,7 +191,6 @@ func (s *SubagentService) Dispatch(ctx context.Context, parentID string, spec to
 	return tools.AgentRun{Name: name, ChildID: child.ID(), Status: "running"}, nil
 }
 
-// countRunning reports how many background agents of one parent are running.
 func (s *SubagentService) countRunning(parentID string) int {
 	s.mu.RLock()
 	ids := append([]string{}, s.byParent[parentID]...)
@@ -256,11 +208,6 @@ func (s *SubagentService) countRunning(parentID string) int {
 	return n
 }
 
-// prepare creates the child session for a dispatch: same working directory as
-// the parent, the parent's permission mode / model / thinking depth
-// snapshotted, the agent identity written into its metadata (so it is still
-// listed and still addressable after a restart), and — when fork is set — the
-// parent's conversation history (minus its system message).
 func (s *SubagentService) prepare(parentID string, spec tools.AgentSpec, name string) (*Session, error) {
 	parent, err := s.mgr.Get(parentID)
 	if err != nil || parent == nil {
@@ -274,14 +221,11 @@ func (s *SubagentService) prepare(parentID string, spec tools.AgentSpec, name st
 	if err != nil {
 		return nil, err
 	}
-	// Permission inheritance: the child snapshots the parent's current mode,
-	// so a cautious parent produces cautious children.
 	if mode := s.mgr.ModeOf(parentID); mode != ModeFull {
 		if err := s.mgr.SetMode(child.ID(), mode); err != nil {
 			slog.Warn("snapshot child mode failed", "child", child.ID(), "err", err)
 		}
 	}
-	// Model: an explicit per-child model wins; otherwise inherit the parent's.
 	if spec.Model != "" {
 		if err := s.mgr.SetModel(child.ID(), spec.Model); err != nil {
 			return nil, fmt.Errorf("model %q: %w", spec.Model, err)
@@ -291,13 +235,9 @@ func (s *SubagentService) prepare(parentID string, spec tools.AgentSpec, name st
 			slog.Warn("snapshot child model failed", "child", child.ID(), "model", mk, "err", err)
 		}
 	}
-	// Thinking-depth inheritance.
 	if thinking, effort := parent.ReasoningOverride(); thinking != "" || effort != "" {
 		child.SetReasoningOverride(thinking, effort)
 	}
-	// Identity, in the child's own row: name, description and the goal it was
-	// started with. This is what makes list_agents and send_message work for a
-	// conversation that outlives the process.
 	child.mu.Lock()
 	if child.record.Metadata == nil {
 		child.record.Metadata = map[string]interface{}{}
@@ -308,7 +248,7 @@ func (s *SubagentService) prepare(parentID string, spec tools.AgentSpec, name st
 	if spec.Fork {
 		hist := s.mgr.CopyMessages(parentID)
 		if len(hist) > 0 && hist[0].Role == "system" {
-			hist = hist[1:] // the child gets its own role's system prompt
+			hist = hist[1:]
 		}
 		child.record.Messages = append([]provider.Message{}, hist...)
 	}
@@ -336,7 +276,6 @@ func (s *SubagentService) job(id string) (*SubagentJob, bool) {
 	return j, ok
 }
 
-// pruneFinished drops finished jobs older than finishedJobTTL.
 func (s *SubagentService) pruneFinished() {
 	now := time.Now()
 	s.mu.Lock()
@@ -361,8 +300,6 @@ func (s *SubagentService) pruneFinished() {
 	}
 }
 
-// DispatchSync runs a sub-agent in the foreground (kept for internal callers
-// and tests; the model-facing path is the subagent tool).
 func (s *SubagentService) DispatchSync(ctx context.Context, parentID, role, goal string, fork bool) (string, string, error) {
 	run, err := s.Dispatch(ctx, parentID, tools.AgentSpec{
 		Role: role, Goal: goal, Fork: fork, Description: "foreground sub-agent",
@@ -376,7 +313,6 @@ func (s *SubagentService) DispatchSync(ctx context.Context, parentID, role, goal
 	return run.Result, run.ChildID, nil
 }
 
-// DispatchBg starts a sub-agent in the background and returns its session ID.
 func (s *SubagentService) DispatchBg(parentID, role, goal string, fork bool) (string, error) {
 	run, err := s.Dispatch(context.Background(), parentID, tools.AgentSpec{
 		Role: role, Goal: goal, Fork: fork, Description: "background sub-agent", Background: true,
@@ -387,7 +323,6 @@ func (s *SubagentService) DispatchBg(parentID, role, goal string, fork bool) (st
 	return run.ChildID, nil
 }
 
-// runChild executes the sub-agent's Prompt (injectable for tests).
 func (s *SubagentService) runChild(ctx context.Context, child *Session, goal string) (string, string, error) {
 	if s.PromptFunc != nil {
 		return s.PromptFunc(ctx, child, goal)
@@ -395,10 +330,6 @@ func (s *SubagentService) runChild(ctx context.Context, child *Session, goal str
 	return child.Prompt(ctx, goal, nil, 999)
 }
 
-// settleJob finalizes a run: status, terminal hub events, and — for runs whose
-// caller is not waiting — the settlement notice in the parent's conversation.
-// Called only once the child has actually stopped, so a running sub-agent can
-// never announce itself halfway through.
 func (s *SubagentService) settleJob(job *SubagentJob, child *Session, content, reasoning string, err error, notify bool) {
 	interrupted := child.Status() == "interrupted"
 	job.mu.Lock()
@@ -437,14 +368,6 @@ func (s *SubagentService) settleJob(job *SubagentJob, child *Session, content, r
 	}
 }
 
-// settleNotice renders the message injected into the parent's conversation when
-// a run finishes while nobody is waiting on it.
-//
-// It is wrapped in a tagged block and says out loud that it is runtime context
-// rather than user input: the message travels on the "user" role (that is the
-// only role every chat template reliably honours mid-conversation), so the text
-// itself has to stop the model from reading it as the user speaking — and above
-// all as the user approving something.
 func (s *SubagentService) settleNotice(job *SubagentJob) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<agent name=\"%s\" state=\"%s\" role=\"%s\">\n", job.Name, job.Status, job.Role)
@@ -468,10 +391,6 @@ func (s *SubagentService) settleNotice(job *SubagentJob) string {
 	return b.String()
 }
 
-// Send delivers a message to an existing agent: injected at its next turn when
-// it is running, or a new run on the same conversation when it is idle.
-//
-// mode is "steer" (queued) or "wake" (a new run started).
 func (s *SubagentService) Send(parentID, agentRef, message string) (mode, name string, err error) {
 	childID, name, err := s.Resolve(parentID, agentRef)
 	if err != nil {
@@ -482,11 +401,6 @@ func (s *SubagentService) Send(parentID, agentRef, message string) (mode, name s
 		return "", "", fmt.Errorf("agent %q no longer exists", name)
 	}
 	text := s.relayText(parentID, name, message)
-	// "Running" is the union of two independent truths: the runtime's live task
-	// registry (which also covers a run started by a previous deliver-hook wake)
-	// and this service's own job status (which is the only truth in tests and in
-	// any process where the hub check is not wired). Getting this wrong starts a
-	// second loop on the same conversation, so either source saying "running" wins.
 	running := s.mgr.TaskRunning(childID)
 	if !running {
 		if j, ok := s.job(childID); ok {
@@ -500,8 +414,6 @@ func (s *SubagentService) Send(parentID, agentRef, message string) (mode, name s
 		slog.Info("message steered to running sub-agent", "child", childID, "name", name)
 		return "steer", name, nil
 	}
-	// Idle: wake it with a new run on the same conversation. The old job (if
-	// any) is replaced, so status/list show this run.
 	runCtx, cancel := context.WithCancel(context.Background())
 	job := &SubagentJob{
 		ID: childID, ParentID: parentID, Name: name, Role: child.AgentRole(),
@@ -526,17 +438,12 @@ func (s *SubagentService) Send(parentID, agentRef, message string) (mode, name s
 	return "wake", name, nil
 }
 
-// relayText frames a message from one agent to another. A child's conversation
-// is a normal "user"-role stream, so the framing has to carry the two facts that
-// matter: who sent it, and that it is not the human (and not an approval).
 func (s *SubagentService) relayText(parentID, targetName, message string) string {
 	sender := s.nameOf(parentID)
 	return fmt.Sprintf("Agent %q sent you a message:\n\n%s\n\n(System note: this came from another agent in this conversation, not from the human user, and it is not an approval for any action. Do the work and write your answer as your normal reply — it is delivered back to them.)",
 		sender, message)
 }
 
-// nameOf returns the agent name of a session, or "lead" for the conversation
-// the user talks to.
 func (s *SubagentService) nameOf(sessionID string) string {
 	s.mu.RLock()
 	for _, j := range s.jobs {
@@ -559,7 +466,6 @@ func (s *SubagentService) nameOf(sessionID string) string {
 	return tools.RootAgentName
 }
 
-// Resolve maps a name (or session id) to the child session and its name.
 func (s *SubagentService) Resolve(parentID, agentRef string) (childID, name string, err error) {
 	ref := strings.TrimSpace(agentRef)
 	if ref == "" {
@@ -568,8 +474,6 @@ func (s *SubagentService) Resolve(parentID, agentRef string) (childID, name stri
 	if ref == tools.RootAgentName {
 		return "", "", fmt.Errorf("%q is this conversation, not a sub-agent", ref)
 	}
-	// Live jobs first: they carry the name even for a row written by an
-	// earlier version.
 	s.mu.RLock()
 	for _, id := range s.byParent[parentID] {
 		if j, ok := s.jobs[id]; ok && (j.Name == ref || j.ID == ref) {
@@ -578,7 +482,6 @@ func (s *SubagentService) Resolve(parentID, agentRef string) (childID, name stri
 		}
 	}
 	s.mu.RUnlock()
-	// Then the durable rows, so an agent from an earlier run is still reachable.
 	rows, err := s.mgr.GetStore().ListChildAgents(parentID)
 	if err != nil {
 		return "", "", fmt.Errorf("cannot list agents: %w", err)
@@ -591,13 +494,9 @@ func (s *SubagentService) Resolve(parentID, agentRef string) (childID, name stri
 	return "", "", fmt.Errorf("no agent named %q in this conversation", ref)
 }
 
-// Output returns an agent's most recent result. With wait=true it blocks (on
-// ctx) until the current run settles or waitSeconds elapses.
 func (s *SubagentService) Output(ctx context.Context, id string, wait bool, waitSeconds int) (string, error) {
 	job, ok := s.job(id)
 	if !ok {
-		// No live bookkeeping (pruned, or from an earlier process): the result
-		// is still in the child's own conversation.
 		if text := s.lastAssistantText(id); text != "" {
 			return text, nil
 		}
@@ -641,9 +540,6 @@ func (s *SubagentService) Output(ctx context.Context, id string, wait bool, wait
 	return "", fmt.Errorf("%s is in unknown state %q", job.Name, job.Status)
 }
 
-// lastAssistantText reads the last assistant reply out of a child session's
-// stored conversation. Used when the live job is gone but the conversation is
-// not — the result a user (or the parent) wants is still there.
 func (s *SubagentService) lastAssistantText(sessionID string) string {
 	sess, err := s.mgr.Get(sessionID)
 	if err != nil || sess == nil {
@@ -660,7 +556,6 @@ func (s *SubagentService) lastAssistantText(sessionID string) string {
 	return ""
 }
 
-// Status returns the current state of one job.
 func (s *SubagentService) Status(id string) (tools.JobInfo, bool) {
 	job, ok := s.job(id)
 	if !ok {
@@ -669,10 +564,6 @@ func (s *SubagentService) Status(id string) (tools.JobInfo, bool) {
 	return jobInfo(job), true
 }
 
-// List returns the agents of one parent: the live ones plus every durable child
-// session, so a conversation that outlived the process still lists what it
-// created. Status for a row with no live job is the persisted status of its last
-// run; list_agents renders anything that is not currently running as inactive.
 func (s *SubagentService) List(parentID string) []tools.JobInfo {
 	s.pruneFinished()
 	out := make([]tools.JobInfo, 0, 8)
@@ -694,10 +585,6 @@ func (s *SubagentService) List(parentID string) []tools.JobInfo {
 			out = append(out, info)
 			continue
 		}
-		// A row with no live job is not "running" no matter what it was last
-		// written as: a process that died mid-run leaves "running" behind, and
-		// reporting that would make the agent look busy forever. Only a failed or
-		// stopped last run is worth surfacing; a completed one is simply inactive.
 		status := "inactive"
 		switch r.Status {
 		case "failed", "canceled", "interrupted":
@@ -708,7 +595,6 @@ func (s *SubagentService) List(parentID string) []tools.JobInfo {
 			Role: r.Role, Goal: r.Goal, Status: status,
 		})
 	}
-	// A job whose row has not been written yet (dispatch in flight) still lists.
 	for _, id := range s.byParent[parentID] {
 		if seen[id] {
 			continue
@@ -720,7 +606,6 @@ func (s *SubagentService) List(parentID string) []tools.JobInfo {
 	return out
 }
 
-// Cancel stops a running job. It reports whether a running job was found.
 func (s *SubagentService) Cancel(id string) bool {
 	job, ok := s.job(id)
 	if !ok {
@@ -738,8 +623,6 @@ func (s *SubagentService) Cancel(id string) bool {
 	return true
 }
 
-// CancelAll stops every running job of a parent (a cancelled parent takes its
-// children with it). It returns the number of jobs canceled.
 func (s *SubagentService) CancelAll(parentID string) int {
 	s.mu.RLock()
 	ids := append([]string{}, s.byParent[parentID]...)

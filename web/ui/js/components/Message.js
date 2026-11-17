@@ -1,7 +1,3 @@
-// 单条消息:用户 / 助手 / 系统注入 notice / 过程条 / 错误 / 状态行。
-// DOM 与旧 messages.js + steps.js 生成的完全一致(class 名、层级、头像位置都不变),
-// 变的只是"由 state 渲染"而不是"拼字符串再 innerHTML"。
-// 唯一的例外是思考过程:它不再折叠,统一交给 ThinkBox 画成淡色可滚动小框。
 import { h } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import htm from "htm";
@@ -36,9 +32,6 @@ function NoticeLine({ notice, text }) {
 function UserMessage({ row }) {
   const text = String(row.text || "");
   const images = row.images || [];
-  // 用户气泡 = 右对齐浅灰圆角块,右侧带头像(.msg.user 是 row-reverse,
-  // 第一个 DOM 子元素贴右,所以头像写在卡片之前才落在右边)。点头像开
-  // 「用户头像」弹窗(App.js 委托)。
   return html`<div class="msg user">
     <${UserAvatar} cls="c-avatar" />
     <div class="m-card">
@@ -65,8 +58,6 @@ function AssistantMessage({ row }) {
   </div>`;
 }
 
-// MessageView 无 hook:被 memo 包住之后,只要 row 引用不变就不会重渲
-// (流式 delta 期间历史消息一条都不动)。
 function MessageView({ row }) {
   switch (row.kind) {
     case "user":
@@ -92,8 +83,6 @@ function MessageView({ row }) {
 
 export const Message = memo(MessageView);
 
-// 正在生成的那一条。它每个 delta 都要重渲(全文 markdown 重算不可避免),
-// 但消息列表与它无关 —— 这正是重构要拿到的收益。
 export function LiveMessage({ live }) {
   const content = String(live.content || "");
   const reasoning = String(live.reasoning || "");
@@ -110,7 +99,6 @@ export function LiveMessage({ live }) {
   </div>`;
 }
 
-// 等待模型首 token 的转圈:大上下文首次推理可能很慢,没有这个秒数会像卡死。
 export function PendingMessage() {
   const [sec, setSec] = useState(0);
   useEffect(() => {
@@ -127,8 +115,6 @@ export function PendingMessage() {
   </div>`;
 }
 
-// 欢迎页示例卡:点一张 = 把示例提示词塞进输入框(composerSeed 通道),
-// 用户可以接着改。第四颗「更多示例」翻开一张小弹层。
 const EXAMPLES = [
   {
     key: "code",
@@ -231,7 +217,6 @@ function WelcomeHero() {
 
 export function Placeholder() {
   const current = useStore((s) => s.current);
-  // 新会话草稿 = 样图那张欢迎页;已存在的空会话仍然只有一句话。
   if (!current) return html`<${WelcomeHero} />`;
   return html`<div class="placeholder" id="placeholder">
     <div class="big">M</div>

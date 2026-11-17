@@ -30,11 +30,9 @@ func TestDirIndexSearchRanking(t *testing.T) {
 	if len(hits) == 0 {
 		t.Fatal("expected hits for car_home")
 	}
-	// Exact base-name match must rank first.
 	if hits[0].Path != `D:\project\car_home` {
 		t.Fatalf("first hit = %q, want D:\\project\\car_home", hits[0].Path)
 	}
-	// Prefix-in-base match (car_home_backup) must also be found.
 	var found bool
 	for _, h := range hits {
 		if h.Path == `C:\Users\flycat666\Documents\car_home_backup` {
@@ -45,19 +43,16 @@ func TestDirIndexSearchRanking(t *testing.T) {
 		t.Fatal("car_home_backup not found")
 	}
 
-	// Case-insensitive.
 	hits, _ = ix.Search("CAR_HOME", 20)
 	if len(hits) == 0 || hits[0].Path != `D:\project\car_home` {
 		t.Fatalf("case-insensitive search failed: %v", hits)
 	}
 
-	// Path-only match (no base name contains "project" except the exact one).
 	hits, _ = ix.Search("project", 20)
 	if len(hits) == 0 || hits[0].Path != `D:\project` {
 		t.Fatalf("project search = %v", hits)
 	}
 
-	// No match.
 	hits, _ = ix.Search("definitely_not_there_xyz", 20)
 	if len(hits) != 0 {
 		t.Fatalf("expected no hits, got %v", hits)

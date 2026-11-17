@@ -8,13 +8,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// The lite super surface — exactly one tool:
-//
-//	super_schedule  定时任务的增删查改与立即触发
-//
-// The v9 trio (super_workers / super_send / super_ticket) is gone with the
-// subsystems it drove; agent.SuperAgentConfig keeps DenyPluginTools so no
-// plugin tool slips into the super session either.
 
 type scheduleTool struct{ s *Service }
 

@@ -8,14 +8,9 @@ import (
 	"github.com/user/mini_code/agent"
 )
 
-// TestBuildSystemPromptIsStatic verifies the system prompt no longer embeds
-// a timestamp: it is the head of the request prefix the provider's prefix
-// cache matches, so it must be identical across tasks of a session.
 func TestBuildSystemPromptIsStatic(t *testing.T) {
 	pb := &PromptBuilder{agentConfig: &agent.AgentConfig{Prompt: "you are a test agent"}}
 	a := pb.BuildSystemPrompt("C:\\work", "")
-	// More than one wall-clock second: a per-second timestamp in the prompt
-	// would make the two renders differ.
 	time.Sleep(1100 * time.Millisecond)
 	b := pb.BuildSystemPrompt("C:\\work", "")
 	if a != b {
@@ -23,20 +18,10 @@ func TestBuildSystemPromptIsStatic(t *testing.T) {
 	}
 }
 
-// TestBuildSystemPromptIsTheJoinOfItsParts pins the invariant the prefix cache
-// depends on: exposing the prompt as sections (BuildSystemPromptParts, for the
-// 「上下文」drawer) must not change one byte of the prompt a turn sends.
-//
-// The expected text is spelled out here in the order the sections have always
-// been emitted, independently of BuildSystemPromptParts — so reordering,
-// re-spacing, or dropping a section fails this test instead of quietly costing
-// every session a full prefix-cache miss.
 func TestBuildSystemPromptIsTheJoinOfItsParts(t *testing.T) {
-	// 老 BuildSystemPrompt 的拼接顺序,手抄一份当作真相。
 	join := func(persona, workDir, extra string) string {
 		var want []string
 		if persona != "" {
-			// modelName 未设置时 {{model}} 渲染成 "default"。
 			want = append(want, strings.ReplaceAll(persona, "{{model}}", "default"))
 		}
 		want = append(want, workConstraints)
@@ -57,7 +42,6 @@ func TestBuildSystemPromptIsTheJoinOfItsParts(t *testing.T) {
 		return strings.Join(want, "\n")
 	}
 
-	// 四种组合都要验:有人设/没人设、有工作目录/没有、有附加上下文/没有。
 	cases := []struct{ persona, workDir, extra string }{
 		{"you are a coding agent powered by the {{model}} model", `C:\work`, ""},
 		{"", `C:\work`, ""},
@@ -86,7 +70,6 @@ func TestBuildSystemPromptIsTheJoinOfItsParts(t *testing.T) {
 			t.Fatalf("parts joined != BuildSystemPrompt (workDir=%q): %d vs %d bytes",
 				c.workDir, len(joined), len(got))
 		}
-		// 人设/工作约束是基础段,工作目录起都是注入段。
 		if c.persona != "" && (parts[0].Label != "人设" || parts[0].Injected) {
 			t.Fatalf("first part = %+v, want 非注入的「人设」", parts[0])
 		}

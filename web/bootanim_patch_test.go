@@ -10,7 +10,6 @@ import (
 	"github.com/user/mini_code/config"
 )
 
-// bootPlayState reads the live play settings through the API the UI uses.
 func bootPlayState(t *testing.T, url string) map[string]any {
 	t.Helper()
 	code, body := doJSON(t, "GET", url+"/api/bootanim", "")
@@ -26,8 +25,6 @@ func bootPlayState(t *testing.T, url string) map[string]any {
 	return payload.Play
 }
 
-// savingBackend is fakeBackend that actually remembers what it was handed, so
-// tests can tell "the patch was applied" from "the patch was parsed".
 type savingBackend struct {
 	fakeBackend
 	mu  sync.Mutex
@@ -50,8 +47,6 @@ func (s *savingBackend) SaveConfig(cfg *config.AppConfig) (*SaveResult, error) {
 	return &SaveResult{}, nil
 }
 
-// DefaultBootAnimConfigForTest is the live config a test starts from: boot
-// animation on, nothing pinned, defaults for the rest.
 func DefaultBootAnimConfigForTest() *config.AppConfig {
 	cfg := &config.AppConfig{
 		Model: config.ModelConfig{Provider: "vllm", ModelName: "test"},
@@ -60,12 +55,6 @@ func DefaultBootAnimConfigForTest() *config.AppConfig {
 	return cfg
 }
 
-// TestBootAnimPatchUpdatesOnlyTheBootBlock: the play switches are edited from a
-// boot plugin's detail pane, so they need their own endpoint. Posting the whole
-// config from there would mean shipping the model list — and its API keys —
-// just to turn a checkbox, and the model list would have to be valid.
-//
-// A config with no models at all still has to accept the patch.
 func TestBootAnimPatchUpdatesOnlyTheBootBlock(t *testing.T) {
 	home := pluginHome(t)
 	installBootPlugin(t, home, "boot-a",
@@ -75,7 +64,6 @@ func TestBootAnimPatchUpdatesOnlyTheBootBlock(t *testing.T) {
 	srv := httptest.NewServer(NewServer(&savingBackend{}))
 	defer srv.Close()
 
-	// Start from a known state.
 	if code, body := doJSON(t, "PUT", srv.URL+"/api/bootanim",
 		`{"theme":"boot-a","enabled":true,"mode":"daily","mute":true}`); code != 200 {
 		t.Fatalf("first patch = %d\n%s", code, body)
@@ -86,7 +74,6 @@ func TestBootAnimPatchUpdatesOnlyTheBootBlock(t *testing.T) {
 		t.Fatalf("the patch did not land: %+v", play)
 	}
 
-	// Omitting a field must keep it (a pointer-per-field merge, not a replace).
 	if code, body := doJSON(t, "PUT", srv.URL+"/api/bootanim", `{"mute":false}`); code != 200 {
 		t.Fatalf("partial patch = %d\n%s", code, body)
 	}
@@ -98,7 +85,6 @@ func TestBootAnimPatchUpdatesOnlyTheBootBlock(t *testing.T) {
 		t.Errorf("an omitted field was wiped: %+v", play)
 	}
 
-	// The speed multiplier is gone; sending it must not resurrect it.
 	if code, body := doJSON(t, "PUT", srv.URL+"/api/bootanim", `{"speed":2.5}`); code != 200 {
 		t.Fatalf("a legacy speed field should be ignored, got %d\n%s", code, body)
 	}
@@ -107,9 +93,6 @@ func TestBootAnimPatchUpdatesOnlyTheBootBlock(t *testing.T) {
 	}
 }
 
-// TestBootAnimPatchRejectsUnknownClip: selecting a clip that is not installed
-// would leave the player with nothing to draw, so it is a 400 with a readable
-// reason instead of a silently blank startup.
 func TestBootAnimPatchRejectsUnknownClip(t *testing.T) {
 	home := pluginHome(t)
 	installBootPlugin(t, home, "boot-a",
@@ -126,15 +109,12 @@ func TestBootAnimPatchRejectsUnknownClip(t *testing.T) {
 	if !strings.Contains(body, "not-installed") {
 		t.Errorf("the error does not name the clip: %s", body)
 	}
-	// And the previous selection must survive a rejected patch.
 	play := bootPlayState(t, srv.URL)
 	if play["theme"] == "not-installed" {
 		t.Errorf("a rejected patch still changed the selection: %+v", play)
 	}
 }
 
-// TestBootAnimPatchRejectsBadMode: the mode is an enum; a typo must be refused
-// rather than normalized into something the user did not ask for.
 func TestBootAnimPatchRejectsBadMode(t *testing.T) {
 	pluginHome(t)
 	srv := httptest.NewServer(NewServer(&savingBackend{}))
@@ -148,9 +128,6 @@ func TestBootAnimPatchRejectsBadMode(t *testing.T) {
 	}
 }
 
-// TestBootConfigHasNoSpeedField: the multiplier is gone from the model, so a
-// config.json written by an older build still loads (unknown fields are
-// ignored) and Normalize leaves no speed behind.
 func TestBootConfigHasNoSpeedField(t *testing.T) {
 	var b config.BootAnimConfig
 	if err := json.Unmarshal([]byte(`{"enabled":true,"theme":"boot-a","mode":"always","speed":2.5}`), &b); err != nil {

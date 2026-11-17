@@ -1,17 +1,3 @@
-// Mini Code — single binary, channel-driven.
-//
-// One binary serves all channels: the web UI/API (default) and the CLI.
-// All message sources produce messages into the message hub (package
-// channels); the hub resolves the owning session of each message (creating
-// a new session when the message belongs to none, keyed on
-// session_id / session_key), runs the agent loop, and publishes the
-// produced messages back to every channel. Every completed turn is
-// persisted to the database for interrupt recovery.
-//
-// Usage:
-//
-//	mini_code       web UI + API on the configured port (default)
-//	mini_code cmd   interactive CLI channel
 package main
 
 import (
@@ -58,11 +44,10 @@ system tray; use the tray menu to re-open or fully quit. The page stays
 reachable at http://127.0.0.1:<web_port> for browsers.
 `
 
-// runtime bundles everything a mode needs and implements web.Backend.
 type runtime struct {
 	cfg       *config.AppConfig
 	cfgMu     sync.RWMutex
-	clients   []*provider.ModelClient // all model clients (closed on shutdown)
+	clients   []*provider.ModelClient
 	mgr       *session.SessionManager
 	hub       *channels.Hub
 	subagents *session.SubagentService
@@ -71,8 +56,6 @@ type runtime struct {
 	approvals *approval.Service
 }
 
-// buildModelClients creates a client for every configured model. It returns
-// the name→client map plus the flat list (for closing on shutdown).
 func buildModelClients(models []config.ModelConfig) (map[string]*provider.ModelClient, []*provider.ModelClient, error) {
 	clients := make(map[string]*provider.ModelClient, len(models))
 	all := make([]*provider.ModelClient, 0, len(models))
@@ -93,8 +76,6 @@ func (rt *runtime) closeClients() {
 	}
 }
 
-// setup loads config, the model client, the session manager and the message
-// hub. maxTurns is the per-task turn budget (0 = loop default).
 func setup(args []string, maxTurns int) (*runtime, error) {
 	fs := flag.NewFlagSet("mini_code", flag.ExitOnError)
 	agentRole := fs.String("agent", "build", "agent role for new sessions (build)")
@@ -119,8 +100,6 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 	}
 	mgr.SetModels(clients, cfg.DefaultModel)
 	mgr.SetCompactionEnabled(cfg.Compaction())
-	// Automatic session titles (session/title.go): one cached auxiliary request
-	// after a session's first finished task, unless the config turns it off.
 	mgr.SetTitlePolicy(cfg.TitleAutoEnabled(), cfg.TitleModel)
 
 	workDir, _ := os.Getwd()
@@ -128,21 +107,14 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 	hub := channels.NewHub(mgr, *agentRole, workDir, maxTurns)
 	hub.Attach(mgr)
 
-	// Sub-agent service (the subagent / send_message / list_agents tools).
 	subagents := session.NewSubagentService(mgr)
 	mgr.SetSubagents(subagents)
-	// Register background jobs with the hub's task registry: the UI's
-	// running indicator and stop button work for sub-agents, and canceling
-	// a parent cascades to its children (Hub.CancelTask).
 	subagents.OnJobStart = func(childID string, cancel context.CancelFunc) {
 		hub.RegisterExternalTask(childID, cancel)
 	}
 	subagents.OnJobEnd = func(childID string) {
 		hub.UnregisterExternalTask(childID)
 	}
-	// Emit the terminal assistant/status messages of sub-agent sessions so
-	// their own session view terminates cleanly (live deltas alone never
-	// end the stream).
 	subagents.OnJobDone = func(sessionID, content, reasoning string, interrupted bool) {
 		am := channels.NewAssistantMessage("", sessionID, channels.ChannelWeb, content)
 		am.Reasoning = reasoning
@@ -154,24 +126,13 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 		hub.Submit(channels.NewStatusMessage("", sessionID, channels.ChannelWeb, status, ""))
 	}
 
-	// Cautious-mode approval service (runtime gate → UI popup).
 	approvals := approval.NewService(hub, mgr)
 	mgr.SetApprover(approvals)
 
-	// Deliver hook + live-task check are wired by hub.Attach (channels.go), so
-	// every hub-and-manager pair, production and tests alike, behaves the same.
 
-	// Workers (工作大类): a shared workspace + a shared 公约 per line of work, and
-	// the switcher the sidebar shows. The rows live in the session store (one
-	// connection, so deleting a worker can delete its sessions), hence no separate
-	// store constructor here — see session/worker_store.go.
 	workers := session.NewWorkerService(mgr.GetStore(), mgr)
 	mgr.SetWorkers(workers)
 
-	// Super-Agent (Router 子系统): super_* tables ride the same SQLite
-	// connection as sessions; the manager gets the tool-registration hook,
-	// the HTTP layer gets the panel API, and the runner (script schedules +
-	// channel batch timeout + queue pickup) lives with the process.
 	superSvc := super.NewService(mgr.GetStore().DB(), mgr, hub)
 	mgr.SetSuperRegistrar(superSvc)
 	web.AttachSuperService(superSvc)
@@ -198,20 +159,17 @@ func main() {
 	util.SetupDefaultFileLogger()
 
 	args := os.Args[1:]
-	mode := "" // no argument = web (default)
+	mode := ""
 	var rest []string
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		mode = args[0]
 		rest = args[1:]
 	} else if mode == "" && len(args) > 0 {
-		// Flags only (e.g. "mini_code -p 7501"): web mode with the flags.
 		rest = args
 	}
 
 	switch mode {
 	case "", "web", "server":
-		// The desktop build (built with -tags desktop_default) opens the
-		// native window when launched without arguments (double-click).
 		if mode == "" && desktopDefault {
 			runDesktop(rest)
 			return
@@ -229,7 +187,6 @@ func main() {
 	}
 }
 
-// --- web.Backend ---
 
 func (rt *runtime) Hub() *channels.Hub            { return rt.hub }
 func (rt *runtime) Mgr() *session.SessionManager  { return rt.mgr }
@@ -274,9 +231,6 @@ func (rt *runtime) GetConfig() *config.AppConfig {
 	return rt.liveConfig()
 }
 
-// SaveConfig persists cfg to disk and hot-applies the changed parts:
-// model config rebuilds the model registry. The web port takes effect on
-// next start.
 func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 	old := rt.liveConfig()
 
@@ -347,8 +301,6 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 		notes = append(notes, "web 端口将在下次启动时生效")
 	}
 	if !config.SameBootAnim(old.BootAnim, cfg.BootAnim) {
-		// The overlay is decided per page load, so the new choice needs a new
-		// window (or the "play once" button) to be seen.
 		notes = append(notes, "开机动画设置已保存,下次打开窗口时生效")
 	}
 
@@ -357,9 +309,7 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 	return result, nil
 }
 
-// --- channels ---
 
-// runWeb starts the web UI + API.
 func runWeb(args []string) {
 	var port int
 	var rest []string
@@ -395,11 +345,6 @@ func runWeb(args []string) {
 	defer cancel()
 	go rt.hub.Run(ctx)
 
-	// Bind to the loopback interface only: the API carries no
-	// authentication, so a wildcard (":port") bind would let any other
-	// machine on the LAN drive the agent — exec shell commands, read and
-	// rewrite the config. Desktop mode already binds 127.0.0.1 (see
-	// desktop/desktop.go).
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	slog.Info("starting web channel", "port", port)
 	fmt.Printf("Mini Code 已启动: http://127.0.0.1:%d (Ctrl+C 停止)\n", port)
@@ -415,8 +360,6 @@ func runWeb(args []string) {
 	}
 }
 
-// runInteractive is the stdin/stdout CLI. It produces user messages into
-// the hub and consumes the produced messages for its channel.
 func runInteractive(args []string) {
 	rt, err := setup(args, 0)
 	if err != nil {
@@ -430,7 +373,7 @@ func runInteractive(args []string) {
 	go rt.hub.Run(ctx)
 
 	out := rt.hub.Subscribe(channels.ChannelCLI)
-	terminal := make(chan channels.Message, 8) // final assistant/error of a task
+	terminal := make(chan channels.Message, 8)
 	go func() {
 		for m := range out {
 			switch m.Kind {
@@ -504,9 +447,6 @@ func runInteractive(args []string) {
 				return
 			}
 
-			// Produce the message into the hub. An empty SessionID means
-			// "no session yet" — the hub creates one on first contact and
-			// every later message of this REPL continues it.
 			msg := channels.NewUserMessage(channels.ChannelCLI, goal)
 			msg.SessionID = currentSession
 			rt.hub.Submit(msg)
@@ -517,7 +457,7 @@ func runInteractive(args []string) {
 				if currentSession != "" {
 					rt.hub.CancelTask(currentSession)
 				}
-				<-terminal // wait for the interrupted task to settle
+				<-terminal
 			case m := <-terminal:
 				if m.SessionID != "" {
 					currentSession = m.SessionID

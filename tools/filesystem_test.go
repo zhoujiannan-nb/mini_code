@@ -33,8 +33,6 @@ func writeTempFile(t *testing.T, name, content string) (string, string) {
 }
 
 func TestReadFileTrailingNewlineLineCount(t *testing.T) {
-	// "alpha\nbeta\n" is 2 lines; the trailing newline must not create a
-	// phantom empty line 3.
 	dir, name := writeTempFile(t, "a.txt", "alpha\nbeta\n")
 	out := runRead(t, dir, name, nil)
 	if !strings.Contains(out, "total 2 lines") {
@@ -54,7 +52,6 @@ func TestReadFileNoTrailingNewlineLineCount(t *testing.T) {
 }
 
 func TestReadFileBlankLastLine(t *testing.T) {
-	// "a\n\n" is 2 lines: "a" and a genuinely empty second line.
 	dir, name := writeTempFile(t, "c.txt", "a\n\n")
 	out := runRead(t, dir, name, nil)
 	if !strings.Contains(out, "total 2 lines") {
@@ -63,7 +60,6 @@ func TestReadFileBlankLastLine(t *testing.T) {
 }
 
 func TestReadFileSingleNewline(t *testing.T) {
-	// "\n" is exactly one (empty) line.
 	dir, name := writeTempFile(t, "d.txt", "\n")
 	out := runRead(t, dir, name, nil)
 	if !strings.Contains(out, "total 1 lines") {
@@ -83,7 +79,6 @@ func TestReadFileOffsetBeyondEndUsesFixedCount(t *testing.T) {
 }
 
 func TestReadFilePaginationContinuesAtRightLine(t *testing.T) {
-	// 5 lines with trailing newline; limit=2 must continue at offset=3.
 	dir, name := writeTempFile(t, "f.txt", "l1\nl2\nl3\nl4\nl5\n")
 	out := runRead(t, dir, name, map[string]interface{}{"limit": float64(2)})
 	if !strings.Contains(out, "of 5") {

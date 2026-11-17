@@ -7,10 +7,6 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// compactCeremonyHistory is the shape a model-initiated compaction leaves in the
-// context: the model calls compact_context, gets the "Compaction scheduled"
-// result back (which echoes its own focus instruction), and the loop then
-// appends the compaction instruction as the newest message.
 func compactCeremonyHistory(echo string) []provider.Message {
 	return []provider.Message{
 		{Role: "system", Content: "SYSTEM"},
@@ -28,12 +24,6 @@ func compactCeremonyHistory(echo string) []provider.Message {
 	}
 }
 
-// TestRebuildContextDropsItsOwnCompactCall: the compaction's own tool turn must
-// not eat the verbatim tail. Before the fix the three kept slots were
-// [assistant(compact_context), tool(scheduled echo), +1], so the last real tool
-// call was pushed out of the context and the echoed focus instruction (which the
-// model can write by the thousand characters) ate most of the tail budget —
-// "compact 之后最近几次工具调用" was the compaction itself.
 func TestRebuildContextDropsItsOwnCompactCall(t *testing.T) {
 	echo := "Compaction scheduled, focusing on: " + strings.Repeat("保留结论指针与关键数字。", 600)
 	in := compactCeremonyHistory(echo)
@@ -51,7 +41,7 @@ func TestRebuildContextDropsItsOwnCompactCall(t *testing.T) {
 			}
 		}
 	}
-	tail := out[2:] // [system][summary][tail]
+	tail := out[2:]
 	if len(tail) != 3 {
 		t.Fatalf("tail = %d messages, want the 3 newest real ones: %+v", len(tail), tail)
 	}
@@ -66,9 +56,6 @@ func TestRebuildContextDropsItsOwnCompactCall(t *testing.T) {
 	}
 }
 
-// TestRebuildContextPrunesMixedCompactCall: when one assistant turn calls
-// compact_context alongside a real tool, only the compaction entry is pruned —
-// the real call and its result stay paired.
 func TestRebuildContextPrunesMixedCompactCall(t *testing.T) {
 	in := []provider.Message{
 		{Role: "system", Content: "SYSTEM"},
@@ -110,7 +97,6 @@ func TestRebuildContextPrunesMixedCompactCall(t *testing.T) {
 	if real == nil || real.Content != "dir output" {
 		t.Fatalf("the real tool result should survive, got %+v", real)
 	}
-	// The assistant turn itself survives with its text (only the call is pruned).
 	for _, m := range out {
 		if m.GetText() == "顺手压一下" && len(m.ToolCalls) != 1 {
 			t.Errorf("mixed assistant turn should keep exactly the exec call: %+v", m.ToolCalls)
@@ -118,10 +104,8 @@ func TestRebuildContextPrunesMixedCompactCall(t *testing.T) {
 	}
 }
 
-// TestStripCompactionCeremonyNoOp: a history without the tool is untouched, so
-// the passive/automatic compaction path keeps byte-identical tail messages.
 func TestStripCompactionCeremonyNoOp(t *testing.T) {
-	in := historyMsgs()[1:] // drop the system message
+	in := historyMsgs()[1:]
 	got := stripCompactionCeremony(in)
 	if len(got) != len(in) {
 		t.Fatalf("history changed without any compact_context: %d -> %d", len(in), len(got))

@@ -1,46 +1,3 @@
-// Package plugin provides mini_code's file-based plugin layer.
-//
-// The core is deliberately NOT pluggable: the agent loop, the permission gate,
-// context compaction and the base tools (read/write/edit/exec/search/...) are
-// compiled in and cannot be replaced by a plugin. What IS pluggable are the
-// peripheral things a user may want to swap:
-//
-//	tools      extra tools appended after the core tool list (e.g. a web
-//	           search / browser driver wrapping an external program)
-//	skin       extra stylesheets injected into the UI
-//	wallpaper  a background image for the chat area
-//	(memory    was a former kind: notes injected into the system prompt. The
-//	           mechanism is GONE — a plugin is a tool, and a tool documents
-//	           itself through its own description. The manifest key, if still
-//	           present in an old plugin.json, parses into nothing and is
-//	           ignored.)
-//	bootanim   handled by the boot animation host (config.BootAnim + web/bootanim.go),
-//	           which already loads themes from a directory
-//
-// A plugin is a directory under ~/.mini_code/plugins/ containing plugin.json:
-//
-//	{
-//	  "id": "web-search",
-//	  "name": "Web Search",
-//	  "version": "1.0.0",
-//	  "description": "Bing/Google search through a local browser driver",
-//	  "enabled": true,
-//	  "tools": [{
-//	    "name": "web_search",
-//	    "description": "Search the web and return JSON results.",
-//	    "parameters": {"type": "object", "properties": {...}, "required": ["query"]},
-//	    "command": "python",
-//	    "args": ["D:\\project_ai\\web_search\\ws.py", "search"],
-//	    "timeout_seconds": 90
-//	  }],
-//	  "styles": ["skin.css"],
-//	  "wallpaper": "bg.webp"
-//	}
-//
-// Prefix-cache safety is a hard requirement, so the load order is fixed:
-// plugins are returned sorted by id, tools are appended AFTER the core tool
-// list (never interleaved), and every field comes from an on-disk file that
-// only changes when the user edits it.
 package plugin
 
 import (
@@ -56,11 +13,8 @@ import (
 	"github.com/user/mini_code/config"
 )
 
-// toolIDPattern is the character set a plugin tool name may use. It has to be
-// a valid function name for every provider's tool-calling API.
 var toolIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
 
-// ToolSpec is one tool a plugin contributes.
 type ToolSpec struct {
 	Name           string         `json:"name"`
 	Description    string         `json:"description"`
@@ -70,57 +24,31 @@ type ToolSpec struct {
 	TimeoutSeconds int            `json:"timeout_seconds,omitempty"`
 }
 
-// Manifest is the on-disk plugin.json contract. Unknown keys are ignored so a
-// newer plugin can carry fields an older host has never heard of.
 type Manifest struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Version     string `json:"version,omitempty"`
 	Author      string `json:"author,omitempty"`
 	Description string `json:"description,omitempty"`
-	// Kind is the coarse category the plugin centre groups by:
-	//
-	//	process  a companion program mini_code starts and supervises
-	//	tool     extra tools appended to the model's tool list
-	//	appearance  skins, wallpapers, slot fragments, animations (the UI half)
-	//
-	// It is optional: a manifest that omits it is categorised from what it
-	// actually declares (see Plugin.Category), so every plugin written before
-	// this field existed keeps working unchanged.
 	Kind string `json:"kind,omitempty"`
 
-	// Enabled is a pointer so a manifest without the key means "on" — the
-	// common case is a plugin you just dropped in.
 	Enabled *bool `json:"enabled,omitempty"`
 
 	Tools     []ToolSpec    `json:"tools,omitempty"`
 	Process   *ProcessSpec  `json:"process,omitempty"`
 	Styles    []string      `json:"styles,omitempty"`
 	Wallpaper string        `json:"wallpaper,omitempty"`
-	// UI declares the third kind: things the browser half renders (skins,
-	// slot fragments, animations). See ui.go for the contract — note that a
-	// desktop pet is NOT part of it, on purpose.
 	UI *UISpec `json:"ui,omitempty"`
-	// Boot declares that this plugin also ships a STARTUP ANIMATION. It is an
-	// appearance-plugin surface, not a fourth kind: a clip is a static HTML
-	// bundle, which is what an appearance plugin already is (see boot.go).
 	Boot *BootSpec `json:"boot,omitempty"`
-	// Panels is the older, flat way to declare the same thing; UI supersedes it
-	// but both are read so a plugin written against the first draft still works.
 	Panels []PanelSpec `json:"panels,omitempty"`
 }
 
-// Category names are the three buckets the plugin centre shows.
 const (
-	CategoryProcess    = "process"    // kind 1: a companion program
-	CategoryTool       = "tool"       // kind 2: appended tools (search, skills, mcp…)
-	CategoryAppearance = "appearance" // kind 3: skins, wallpapers, slots, animations
+	CategoryProcess    = "process"
+	CategoryTool       = "tool"
+	CategoryAppearance = "appearance"
 )
 
-// Category classifies the plugin. An explicit "kind" wins; otherwise it is
-// derived from what the manifest actually declares, in the order process →
-// tool → appearance. A manifest with nothing in it is "appearance" — the only
-// bucket where an empty plugin is harmless (it just does nothing).
 func (p Plugin) Category() string {
 	switch strings.ToLower(strings.TrimSpace(p.Kind)) {
 	case CategoryProcess, "program", "service", "daemon":
@@ -130,9 +58,6 @@ func (p Plugin) Category() string {
 	case CategoryAppearance, "ui", "skin", "theme":
 		return CategoryAppearance
 	}
-	// No explicit kind: infer. A plugin that both runs a process and adds tools
-	// is filed under process, because that is the part the user has to trust
-	// with executing code.
 	if p.Process != nil {
 		return CategoryProcess
 	}
@@ -142,24 +67,15 @@ func (p Plugin) Category() string {
 	return CategoryAppearance
 }
 
-// Plugin is a loaded, validated manifest plus the directory it came from.
 type Plugin struct {
 	Dir string
 	Manifest
-	// LoadError is set only by Discover for a directory whose plugin.json could
-	// not be read or validated. Load never returns such a plugin.
 	LoadError string `json:"-"`
-	// Source is set by Discover: "catalogue" when the plugin was installed from
-	// the remote repo (a marker file proves it), empty when a user dropped the
-	// directory in by hand.
 	Source string `json:"-"`
 }
 
-// Enabled reports whether the plugin is switched on (absent = on).
 func (p Plugin) On() bool { return p.Enabled == nil || *p.Enabled }
 
-// Kinds lists what the plugin contributes, in a fixed order, for the UI and the
-// diagnostics endpoint.
 func (p Plugin) Kinds() []string {
 	var kinds []string
 	if p.Process != nil {
@@ -191,8 +107,6 @@ func (p Plugin) Kinds() []string {
 	return kinds
 }
 
-// DirPath is the plugin root: ~/.mini_code/plugins. It does not create the
-// directory — a missing directory simply means "no plugins installed".
 func DirPath() (string, error) {
 	base, err := config.GetConfigDir()
 	if err != nil {
@@ -201,11 +115,6 @@ func DirPath() (string, error) {
 	return filepath.Join(base, "plugins"), nil
 }
 
-// Load reads every plugin under ~/.mini_code/plugins and returns them sorted by
-// id (deterministic order keeps the prompt prefix stable across tasks).
-//
-// A broken plugin is skipped with a warning and never fails the load: a typo in
-// one plugin.json must not stop the agent from starting.
 func Load() []Plugin {
 	root, err := DirPath()
 	if err != nil {
@@ -214,7 +123,7 @@ func Load() []Plugin {
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return nil // not installed / unreadable: no plugins
+		return nil
 	}
 	dirs := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -228,7 +137,7 @@ func Load() []Plugin {
 	seen := make(map[string]bool, len(dirs))
 	for _, name := range dirs {
 		if strings.HasPrefix(name, ".") {
-			continue // .install-* staging dirs are not plugins
+			continue
 		}
 		p, err := loadOne(filepath.Join(root, name), name)
 		if err != nil {
@@ -246,20 +155,14 @@ func Load() []Plugin {
 		seen[p.ID] = true
 		out = append(out, p)
 	}
-	// Sort by id: the directory name and the manifest id are usually equal, but
-	// the manifest is what the UI shows, so order by that.
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
-// LoadDir reads and validates exactly one plugin directory. The installer uses
-// it after moving a downloaded bundle into place: validating under the real
-// directory name is what catches a manifest whose id does not match its folder.
 func LoadDir(dir, dirName string) (Plugin, error) {
 	return loadOne(dir, dirName)
 }
 
-// loadOne reads and validates one plugin directory.
 func loadOne(dir, dirName string) (Plugin, error) {
 	path := filepath.Join(dir, "plugin.json")
 	data, err := os.ReadFile(path)
@@ -272,7 +175,7 @@ func loadOne(dir, dirName string) (Plugin, error) {
 	}
 	p.Dir = dir
 	if p.ID == "" {
-		p.ID = dirName // the directory name is a good default
+		p.ID = dirName
 	}
 	if err := p.validate(); err != nil {
 		return Plugin{}, err
@@ -283,13 +186,8 @@ func loadOne(dir, dirName string) (Plugin, error) {
 	return p, nil
 }
 
-// validate enforces the contract: a URL/path-safe id, valid tool names, and
-// every referenced file inside the plugin directory.
 func (p Plugin) validate() error {
 	if !config.ValidBootAnimID(p.ID) {
-		// Reuse the bootanim id rule: lowercase letters, digits, dashes, 1-64
-		// chars, starts alphanumeric. It is exactly what a URL path segment and
-		// a directory name need.
 		return fmt.Errorf("plugin id %q must be lowercase letters, digits and dashes", p.ID)
 	}
 	toolNames := make(map[string]bool, len(p.Tools))
@@ -321,8 +219,6 @@ func (p Plugin) validate() error {
 	if err := p.validateBoot(); err != nil {
 		return err
 	}
-	// Legacy panels are lifted into p.UI by validateUI, so a manifest that only
-	// used "panels" is validated exactly like one that used "ui".
 	for _, rel := range append(append([]string{}, p.Styles...), p.Wallpaper) {
 		if rel == "" {
 			continue
@@ -331,8 +227,6 @@ func (p Plugin) validate() error {
 			return err
 		}
 	}
-	// A process plugin's command is required; its args are not. The check runs
-	// after validateUI so the "what is this plugin" errors surface first.
 	if p.Process != nil {
 		if strings.TrimSpace(p.Process.Command) == "" {
 			return fmt.Errorf("process.command is empty")
@@ -366,10 +260,6 @@ func (p Plugin) validate() error {
 	return nil
 }
 
-// FilePath resolves a manifest-relative path to an absolute path inside the
-// plugin directory. Absolute paths and ".." are rejected: a plugin names files
-// next to itself, it cannot reach into the rest of the filesystem through the
-// asset route.
 func (p Plugin) FilePath(rel string) (string, error) {
 	rel = strings.TrimSpace(rel)
 	if rel == "" {
@@ -383,8 +273,6 @@ func (p Plugin) FilePath(rel string) (string, error) {
 		return "", fmt.Errorf("path %q escapes the plugin directory", rel)
 	}
 	full := filepath.Join(p.Dir, clean)
-	// Belt and braces: verify the joined result is still inside p.Dir (catches
-	// odd separators and Windows device paths).
 	relToDir, err := filepath.Rel(p.Dir, full)
 	if err != nil || relToDir == ".." || strings.HasPrefix(relToDir, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path %q escapes the plugin directory", rel)

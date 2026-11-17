@@ -9,9 +9,6 @@ import (
 	"github.com/user/mini_code/agent"
 )
 
-// withTempConfigDir points the config dir (and thus plugins.md) at a temp
-// directory for the duration of the test. Both HOME (Unix) and
-// USERPROFILE (Windows) are set so os.UserHomeDir resolves to it anywhere.
 func withTempConfigDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -42,7 +39,7 @@ func TestParsePluginsLine(t *testing.T) {
 		{line: "D:\\project_ai\\web_search\\web_search", path: "D:\\project_ai\\web_search\\web_search", ok: true},
 		{line: "D:\\project_ai\\web_search  desc: 网络搜索工具", path: "D:\\project_ai\\web_search", desc: "网络搜索工具", ok: true},
 		{line: "D:\\project_ai\\web_search description：网络搜索工具", path: "D:\\project_ai\\web_search", desc: "网络搜索工具", ok: true},
-		{line: "C:\\tools\\pdf desc:", path: "C:\\tools\\pdf", ok: true}, // empty desc → bare path
+		{line: "C:\\tools\\pdf desc:", path: "C:\\tools\\pdf", ok: true},
 		{line: "   ", ok: false},
 		{line: "desc: no path", ok: false},
 	}
@@ -62,7 +59,7 @@ func TestParsePluginsLine(t *testing.T) {
 }
 
 func TestPluginsSectionMissingFile(t *testing.T) {
-	withTempConfigDir(t) // temp home has no plugins.md
+	withTempConfigDir(t)
 	if s := pluginsSection(); s != "" {
 		t.Fatalf("pluginsSection with no plugins.md = %q, want empty", s)
 	}
@@ -90,7 +87,6 @@ func TestPluginsSectionParses(t *testing.T) {
 			t.Errorf("pluginsSection missing %q:\n%s", want, s)
 		}
 	}
-	// Comments and blank lines must not leak into the section.
 	if strings.Contains(s, "注释") || strings.Count(s, "\n") > 5 {
 		t.Errorf("pluginsSection leaked comment/blank lines:\n%s", s)
 	}

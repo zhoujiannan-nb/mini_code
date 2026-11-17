@@ -15,7 +15,6 @@ type Database struct {
 	db     *sql.DB
 }
 
-// GetDefaultDBPath returns the default database path under ~/.mini_code/
 func GetDefaultDBPath() (string, error) {
 	dir, err := config.GetConfigDir()
 	if err != nil {
@@ -24,14 +23,6 @@ func GetDefaultDBPath() (string, error) {
 	return filepath.Join(dir, "agent.db"), nil
 }
 
-// NewDatabase opens the SQLite file with pragmas that make it safe for
-// multiple mini_code processes sharing one database (e.g. a web server and
-// a CLI, or several instances). modernc.org/sqlite only honors `_pragma`
-// query parameters — keys like `_journal_mode`/`_busy_timeout` are silently
-// ignored, which previously left the DB in rollback-journal mode with no
-// busy timeout, so concurrent writers failed immediately with SQLITE_BUSY.
-// busy_timeout is applied before journal_mode so the (persistent, file-wide)
-// WAL switch can wait out concurrent writers.
 func NewDatabase(dbPath string) (*Database, error) {
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -44,7 +35,6 @@ func NewDatabase(dbPath string) (*Database, error) {
 	return &Database{dbPath: dbPath, db: db}, nil
 }
 
-// NewDefaultDatabase creates a new database using the default path under ~/.mini_code/
 func NewDefaultDatabase() (*Database, error) {
 	dbPath, err := GetDefaultDBPath()
 	if err != nil {
@@ -89,12 +79,6 @@ func (d *Database) FetchOne(sqlStmt string, params ...interface{}) (map[string]i
 	return result, nil
 }
 
-// ExecTx runs fn inside one transaction: every statement fn issues through the
-// tx commits together, or none of them do.
-//
-// It exists for the operations that touch more than one table and must not be
-// observed half-done by another process — deleting a session and its ledger
-// rows, and appending the message rows a turn produced (F5/F2).
 func (d *Database) ExecTx(fn func(tx *sql.Tx) error) error {
 	tx, err := d.db.Begin()
 	if err != nil {
@@ -148,7 +132,6 @@ func (d *Database) InitTable(createSQL string) {
 	d.db.Exec(createSQL)
 }
 
-// Path returns the file path this database is backed by.
 func (d *Database) Path() string { return d.dbPath }
 
 func (d *Database) InitIndex(indexSQL string) {

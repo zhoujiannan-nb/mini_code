@@ -1,6 +1,5 @@
 package super
 
-// lite super 的存储层测试：定时任务 CRUD、到期判定、旧表清理、state/audit。
 
 import (
 	"path/filepath"
@@ -16,7 +15,7 @@ func newTestStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("db: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() }) // Windows: 不关掉句柄 TempDir 删不掉
+	t.Cleanup(func() { _ = db.Close() })
 	return NewStore(db)
 }
 
@@ -93,7 +92,6 @@ func TestLegacyTablesDropped(t *testing.T) {
 	if row != nil {
 		t.Fatalf("legacy table survived: %v", row)
 	}
-	// 新表结构:旧的 file 主键必须没了
 	if _, err := db.Execute("INSERT INTO super_schedule(id,name,text,session,every_sec,enabled,last_run,created_at,updated_at) VALUES('x','n','t','',60,1,'','','')"); err != nil {
 		t.Fatalf("new schema not in place: %v", err)
 	}

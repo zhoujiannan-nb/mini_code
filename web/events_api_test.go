@@ -8,9 +8,6 @@ import (
 	"github.com/user/mini_code/session"
 )
 
-// TestSessionEventsAPI covers GET /api/sessions/{id}/events: paging with
-// after, the tail_run window (everything after the last task/end), and the
-// active flag the live UI resync reads.
 func TestSessionEventsAPI(t *testing.T) {
 	be := newTestBackend(t)
 	api := httptest.NewServer(NewServer(be))
@@ -23,7 +20,6 @@ func TestSessionEventsAPI(t *testing.T) {
 	id := sess.ID()
 	store := be.mgr.GetStore()
 
-	// run 1 (ended) + run 2 (open)
 	seqs := []struct {
 		typ     string
 		payload map[string]any
@@ -76,7 +72,6 @@ func TestSessionEventsAPI(t *testing.T) {
 		t.Fatalf("tail_run: %+v; want the two open-run events", resp.Events)
 	}
 
-	// bad cursor -> 400
 	r, err := http.Get(api.URL + "/api/sessions/" + id + "/events?after=x")
 	if err != nil {
 		t.Fatalf("GET bad after: %v", err)

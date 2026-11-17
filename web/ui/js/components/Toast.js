@@ -1,4 +1,3 @@
-// 全局 toast:唯一的 DOM 节点(#toast),内容由 store.toast 驱动。
 import { h } from "preact";
 import { useEffect } from "preact/hooks";
 import htm from "htm";

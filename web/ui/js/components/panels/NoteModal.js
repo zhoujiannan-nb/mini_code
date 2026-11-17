@@ -1,5 +1,3 @@
-// 两个小弹窗:worker 公约编辑器、程序插件日志。都挂在 body 层(#app 是
-// display:contents,所以它们仍然是 body 的布局子节点)。
 import { h } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import htm from "htm";

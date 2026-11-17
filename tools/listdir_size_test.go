@@ -34,7 +34,7 @@ func TestListDirShowsFileSizes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "small.txt"), []byte("hello"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	big := make([]byte, 3*1024+512) // 3.5 KB
+	big := make([]byte, 3*1024+512)
 	if err := os.WriteFile(filepath.Join(dir, "big.bin"), big, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -75,21 +75,12 @@ func TestListDirRecursiveShowsFileSizes(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 	out := res.Text
-	// Path separators are platform-dependent (rel on Windows uses '\');
-	// only assert the leaf entry carries its size.
 	if !strings.Contains(out, "deep.log (10 B)") {
 		t.Errorf("expected 'deep.log (10 B)' in recursive listing, got:\n%s", out)
 	}
 }
 
-// TestListDirRecursiveUnderNoiseAncestorDir guards the ignoreDirs matching
-// scope: noise names (build/dist/venv/...) must prune only entries RELATIVE
-// to the walked root, never ancestors of the workspace itself. Before the
-// fix, a workspace under any directory literally named "build" listed as
-// empty because every absolute path component was matched.
 func TestListDirRecursiveUnderNoiseAncestorDir(t *testing.T) {
-	// Workspace whose ANCESTOR is named "build" (like this repo's
-	// build\windows output directory).
 	ws := filepath.Join(t.TempDir(), "build")
 	if err := os.MkdirAll(ws, 0755); err != nil {
 		t.Fatal(err)
@@ -97,7 +88,6 @@ func TestListDirRecursiveUnderNoiseAncestorDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ws, "notes.txt"), []byte("hi"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// A child noise directory must still be pruned.
 	if err := os.MkdirAll(filepath.Join(ws, "node_modules"), 0755); err != nil {
 		t.Fatal(err)
 	}

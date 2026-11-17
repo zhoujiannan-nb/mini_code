@@ -24,8 +24,6 @@ func sseEvent(data string) string {
 	return "data: " + data + "\n\n"
 }
 
-// TestChatStreamAggregatesContent verifies content + reasoning_content
-// accumulation and the onChunk callback receiving accumulated values.
 func TestChatStreamAggregatesContent(t *testing.T) {
 	var sawStream bool
 	srv, mc := newTestStreamServer(func(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +76,6 @@ func TestChatStreamAggregatesContent(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	// First chunk must carry only reasoning; chunks must be strictly increasing.
 	if len(chunks) != 3 {
 		t.Fatalf("chunks = %d, want 3", len(chunks))
 	}
@@ -93,7 +90,6 @@ func TestChatStreamAggregatesContent(t *testing.T) {
 	}
 }
 
-// TestChatStreamToolCalls verifies incremental tool_calls merging by index.
 func TestChatStreamToolCalls(t *testing.T) {
 	srv, mc := newTestStreamServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -125,13 +121,11 @@ func TestChatStreamToolCalls(t *testing.T) {
 	}
 }
 
-// TestChatStreamStreamError verifies a mid-stream break surfaces an error.
 func TestChatStreamStreamError(t *testing.T) {
 	srv, mc := newTestStreamServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
 		fmt.Fprint(w, sseEvent(`{"choices":[{"delta":{"content":"partial"}}]}`))
-		// Flush and then abort the connection without [DONE].
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -145,7 +139,6 @@ func TestChatStreamStreamError(t *testing.T) {
 	}
 }
 
-// TestChatStreamEmptyStream verifies an empty body yields "stream ended unexpectedly".
 func TestChatStreamEmptyStream(t *testing.T) {
 	srv, mc := newTestStreamServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -159,14 +152,7 @@ func TestChatStreamEmptyStream(t *testing.T) {
 	}
 }
 
-// TestChatStreamTruncatedToolCall verifies that a stream which ends with a
-// clean EOF but WITHOUT a finish_reason is rejected, even when partial tool
-// call data was received. Accepting such a partial result used to persist
-// truncated arguments and poison the session history (the next request then
-// failed with "function.arguments must be valid JSON").
 func TestChatStreamTruncatedToolCall(t *testing.T) {
-	// The arguments value is deliberately truncated JSON, as produced when a
-	// stream is cut off mid tool call.
 	truncated := `{"path": "main.go"`
 	first := map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "call_1", "type": "function", "function": map[string]any{"name": "write_file", "arguments": ""}}}}}}}
 	second := map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{map[string]any{"index": 0, "function": map[string]any{"arguments": truncated}}}}}}}
@@ -177,7 +163,6 @@ func TestChatStreamTruncatedToolCall(t *testing.T) {
 		b2, _ := json.Marshal(second)
 		fmt.Fprint(w, sseEvent(string(b1)))
 		fmt.Fprint(w, sseEvent(string(b2)))
-		// Connection closes cleanly here: no finish_reason, no [DONE].
 	})
 	defer srv.Close()
 

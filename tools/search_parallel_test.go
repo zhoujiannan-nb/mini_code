@@ -8,15 +8,8 @@ import (
 	"time"
 )
 
-// TestSearchParallelIsDeterministic: the scan runs on a worker pool, so the
-// only thing that keeps the model's view stable is that results are collected
-// and sorted afterwards. Repeated runs over a wide tree must be byte-identical
-// and in path order — a search whose output order depends on which worker
-// finished first is a search the model cannot diff between calls.
 func TestSearchParallelIsDeterministic(t *testing.T) {
 	dir := t.TempDir()
-	// Enough files to spread over every worker several times, plus nesting so
-	// the walk itself is non-trivial.
 	const files = 120
 	for i := 0; i < files; i++ {
 		sub := fmt.Sprintf("pkg%02d", i%7)
@@ -43,8 +36,6 @@ func TestSearchParallelIsDeterministic(t *testing.T) {
 		}
 	}
 
-	// Path order: each group header line (a line that is not "Line N: …" and
-	// not the header) must be >= the previous header.
 	var last string
 	for _, line := range strings.Split(first, "\n") {
 		if line == "" || strings.HasPrefix(line, "Line ") || strings.HasPrefix(line, "Found ") {
@@ -57,9 +48,6 @@ func TestSearchParallelIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestSearchParallelContextAndInclude: context mode re-reads only the files
-// that matched (the scan itself no longer keeps every line of every file), so
-// the surrounding lines have to still be exact.
 func TestSearchParallelContextAndInclude(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "a.go", "line one\nline two\nneedle here\nline four\n")
@@ -86,9 +74,6 @@ func TestSearchParallelContextAndInclude(t *testing.T) {
 	}
 }
 
-// TestSearchCancelledReturnsPromptly: the walk and the workers both observe the
-// context, so cancelling a search over a large tree must not wait for it to
-// finish scanning.
 func TestSearchCancelledReturnsPromptly(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 200; i++ {

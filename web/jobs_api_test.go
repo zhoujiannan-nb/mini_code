@@ -2,12 +2,6 @@ package web
 
 import "testing"
 
-// TestJobsAPIEndpoints pins the UI's jobs endpoints on a session that is loaded
-// but has no background work yet: the roster reads empty (never an error — the
-// popover polls on open), the session list carries the jobs_running/jobs_total
-// fields, and killing an unknown job is a 404 rather than a silent success.
-// The live-job paths (running row, kill settling) go through the same registry
-// the job_kill model tool uses, which tools/shell_jobs_test.go already covers.
 func TestJobsAPIEndpoints(t *testing.T) {
 	be, srv := newTestWorkerBackend(t)
 	sess, err := be.mgr.CreateSessionRecord("jobs", "build", t.TempDir(), nil)
@@ -32,15 +26,10 @@ func TestJobsAPIEndpoints(t *testing.T) {
 		t.Errorf("kill without a registry: code %d, want 404", code)
 	}
 
-	// Output reads are 404 (never a panic) without a registry or for an
-	// unknown job id — the panel's ⌄ button must degrade quietly.
 	if code := workerReq(t, "GET", srv.URL+"/api/sessions/"+id+"/jobs/output?job=exec-00000000", "", nil); code != 404 {
 		t.Errorf("output without a registry: code %d, want 404", code)
 	}
 
-	// Clearing is idempotent: no registry is "nothing to clear", a 200 with
-	// cleared=0, never a 404 — the panel's Clear button must converge even if
-	// the session was torn down between the render and the click.
 	var cleared struct {
 		Cleared int `json:"cleared"`
 	}
@@ -51,7 +40,6 @@ func TestJobsAPIEndpoints(t *testing.T) {
 		t.Errorf("cleared = %d, want 0", cleared.Cleared)
 	}
 
-	// The list summary carries the new fields (omitted while zero, decoded as 0).
 	var list []SessionSummary
 	if code := workerReq(t, "GET", srv.URL+"/api/sessions", "", &list); code != 200 {
 		t.Fatalf("GET sessions: code %d, want 200", code)

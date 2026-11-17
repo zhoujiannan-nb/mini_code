@@ -1,5 +1,3 @@
-// 工具步骤的渲染:折叠条(执行过程)、「正在执行」卡、单步、思考。
-// 这里只画,不做归并 —— 步骤的增删/配对已经在 store 的 reducer 里完成。
 import { h } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import htm from "htm";
@@ -18,26 +16,20 @@ import { TodoCard } from "./TodoCard.js";
 
 const html = htm.bind(h);
 
-// StepView 是单步(工具或思考)。无 hook,可被 memo 包住。
 function StepView({ step, running, now }) {
-  // 思考步骤:用消息卡里同一个淡色小框(默认折叠,点标题行展开;一轮里只有正在
-  // 想的 live 框自动展开,输出完落成步骤即回到折叠 —— 2026-11 需求)。
   if (step.kind === "think") return html`<${ThinkBox} text=${step.text} />`;
 
   const tag = stepTag(step, running);
   const arg = toolArgDisplay(step.name, step.args);
-  // 两份"这一步在说什么"的读法,都是自判断:不是清单/不是 goal 工具就分别是 null/""。
   const todos = todoItemsOf(step.name, step.args);
   const goal = todos ? "" : goalLineOf(step.name, step.args);
   const live = step.phase === "run" || step.phase === "prep";
   const preview = live ? toolLivePreview(step.name, step.args) : "";
-  // 真输出到了就顶掉参数预览:预览是输入,和输出混在同一格里只会看错。
   const liveText = step.output || preview;
   const outIsPreview = !step.output;
   const argsText = step.args ? String(step.args) : "";
   const argsShown = argsText.length > 2000 ? argsText.slice(0, 2000) + " …" : argsText;
 
-  // 运行中计时:从发起调用那一刻起,尽量带上本次的超时上限。
   let runText = "";
   let late = false;
   if (step.phase === "run" && step.t0) {
@@ -46,7 +38,6 @@ function StepView({ step, running, now }) {
     runText = "执行 " + fmtRun(sec) + (lim ? " / 最长 " + fmtRun(lim) : "");
     late = lim > 0 && sec >= lim;
   }
-  // 写类工具:参数还在生成时报"生成参数中",已开始执行报"写入 xx KB · N 行"。
   let work = "";
   if (step.phase === "prep") {
     const body = preview ? preview.split("\n").length : 0;
@@ -60,8 +51,6 @@ function StepView({ step, running, now }) {
   const cut = result != null && result.length > shown.length
     ? html`<span class="ms-cut">… 共 ${result.length} 字,已截断</span>` : null;
 
-  // 清单卡与目标状态行默认摊开:它们不是"参数细节",而是这一步在说什么 ——
-  // 跟 ThinkBox 同一套道理(过程就该看见)。两者都只有几行,不会把消息流撑长。
   return html`<details class=${"ms-step ms-in" + (step.folded ? "" : " ms-live-step")}
     open=${live || !!todos || !!goal}>
     <summary>
@@ -82,11 +71,8 @@ function StepView({ step, running, now }) {
   </details>`;
 }
 
-// now 只在运行中的步骤上变化:跑完的步骤传常量 0,memo 才能跳过重渲。
 export const Step = memo(StepView);
 
-// StepStrip 是「执行过程」折叠条本体。inline=true 表示它被并进了一条答案卡,
-// 这时不能再套 .m-card 外壳(旧 stepsMergeInto 的 ms-inline 语义)。
 export function StepStrip({ steps, inline }) {
   const g = groupSteps(steps);
   const [open, setOpen] = useState(false);
@@ -105,7 +91,6 @@ export function StepStrip({ steps, inline }) {
   </details>`;
 }
 
-// StepsCard:折叠条独立成一条消息卡(整轮没有正文时)。
 export function StepsCard({ steps }) {
   return html`<div class="msg steps">
     <${AgentAvatar} cls="c-avatar" />
@@ -113,10 +98,6 @@ export function StepsCard({ steps }) {
   </div>`;
 }
 
-// LiveSteps 是「正在执行」卡:还没收进折叠条的步骤住在这里,跑完才搬走。
-// 每 1 秒刷新一次计时,并顺手结算"快工具最短展示时间"到期的步骤。
-// 按样图(过程清单默认收起):头部一行"正在执行 · N 步 · 最近 xx",点开才见清单 ——
-// 正在跑什么由头部一行说清楚,不必摊一整列步骤抢聊天区的版面。
 export function LiveSteps({ steps, running }) {
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -136,9 +117,6 @@ export function LiveSteps({ steps, running }) {
   const parallel = visible.filter((s) => s.phase === "run").length;
   const last = visible[visible.length - 1];
   const lastHint = last.kind === "think" ? "思考中" : String(last.name || "tool");
-  // collapsed 必须和 .ms-live 落在同一个元素上:CSS 是
-  // .ms-live.collapsed .ms-live-body{display:none},写在外层 .msg 上谁都匹配不到
-  // —— 并行执行时一长列步骤加思考框就这么摊在聊天区里(2026-11 用户反馈)。
   return html`<div class="msg steps ms-live-wrap">
     <${AgentAvatar} cls="c-avatar" />
     <div class=${"m-card ms-live" + (open ? "" : " collapsed")}>

@@ -1,10 +1,3 @@
-// Super-Agent（定时任务版）主区面板。
-//
-// SuperFrame 包在 Chat+Composer 外面：当前会话不是 super 时原样渲染 children，
-// 对普通会话零影响；是 super 时在聊天区顶部画页签栏。v10 模型只剩一个功能：
-// 定时任务——到点把一句写好的话原样投给绑定会话（runner 每 15s 检查）。
-//
-// 数据源只有一个:GET /api/super/overview 一次给全(3s 轮询,仅 super 会话打开时)。
 import { h, Fragment } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import htm from "htm";
@@ -16,8 +9,7 @@ import { selectSession } from "../lib/actions.js";
 
 const html = htm.bind(h);
 
-// ---- 小工具 ----
-function clock(t) { // 只到时分秒:面板里时间密度高,日期在 title 里
+function clock(t) { 
   if (!t) return "—";
   const d = new Date(t);
   if (isNaN(d)) return "—";
@@ -42,15 +34,13 @@ async function post(path, body, okMsg) {
     return null;
   }
 }
-// 主动拉一次 overview(按钮动作后立刻刷新,不等轮询)。
 async function loadOv() {
   try {
     const data = await getJSON(ROUTES.superOverview);
     setState({ superOv: data });
-  } catch (e) { /* 静默:轮询会自愈,失败刷屏反而干扰 */ }
+  } catch (e) {  }
 }
 
-/* ---- 会话侧抽屉:在面板内看会话,不离开 super 页签 ---- */
 
 function msgText(m) {
   if (typeof m.content === "string") return m.content;
@@ -88,14 +78,12 @@ const TABS = [
   { id: "chat", label: "Super对话" },
 ];
 
-/* ================= 外壳:页签栏 + 轮询 + 页签切换 ================= */
 
 export function SuperFrame({ children }) {
   const role = useStore((s) => s.currentRole);
   const tab = useStore((s) => s.superTab) || "sched";
   const ov = useStore((s) => s.superOv);
 
-  // 只在 super 会话里轮询;离开(切会话/关页)自动停。
   useEffect(() => {
     if (role !== "super") return undefined;
     loadOv();
@@ -103,7 +91,6 @@ export function SuperFrame({ children }) {
     return () => clearInterval(t);
   }, [role]);
 
-  // 抽屉打开时跟着 3s 刷新会话内容(执行中的输出会动)。
   const drawerId = useStore((s) => (s.superDrawer ? s.superDrawer.id : ""));
   useEffect(() => {
     if (!drawerId) return undefined;
@@ -144,7 +131,6 @@ export function SuperFrame({ children }) {
     <${SuperDrawer}/>`;
 }
 
-/* ================= 会话侧抽屉(不离开面板) ================= */
 
 function SuperDrawer() {
   const d = useStore((s) => s.superDrawer);
@@ -176,7 +162,6 @@ function SuperDrawer() {
   </div>`;
 }
 
-/* ================= 定时任务 ================= */
 
 function SchedPanel({ ov }) {
   const [open, setOpen] = useState(false);
@@ -258,7 +243,6 @@ function SchedPanel({ ov }) {
     </table>`;
 }
 
-/* ================= 会话速览(面板内) ================= */
 
 function SessionsPanel({ ov }) {
   if (!ov) return null;
@@ -282,7 +266,6 @@ function SessionsPanel({ ov }) {
     </table>`;
 }
 
-/* ================= 审计轨迹 ================= */
 
 function AuditPanel({ ov }) {
   if (!ov) return null;

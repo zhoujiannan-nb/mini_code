@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// fakeWorkers is a WorkerDispatcher that only answers, enough to exercise the
-// workers tool's schema and dispatch table without a session or a DB.
 type fakeWorkers struct{ note string }
 
 func (f *fakeWorkers) List() string                                 { return "list" }
@@ -21,9 +19,6 @@ func (f *fakeWorkers) History(limit int) string                     { return "hi
 func (f *fakeWorkers) Messages(sessionID string, chars int) string  { return "messages" }
 func (f *fakeWorkers) NoteRead() string                             { return f.note }
 
-// TestWorkersToolConventionReadOnly: a 公约 is a contract with every OTHER session
-// of the worker, so the model gets no write action at all — not in the enum, not
-// in the description, and not through the dispatch table. Only a human writes it.
 func TestWorkersToolConventionReadOnly(t *testing.T) {
 	tool := NewWorkersTool(&fakeWorkers{note: "v1 干活前先跑测试"})
 	buf, err := json.Marshal(tool.Parameters())

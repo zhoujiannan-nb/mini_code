@@ -11,16 +11,8 @@ import (
 	"github.com/user/mini_code/util"
 )
 
-// RootAgentName is the one name a sub-agent may never take: it always means
-// "the conversation you are talking to". DSH reserves it for the same reason —
-// a child that could call itself "lead" would make every address ambiguous.
 const RootAgentName = "lead"
 
-// sortedAgentNames returns the sub-agent role names in a stable (sorted) order.
-// Go randomizes map iteration order, and these names flow into model-visible
-// text (tool description / parameter schema / error messages) that is part
-// of the request prefix the provider's prefix cache matches — an unstable
-// order would re-render that prefix differently on every request.
 func sortedAgentNames() []string {
 	agents := agent.ListAllAgents()
 	names := make([]string, 0, len(agents))
@@ -31,52 +23,40 @@ func sortedAgentNames() []string {
 	return names
 }
 
-// JobInfo is the JSON-friendly view of one sub-agent (its most recent run),
-// used by the agent tools and the web API.
 type JobInfo struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Role        string `json:"role"`
 	Goal        string `json:"goal"`
-	Status      string `json:"status"` // running | completed | failed | canceled
+	Status      string `json:"status"`
 	Result      string `json:"result,omitempty"`
 	Error       string `json:"error,omitempty"`
 	StartedAt   string `json:"started_at"`
 	FinishedAt  string `json:"finished_at,omitempty"`
 }
 
-// AgentSpec is one dispatch request, as it arrives from the model.
 type AgentSpec struct {
-	Name        string // "" = pick the first free agent-N
-	Description string // 3-5 words, what the caller will see in list_agents
-	Role        string // agent role (build / work / custom); "" = work
+	Name        string
+	Description string
+	Role        string
 	Goal        string
-	Fork        bool   // start from the caller's conversation
-	Model       string // optional model key for this child only
+	Fork        bool
+	Model       string
 	Background  bool
 }
 
-// AgentRun is what a dispatch produced right now: an admitted background run,
-// or a finished foreground one.
 type AgentRun struct {
 	Name    string
 	ChildID string
-	Status  string // running | completed | failed | canceled
+	Status  string
 	Result  string
 	Error   string
 }
 
-// AgentDispatcher is what the agent tools need from the sub-agent service
-// (implemented by session.SubagentService).
 type AgentDispatcher interface {
-	// Dispatch starts a sub-agent and returns as soon as it is admitted
-	// (background) or has finished (foreground).
 	Dispatch(ctx context.Context, parentID string, spec AgentSpec) (AgentRun, error)
-	// Send delivers a message to an existing sub-agent: injected at its next
-	// turn when it is running, or waking it with a new task when it is idle.
 	Send(parentID, agent, message string) (mode, name string, err error)
-	// Resolve maps a name (or session id) to the child session and its name.
 	Resolve(parentID, agent string) (childID, name string, err error)
 	Output(ctx context.Context, id string, wait bool, waitSeconds int) (string, error)
 	Status(id string) (JobInfo, bool)
@@ -84,11 +64,7 @@ type AgentDispatcher interface {
 	List(parentID string) []JobInfo
 }
 
-// (agentToolDocs, once the shared "what is a sub-agent" paragraph, went unused
-// when each tool's Description moved to the verbatim dsh strings in
-// dsh_tools.json — the model reads it there now.)
 
-// AgentTool starts a sub-agent (the DSH `subagent` shape).
 type AgentTool struct {
 	parentSessionID string
 	dispatcher      AgentDispatcher
@@ -104,11 +80,6 @@ func (t *AgentTool) SetSessionContext(parentSessionID string, dispatcher AgentDi
 func (t *AgentTool) Name() string { return "subagent" }
 func (t *AgentTool) IsHidden() bool { return false }
 
-// Description/Parameters: dsh's verbatim "subagent" surface. dsh's subagent
-// is always asynchronous — it returns the name and the completion notice
-// arrives later — so the exposed schema carries no run_in_background and
-// Execute forces one. The historical foreground path stays reachable for
-// in-process callers (tests) through the unlisted parameter.
 func (t *AgentTool) Description() string                { return dshDesc("subagent") }
 func (t *AgentTool) Parameters() map[string]interface{} { return dshParams("subagent") }
 
@@ -116,7 +87,6 @@ func (t *AgentTool) Execute(ctx context.Context, params map[string]interface{}) 
 	return t.dispatch(ctx, params, false, true)
 }
 
-// dispatch is the shared body of subagent and subagent_fork.
 func (t *AgentTool) dispatch(ctx context.Context, params map[string]interface{}, forceFork, forceAsync bool) (*ToolResult, error) {
 	prompt, _ := params["prompt"].(string)
 	if strings.TrimSpace(prompt) == "" {
@@ -181,8 +151,6 @@ func (t *AgentTool) dispatch(ctx context.Context, params map[string]interface{},
 	}
 }
 
-// SubagentForkTool is dsh's subagent_fork: the same dispatch, seeded with
-// this conversation's completed turns (MiniCode's fork=true).
 type SubagentForkTool struct{ inner *AgentTool }
 
 func NewSubagentForkTool(parentSessionID string, dispatcher AgentDispatcher) *SubagentForkTool {
@@ -200,7 +168,6 @@ func (t *SubagentForkTool) Execute(ctx context.Context, params map[string]interf
 	return t.inner.dispatch(ctx, params, true, true)
 }
 
-// SendMessageTool delivers a message to an existing sub-agent.
 type SendMessageTool struct {
 	parentSessionID string
 	dispatcher      AgentDispatcher
@@ -212,7 +179,6 @@ func NewSendMessageTool(parentSessionID string, dispatcher AgentDispatcher) *Sen
 
 func (t *SendMessageTool) Name() string { return "send_message" }
 
-// Description/Parameters: dsh's verbatim surface.
 func (t *SendMessageTool) Description() string                { return dshDesc("send_message") }
 func (t *SendMessageTool) IsHidden() bool                     { return false }
 func (t *SendMessageTool) Parameters() map[string]interface{} { return dshParams("send_message") }
@@ -236,7 +202,6 @@ func (t *SendMessageTool) Execute(ctx context.Context, params map[string]interfa
 	return NewTextResult(fmt.Sprintf("Woke %q with this message. It is running again and its reply arrives as a separate message.", name)), nil
 }
 
-// ListAgentsTool shows the agent tree.
 type ListAgentsTool struct {
 	parentSessionID string
 	dispatcher      AgentDispatcher
@@ -291,23 +256,11 @@ func (t *ListAgentsTool) Execute(ctx context.Context, params map[string]interfac
 	return NewTextResult(strings.TrimRight(b.String(), "\n")), nil
 }
 
-// InputWaiter is the session-side half of wait_agent, implemented by
-// *session.Session: it reports whether an input (user steering, a sub-agent
-// message, a job settlement notice — in MiniCode they all arrive through the
-// injection queue) is already waiting, and blocks for the next one without
-// consuming it.
 type InputWaiter interface {
 	HasPendingInput() bool
 	WaitForInput(ctx context.Context, timeout time.Duration) bool
 }
 
-// WaitAgentTool is dsh's wait_agent: block until the next input the agent
-// could process arrives — a sub-agent message, a settlement notice, user
-// steering — or the timeout fires. dsh's schema exposes only timeout_ms, and
-// MiniCode honours that: with no agent given the tool waits on this session's
-// injection queue. The historical wait-for-one-agent's-result behaviour stays
-// reachable through the unlisted `agent` parameter (dsh-faithful surfaces
-// never send it; tests and old transcripts do).
 type WaitAgentTool struct {
 	parentSessionID string
 	dispatcher      AgentDispatcher
@@ -318,21 +271,14 @@ func NewWaitAgentTool(parentSessionID string, dispatcher AgentDispatcher) *WaitA
 	return &WaitAgentTool{parentSessionID: parentSessionID, dispatcher: dispatcher}
 }
 
-// SetInputWaiter wires the session's injection-queue doorbell. Without it the
-// no-agent mode degrades to the honest "not wired" error instead of blocking
-// on nothing.
 func (t *WaitAgentTool) SetInputWaiter(w InputWaiter) { t.inputs = w }
 
 func (t *WaitAgentTool) Name() string { return "wait_agent" }
 
-// Description/Parameters: dsh's verbatim surface.
 func (t *WaitAgentTool) Description() string                { return dshDesc("wait_agent") }
 func (t *WaitAgentTool) IsHidden() bool                     { return false }
 func (t *WaitAgentTool) Parameters() map[string]interface{} { return dshParams("wait_agent") }
 
-// waitAgentTimeoutMS reads dsh's timeout_ms (schema default 30000, bounds
-// 10000..3600000) with the historical `timeout` (seconds) kept as a hidden
-// alias.
 func waitAgentTimeoutMS(params map[string]interface{}) int {
 	if v, ok := params["timeout_ms"].(float64); ok && v > 0 {
 		return int(v)
@@ -356,9 +302,6 @@ func clampTimeoutMS(ms int) time.Duration {
 func (t *WaitAgentTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	timeout := clampTimeoutMS(waitAgentTimeoutMS(params))
 
-	// dsh mode: wait for the next input to this session. The input is not
-	// consumed — the loop drains it at the start of the next turn, so the
-	// model sees the content itself right after this tool result.
 	agentRef, _ := params["agent"].(string)
 	if strings.TrimSpace(agentRef) == "" {
 		if t.inputs == nil {
@@ -376,7 +319,6 @@ func (t *WaitAgentTool) Execute(ctx context.Context, params map[string]interface
 		return NewTextResult("An input has arrived. It enters your conversation as the next user message — read it there before deciding your next step."), nil
 	}
 
-	// Historical mode: wait for one agent's current run and return its reply.
 	if t.dispatcher == nil {
 		return NewTextResult("Error: sub-agent service not available in this session."), nil
 	}
@@ -391,13 +333,7 @@ func (t *WaitAgentTool) Execute(ctx context.Context, params map[string]interface
 	return NewTextResult(out), nil
 }
 
-// (CancelAgentTool — a model-facing `cancel_agent` tool — was retired without
-// ever being registered: the dsh 23-tool surface has no cancel tool, and
-// stopping an agent goes through job_kill. dispatcher.Cancel(id) remains the
-// in-process entry the job surface uses.)
 
-// unknownAgentHint names the agents that do exist, so a typo costs one retry
-// instead of a list_agents round trip.
 func unknownAgentHint(parentID string, d AgentDispatcher) string {
 	if d == nil {
 		return ""
@@ -414,7 +350,6 @@ func unknownAgentHint(parentID string, d AgentDispatcher) string {
 	return " Known agents: " + strings.Join(names, ", ")
 }
 
-// oneLine collapses a multi-line result into one line for list_agents.
 func oneLine(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")

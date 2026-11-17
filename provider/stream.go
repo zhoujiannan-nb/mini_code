@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-// streamDelta is a single SSE chunk of a streaming chat completion
-// (OpenAI-compatible format used by vLLM and Ollama).
 type streamDelta struct {
 	Choices []struct {
 		Delta struct {
@@ -26,8 +24,6 @@ type streamDelta struct {
 	Usage *Usage `json:"usage,omitempty"`
 }
 
-// streamDeltaToolCall carries incremental tool call data; fields arrive
-// piecewise across chunks and must be merged by index.
 type streamDeltaToolCall struct {
 	Index    int    `json:"index"`
 	ID       string `json:"id"`
@@ -38,7 +34,6 @@ type streamDeltaToolCall struct {
 	} `json:"function"`
 }
 
-// streamAccumulator aggregates deltas into a final ChatResponse.
 type streamAccumulator struct {
 	content      string
 	reasoning    string
@@ -66,9 +61,6 @@ func (a *streamAccumulator) mergeToolCalls(deltas []streamDeltaToolCall) {
 	}
 }
 
-// progressSnapshot exposes the in-flight tool calls to the onChunk callback.
-// Strings are shared (headers copied, not bytes), so calling this per SSE chunk
-// costs one small slice regardless of how big the arguments are getting.
 func (a *streamAccumulator) progressSnapshot() []StreamToolCallProgress {
 	if len(a.toolCalls) == 0 {
 		return nil
@@ -80,15 +72,9 @@ func (a *streamAccumulator) progressSnapshot() []StreamToolCallProgress {
 	return out
 }
 
-// ChatStream sends a streaming chat request. onChunk is invoked with the
-// accumulated content/reasoning whenever a delta arrives. The returned
-// ChatResponse is the fully aggregated result (same shape as Chat's).
-// Retries happen only before the stream is established; a broken stream
-// mid-flight is surfaced as an error instead of re-sending (which would
-// duplicate content already rendered).
 func (mc *ModelClient) ChatStream(ctx context.Context, messages []Message, tools []ToolSchema, onChunk func(StreamChunk), opts ...ChatOption) (*ChatResponse, error) {
 	o := chatOptions{
-		MaxTokens: 0, // unset: omitted from the request unless configured/passed
+		MaxTokens: 0,
 	}
 	if p, ok := mc.provider.(*VLLMProvider); ok {
 		o.Temperature = p.Temperature
@@ -99,13 +85,9 @@ func (mc *ModelClient) ChatStream(ctx context.Context, messages []Message, tools
 		o.MaxTokens = p.MaxTokens
 	}
 	if p, ok := mc.provider.(*SGLangProvider); ok && p.MaxTokens > 0 {
-		// Respect the configured output budget; sampling defaults are
-		// applied by SGLangProvider.ConfigureRequest.
 		o.MaxTokens = p.MaxTokens
 	}
 	if p, ok := mc.provider.(*DeepSeekProvider); ok && p.MaxTokens > 0 {
-		// Respect the configured output budget (previously the hardcoded
-		// 8192 default was sent regardless of config).
 		o.MaxTokens = p.MaxTokens
 	}
 	for _, opt := range opts {
@@ -126,14 +108,13 @@ func (mc *ModelClient) ChatStream(ctx context.Context, messages []Message, tools
 	}
 	mc.provider.ConfigureRequest(&req)
 	mc.applySampling(&req)
-	dropStreamOnlyFields(&req) // no-op while Stream is true
+	dropStreamOnlyFields(&req)
 
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	// Retry only until the connection is established.
 	maxRetries := 3
 	var resp *http.Response
 	for retry := 0; retry <= maxRetries; retry++ {
@@ -158,7 +139,6 @@ func (mc *ModelClient) ChatStream(ctx context.Context, messages []Message, tools
 			if mc.isTokenError(errText) {
 				return &ChatResponse{Error: fmt.Sprintf("API error: %d - %s", resp.StatusCode, errText)}, nil
 			}
-			// Auth / balance / parameter errors fail fast (see isNonRetryableStatus).
 			if isNonRetryableStatus(resp.StatusCode) {
 				return &ChatResponse{Error: fmt.Sprintf("API error: %d - %s", resp.StatusCode, errText)}, nil
 			}
@@ -181,7 +161,6 @@ func (mc *ModelClient) ChatStream(ctx context.Context, messages []Message, tools
 	return mc.readStream(ctx, resp.Body, onChunk)
 }
 
-// readStream consumes an SSE body and aggregates deltas into a ChatResponse.
 func (mc *ModelClient) readStream(ctx context.Context, body io.Reader, onChunk func(StreamChunk)) (*ChatResponse, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -206,7 +185,6 @@ func (mc *ModelClient) readStream(ctx context.Context, body io.Reader, onChunk f
 			return nil, fmt.Errorf("unmarshal stream chunk: %w", err)
 		}
 		if len(delta.Choices) == 0 {
-			// Some servers send a trailing chunk carrying only usage.
 			if delta.Usage != nil {
 				acc.usage = delta.Usage
 			}
@@ -230,11 +208,6 @@ func (mc *ModelClient) readStream(ctx context.Context, body io.Reader, onChunk f
 	if err := scanner.Err(); err != nil && !finished {
 		return nil, fmt.Errorf("read stream: %w", err)
 	}
-	// A well-formed SSE chat stream always ends with a chunk carrying a
-	// finish_reason (or [DONE]). EOF without one means the connection
-	// dropped mid-response. Never accept a partial result: a truncated
-	// tool-call, once persisted, poisons the history and the next request
-	// fails with "function.arguments must be valid JSON".
 	if !finished {
 		if acc.content == "" && acc.reasoning == "" && len(acc.toolCalls) == 0 {
 			return nil, fmt.Errorf("stream ended unexpectedly")

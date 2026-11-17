@@ -1,5 +1,3 @@
-// 后台命令(job)面板:分「运行中 / 已结束」两段(可折叠),运行中行两按停止,
-// 已结束行 ⌄ 就地展开输出。面板开着才轮询(2s),关了零开销。
 import { h } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import htm from "htm";
@@ -18,9 +16,9 @@ export function JobsPanel() {
   const jobs = useStore((s) => s.jobs);
   const current = useStore((s) => s.current);
   const [closed, setClosed] = useState({});
-  const [armed, setArmed] = useState(null);       // {id, timer}:两按确认中的 job
-  const [outOpen, setOutOpen] = useState(null);   // 同时只开一个
-  const [out, setOut] = useState({});             // job id -> 输出文本
+  const [armed, setArmed] = useState(null);       
+  const [outOpen, setOutOpen] = useState(null);   
+  const [out, setOut] = useState({});             
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -29,14 +27,13 @@ export function JobsPanel() {
     return () => clearInterval(t);
   }, [current]);
 
-  // 展开中的输出跟着轮询刷新,不动 outOpen/out 状态。
   useEffect(() => {
     if (!outOpen) return;
     (async () => {
       try {
         const r = await api(ROUTES.jobOutput(current, outOpen));
         setOut((m) => ({ ...m, [outOpen]: r.output || "(无输出)" }));
-      } catch (e) { /* 静默:下一次轮询还会试 */ }
+      } catch (e) {  }
     })();
   }, [jobs, outOpen, current]);
 

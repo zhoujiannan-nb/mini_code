@@ -6,14 +6,10 @@ import (
 	"testing"
 )
 
-// TestCompactContextEchoIsBounded: the tool result travels back into the
-// context, so it must not echo a model-authored focus instruction in full — a
-// few-thousand-character focus would double that cost on the very next call.
-// The pending instruction handed to the loop stays verbatim.
 func TestCompactContextEchoIsBounded(t *testing.T) {
 	st := NewContextState()
 	tool := NewCompactContextTool(st)
-	focus := strings.Repeat("保留结论指针与关键数字,", 400) // ~5600 runes, far past the echo cap
+	focus := strings.Repeat("保留结论指针与关键数字,", 400)
 
 	res, err := tool.Execute(context.Background(), map[string]interface{}{"instruction": focus})
 	if err != nil {
@@ -37,7 +33,6 @@ func TestCompactContextEchoIsBounded(t *testing.T) {
 	}
 }
 
-// TestCompactContextNoInstruction is the bare call: short result, no focus echo.
 func TestCompactContextNoInstruction(t *testing.T) {
 	st := NewContextState()
 	res, err := NewCompactContextTool(st).Execute(context.Background(), map[string]interface{}{})

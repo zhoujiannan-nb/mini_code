@@ -7,15 +7,6 @@ import (
 	"sync"
 )
 
-// ContextState is the shared, thread-safe view of the current context that
-// the agent loop updates each turn and the context tools (context_usage /
-// compact_context) read. It also carries a pending active-compaction request
-// set by the compact_context tool and consumed by the loop at the next turn's
-// compaction step.
-//
-// The loop is the single writer of tokens/maxInput (once per turn, right
-// before the LLM call) and the single consumer of the pending request, so the
-// mutex only guards against the tool goroutines reading while the loop writes.
 type ContextState struct {
 	mu             sync.Mutex
 	tokens         int
@@ -29,10 +20,6 @@ func NewContextState() *ContextState {
 	return &ContextState{}
 }
 
-// SetUsage records the current context token count, the max input budget and the
-// token count at which the loop compacts on its own (0 = unknown). The tools only
-// report these numbers: keeping the threshold arithmetic in the loop means a
-// policy change never has to be mirrored here.
 func (c *ContextState) SetUsage(tokens, maxInput, compactionAt int) {
 	c.mu.Lock()
 	c.tokens = tokens
@@ -41,22 +28,18 @@ func (c *ContextState) SetUsage(tokens, maxInput, compactionAt int) {
 	c.mu.Unlock()
 }
 
-// CompactionAt returns the token count where the loop forces a compaction turn.
 func (c *ContextState) CompactionAt() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.compactionAt
 }
 
-// Usage returns the current context token count and the max input budget.
 func (c *ContextState) Usage() (tokens, maxInput int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.tokens, c.maxInput
 }
 
-// RequestCompaction asks the loop to compact the current context before the
-// next LLM call, using the model-supplied instruction.
 func (c *ContextState) RequestCompaction(instruction string) {
 	c.mu.Lock()
 	c.pendingCompact = true
@@ -64,8 +47,6 @@ func (c *ContextState) RequestCompaction(instruction string) {
 	c.mu.Unlock()
 }
 
-// TakePendingCompaction returns (and clears) any pending active-compaction
-// request. The loop calls this at the start of each turn's compaction step.
 func (c *ContextState) TakePendingCompaction() (bool, string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -75,7 +56,6 @@ func (c *ContextState) TakePendingCompaction() (bool, string) {
 	return b, i
 }
 
-// ContextUsageTool reports the current context token usage of the session.
 type ContextUsageTool struct {
 	state *ContextState
 }
@@ -107,10 +87,6 @@ func (t *ContextUsageTool) Execute(ctx context.Context, params map[string]interf
 	return NewTextResult(fmt.Sprintf("Context usage: %d / %d input tokens (%.1f%%). No automatic compaction point is known for this session, and compact_context is disabled for now.", tokens, maxInput, pct)), nil
 }
 
-// CompactContextTool lets the model actively request a context compaction,
-// providing its own instruction for what the summary should focus on. The
-// request is consumed by the agent loop before the next LLM call, so the
-// compressed context takes effect on the following turn.
 type CompactContextTool struct {
 	state *ContextState
 }
@@ -141,10 +117,6 @@ func (t *CompactContextTool) Execute(ctx context.Context, params map[string]inte
 	if instruction == "" {
 		return NewTextResult("Compaction scheduled. The context will be compressed before the next model call. Continue working; the compressed context takes effect on the next turn."), nil
 	}
-	// Echo at most a short prefix of the focus: the result travels back into the
-	// context, and a model-authored focus can run to several thousand characters
-	// — repeating it here doubles the cost of a turn that is about to be
-	// summarized anyway.
 	echo := []rune(strings.TrimSpace(instruction))
 	const maxEcho = 200
 	suffix := ""

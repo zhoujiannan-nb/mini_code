@@ -12,30 +12,12 @@ import (
 )
 
 const (
-	// compactInputFraction is where the loop forces a compaction turn, measured
-	// against the model's USABLE INPUT BUDGET — the largest request the provider
-	// will actually accept (context window minus the output reserve). Ten percent
-	// below the ceiling: the estimate is calibrated, and the head-room keeps a
-	// mis-estimate from turning the request into a provider-side length error.
 	compactInputFraction = 0.90
 
-	// CompactKeepMessages is how many verbatim messages survive a compaction:
-	// the newest ones are walked backwards from the summary until this many
-	// (budget permitting) are kept after the summary block.
 	CompactKeepMessages = 3
-	// CompactKeepMaxTokens is the hard budget of that verbatim block. Neither
-	// the whole block nor any single message inside it may exceed it: a single
-	// oversized message (e.g. a huge tool result) is truncated to fit instead
-	// of being kept verbatim.
 	CompactKeepMaxTokens = 20000
 )
 
-// InputBudgetFraction maps a fraction of the model's usable input budget to a
-// token count. The budget is what a request may actually use — the context window
-// minus the output reserve — so it is the only honest denominator: a percentage of
-// the raw window would be measured against a size the request can never reach.
-// A zero budget means the model's window is unknown, in which case no absolute
-// threshold can be given and this returns 0 (callers then skip the check).
 func InputBudgetFraction(maxInput int, fraction float64) int {
 	if maxInput <= 0 {
 		return 0
@@ -50,17 +32,8 @@ func InputBudgetFraction(maxInput int, fraction float64) int {
 	return limit
 }
 
-// compactRequestMarker is embedded in every synthesized compaction instruction
-// so the loop can recognise it (a) on the turn it is sent and (b) after a
-// crash/restart, when the instruction is the last persisted message.
 const compactRequestMarker = "__CTX_COMPACT_REQUEST__"
 
-// compactRequestIntro is the fixed (passive) compaction prompt. The
-// conversation is no longer re-serialized and sent to a separate summarizer
-// call: the instruction is appended to the live context, so everything before
-// it is still an exact prefix of the previous request and keeps hitting the
-// provider's KV prefix cache. Keep this text stable — it is part of every
-// compaction request.
 const compactRequestIntro = `CONTEXT COMPACTION — do not continue the task, do not answer the user, and do not call any tool.
 
 Compress the ENTIRE conversation above into one handoff summary that lets another agent of you resume the work cold. Write it in the same language as the conversation.`
@@ -84,14 +57,8 @@ const compactRequestFormat = `Output EXACTLY these five Markdown sections, in th
 
 Use exact file paths, symbols, commands and error strings; never generalize. Focus on what is still unfinished and on the latest progress. Do not mention that you are summarizing or compacting.`
 
-// compactFocusTemplate carries an agent-authored focus (the compact_context
-// tool's instruction argument). Passive/automatic compaction passes none and
-// gets only the fixed prompt above.
 const compactFocusTemplate = `Additional focus requested before compressing: %q`
 
-// BuildCompactRequest builds the user message that turns the next model call
-// into a summarization turn. instruction is the agent-authored focus for
-// manual / model-initiated compaction; pass "" for the fixed passive prompt.
 func BuildCompactRequest(instruction string) provider.Message {
 	var b strings.Builder
 	b.WriteString(compactRequestIntro)
@@ -107,9 +74,6 @@ func BuildCompactRequest(instruction string) provider.Message {
 	return provider.Message{Role: "user", Content: b.String()}
 }
 
-// compactRules loads the optional extra rules (agent/prompts/compaction.txt,
-// CWD override or embedded copy). It is a constant string, so appending it
-// never breaks the request prefix.
 func compactRules() string {
 	if p := agent.LoadPrompt("compaction.txt"); p != "" {
 		return strings.TrimSpace(p) + "\n\n"
@@ -117,15 +81,10 @@ func compactRules() string {
 	return ""
 }
 
-// IsCompactRequest reports whether m is a synthesized compaction instruction.
 func IsCompactRequest(m provider.Message) bool {
 	return strings.Contains(m.GetText(), compactRequestMarker)
 }
 
-// StripCompactRequests removes every compaction instruction message. Used when
-// a compaction turn failed (the instruction must not linger in the context and
-// confuse the model on the next call) and when a fresh user message supersedes
-// an instruction that never got answered.
 func StripCompactRequests(messages []provider.Message) []provider.Message {
 	out := make([]provider.Message, 0, len(messages))
 	for _, m := range messages {
@@ -137,13 +96,6 @@ func StripCompactRequests(messages []provider.Message) []provider.Message {
 	return out
 }
 
-// IsUsageNotice reports whether m is one of the context-usage notices (75/80/85/
-// 90/95%). Nothing injects them any more — the reminder told the model to call the
-// unregistered compact_context tool, so the injection was removed — but older
-// sessions still store those rows. They are dropped on compaction: the numbers
-// they quote are wrong after a compaction, and a stale "call compact_context"
-// instruction in the retained tail would only send the model hunting for a tool
-// that is not there.
 func IsUsageNotice(m provider.Message) bool {
 	t := m.GetText()
 	for _, pct := range []int{75, 80, 85, 90, 95} {
@@ -154,38 +106,14 @@ func IsUsageNotice(m provider.Message) bool {
 	return false
 }
 
-// SummaryBlock wraps a summary into the stable block the next compaction reads
-// back as the anchored <previous-summary>.
 func SummaryBlock(summary string) string {
 	return "<previous-summary>\nCompressed summary:\n\n" + strings.TrimSpace(summary) +
 		"\n</previous-summary>\n\nContinue the task from this checkpoint. Do not greet the user, do not acknowledge this summary, and do not re-read files or re-run commands whose results are already recorded above."
 }
 
-// compactToolName is the model-facing name of the active-compaction tool
-// (tools.CompactContextTool). A model-initiated compaction leaves that call and
-// its result as the two NEWEST messages in the context, exactly where
-// RebuildContext walks backwards from.
 const compactToolName = "compact_context"
 
-// stripCompactionCeremony removes the model's own compact_context turn from a
-// history before it competes for the verbatim tail.
-//
-// Without this, a model-initiated compaction spends the surviving "last few
-// messages" on its own ceremony: [.., assistant(compact_context), tool(result)]
-// are the newest two of the three kept slots, so the last real tool call — the
-// thing a resuming reader actually needs verbatim — is pushed out. Worse, the
-// tool result echoes the model's own focus instruction (it can run to several
-// thousand characters), which then eats most of the tail budget. Both are
-// derived data the summary already covers, so they go:
-//
-//   - the compact_context entry is pruned from the assistant's tool_calls (its
-//     text and reasoning stay), and the matching tool result is dropped with it
-//     — so no tool result is ever orphaned from the calls that declared it;
-//   - an assistant message left with neither tool calls nor text is dropped.
 func stripCompactionCeremony(history []provider.Message) []provider.Message {
-	// Call ids of every compact_context invocation: the ids are what pair ad:\mini_code-work\mini_code.l
-	// tool result with its call, and an id may be empty on an old record, so
-	// the tool message's own Name is checked as well.
 	compactIDs := make(map[string]bool)
 	for _, m := range history {
 		if m.Role != "assistant" {
@@ -211,7 +139,7 @@ func stripCompactionCeremony(history []provider.Message) []provider.Message {
 			}
 			if len(kept) != len(m.ToolCalls) {
 				if len(kept) == 0 && m.GetText() == "" {
-					continue // an empty assistant turn is noise (and illegal on some providers)
+					continue
 				}
 				cp := m
 				cp.ToolCalls = kept
@@ -224,42 +152,10 @@ func stripCompactionCeremony(history []provider.Message) []provider.Message {
 	return out
 }
 
-// RebuildContext restarts the conversation from a summary. Input is the
-// context as it was sent for the summarization turn (compaction instruction
-// included). Output is [system][summary][verbatim tail] — the dsh shape, where
-// the summary replaces the compacted region and heads the surviving window:
-//
-//   - the system message is kept byte-identical (it is the one prefix segment
-//     that survives any rewrite);
-//   - the summary is the first history message: the model reads the compressed
-//     past before the verbatim present, the same order a fresh reader would
-//     reconstruct from the ledger;
-//   - the last keep verbatim messages are walked backwards, never splitting a
-//     tool result from the assistant tool_calls that produced it, and never
-//     starting with a tool message; they stay a contiguous block, in order,
-//     exactly as they were sent before;
-//   - the verbatim block stays within budget tokens; a single message that is
-//     itself too large is truncated to fit.
-//
-// The prefix-cache argument for trailing the summary does not hold: the
-// compacted bytes are gone from before the tail either way, so every request
-// after a compaction re-seats the cache no matter where the summary sits —
-// there is nothing to buy by putting it last.
-//
-// Compaction instructions, usage notices and worker briefs are dropped (all three
-// are derived data the next turn re-creates), and so is the model's own
-// compact_context call together with its result (stripCompactionCeremony) — it is
-// the compaction's own ceremony, not recent work. ok is false when
-// nothing could be kept and the caller should keep the original context.
 func RebuildContext(messages []provider.Message, summary string, keep, budget int) (out []provider.Message, ok bool) {
 	return RebuildContextEst(messages, summary, keep, budget, defaultTokenEstimator)
 }
 
-// RebuildContextEst is RebuildContext with an explicit token estimator. est must
-// be the function the compaction threshold is judged with (the loop's calibrated
-// count): the budget arithmetic below and the next turn's threshold decision have
-// to be in the same unit, otherwise the rebuilt context comes back ~2x larger
-// than budgeted and immediately triggers another compaction turn.
 func RebuildContextEst(messages []provider.Message, summary string, keep, budget int, est tokenEstimator) (out []provider.Message, ok bool) {
 	if est == nil {
 		est = defaultTokenEstimator
@@ -282,8 +178,6 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 		}
 		history = append(history, m)
 	}
-	// The model's own compact_context turn is not "recent work" — drop it
-	// before the tail walk so the kept slots hold real recent messages.
 	history = stripCompactionCeremony(history)
 	if len(history) == 0 {
 		return messages, false
@@ -295,18 +189,13 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 		budget = CompactKeepMaxTokens
 	}
 
-	// Walk backwards from the newest message and take up to `keep` of them
-	// within the budget.
 	taken := make([]provider.Message, 0, keep+1)
 	used := 0
 	for i := len(history) - 1; i >= 0 && len(taken) < keep; i-- {
 		m := history[i]
-		// Text-only cost estimate of this message.
 		cost := est([]provider.Message{m})
 		if used+cost > budget {
 			if len(taken) == 0 {
-				// The single newest message is itself over budget: keep a
-				// truncated copy rather than losing the newest turn entirely.
 				taken = append(taken, truncateToBudget(m, budget, est))
 				used = budget
 				break
@@ -317,15 +206,8 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 		used += cost
 	}
 
-	// Boundary safety: a tool result is only valid API input while the
-	// assistant message declaring its tool_calls is kept alongside it, and the
-	// retained block must never open with a tool message. Pull the parent in
-	// (extra messages beyond `keep` are allowed for integrity), but charge it
-	// against the budget: its tool_call arguments are counted too, and one large
-	// call payload must not silently push the tail past what was budgeted. The
-	// tool_calls themselves are never touched, so the pairing stays valid.
 	for len(taken) > 0 && taken[len(taken)-1].Role == "tool" {
-		idx := len(history) - 1 - len(taken) // index in history of the message just before the block
+		idx := len(history) - 1 - len(taken)
 		if idx < 0 {
 			break
 		}
@@ -345,8 +227,6 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 		used += cost
 		taken = append(taken, parent)
 	}
-	// Drop a leading tool message with no retrievable parent (should not
-	// happen, but a malformed history must not produce a malformed request).
 	for len(taken) > 0 && taken[len(taken)-1].Role == "tool" {
 		taken = taken[:len(taken)-1]
 	}
@@ -355,8 +235,6 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 	if system != nil {
 		out = append(out, *system)
 	}
-	// [system][summary][tail] (dsh's order): the summary stands where the
-	// compacted region used to be, ahead of the verbatim tail.
 	out = append(out, provider.Message{Role: "user", Content: SummaryBlock(summary)})
 	for i := len(taken) - 1; i >= 0; i-- {
 		out = append(out, taken[i])
@@ -364,9 +242,6 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 	return out, true
 }
 
-// truncateToBudget cuts m down to at most budget tokens (as counted by est, the
-// same estimator the threshold logic uses), keeping its head — where the payload
-// usually matters most — and marking the cut.
 func truncateToBudget(m provider.Message, budget int, est tokenEstimator) provider.Message {
 	if est == nil {
 		est = defaultTokenEstimator
@@ -379,8 +254,6 @@ func truncateToBudget(m provider.Message, budget int, est tokenEstimator) provid
 	marker := func(total int) string {
 		return fmt.Sprintf("\n[... truncated to fit the %d token compaction budget, total %d tokens ...]", budget, total)
 	}
-	// Shrink proportionally first, then verify with the estimator and keep
-	// shaving 5% until it actually fits. Bounded and always terminating.
 	keep := int(float64(len(text)) * float64(budget) / float64(cost) * 0.9)
 	for {
 		if keep < 0 {
@@ -389,7 +262,6 @@ func truncateToBudget(m provider.Message, budget int, est tokenEstimator) provid
 		if keep > len(text) {
 			keep = len(text)
 		}
-		// Cut on a rune boundary so multi-byte text stays valid.
 		for keep > 0 && keep < len(text) && (text[keep]&0xC0) == 0x80 {
 			keep--
 		}
@@ -400,8 +272,6 @@ func truncateToBudget(m provider.Message, budget int, est tokenEstimator) provid
 		}
 		keep = keep * 95 / 100
 		if keep == 0 && len(text) > 0 {
-			// Guard against an infinite loop when even the marker alone does
-			// not fit: fall back to dropping the content entirely.
 			out = m
 			out.SetTextContent("[... content dropped: larger than the compaction budget]")
 			return out
@@ -409,20 +279,12 @@ func truncateToBudget(m provider.Message, budget int, est tokenEstimator) provid
 	}
 }
 
-// tokenEstimator counts the tokens of a message slice. Two implementations are
-// used: the raw local estimate and the loop's calibrated count (the number the
-// compaction thresholds are judged with).
 type tokenEstimator func([]provider.Message) int
 
 func defaultTokenEstimator(messages []provider.Message) int {
 	return util.CountMessagesTokens(messages)
 }
 
-// RebuildTargetTokens is the size the context should have right after a
-// compaction: half of the input budget. Half is always below the compaction
-// trigger (which is a fraction of the window clamped to the input budget), so
-// the turn right after a compaction is a normal turn and not another
-// (uncached) compaction turn.
 func RebuildTargetTokens(maxInput int) int {
 	if maxInput <= 0 {
 		return CompactKeepMaxTokens
@@ -430,15 +292,6 @@ func RebuildTargetTokens(maxInput int) int {
 	return maxInput / 2
 }
 
-// CompactKeepBudget is the token budget of the verbatim tail kept after a
-// summary. The rule is the 20k token window (CompactKeepMaxTokens): the last
-// CompactKeepMessages messages are retained verbatim up to that budget.
-// A window too small to afford it is clamped to what fits under the rebuild
-// target — otherwise compaction would "finish" with a context still above the
-// trigger and immediately compact again — and minKeepTokens keeps the tail from
-// ever being empty for free. overhead is what the rebuilt request carries
-// anyway (system prompt, tool schemas, the summary block), measured with the
-// same estimator the threshold logic uses.
 func CompactKeepBudget(maxInput, overhead int) int {
 	budget := CompactKeepMaxTokens
 	if maxInput > 0 {
@@ -452,21 +305,10 @@ func CompactKeepBudget(maxInput, overhead int) int {
 	return budget
 }
 
-// minKeepTokens keeps at least one (possibly truncated) message after the
-// summary even on a window so small that the system prompt alone eats half of
-// it — dropping the newest turn entirely is worse than going slightly over.
 const minKeepTokens = 256
 
-// minParentTokens is what a tool-call parent message is always allowed to keep
-// when the tail budget is already spent: enough of its narration to make the
-// retained tool result readable, while a megabyte of call arguments cannot
-// become an escape hatch out of the budget.
 const minParentTokens = 256
 
-// RebuildOverhead estimates what the rebuilt request carries besides the
-// verbatim tail: the system prompt, the tool schemas (re-sent, and billed, on
-// every request) and the summary block itself. Must be measured with the same
-// estimator as the budget, or the tail ends up larger than intended.
 func RebuildOverhead(messages []provider.Message, summary string, tools []provider.ToolSchema, est tokenEstimator) int {
 	if est == nil {
 		est = defaultTokenEstimator
@@ -487,9 +329,6 @@ func RebuildOverhead(messages []provider.Message, summary string, tools []provid
 	return cost
 }
 
-// calibratedEstimator maps the local token estimate onto the provider's token
-// scale, matching AgentLoop.calibratedCount, so the manual (no-loop) compaction
-// path budgets the tail the same way a running loop does.
 func calibratedEstimator(model string, tools []provider.ToolSchema) tokenEstimator {
 	cal := calibratorFor(model, tools)
 	return func(messages []provider.Message) int {
@@ -497,22 +336,14 @@ func calibratedEstimator(model string, tools []provider.ToolSchema) tokenEstimat
 	}
 }
 
-// recompactGrowTokens is the re-arm guard: after a compaction the context has
-// to grow by at least this many tokens before the passive threshold may
-// trigger another compaction turn. Without it, a context that is still over the
-// threshold right after a compacting (large retained tool output, oversized
-// system prompt) would spend every single turn on a compaction turn — a full
-// re-prefill each time, for nothing.
 func recompactGrowTokens(maxInput int) int {
-	g := maxInput / 20 // 5% of the input budget
+	g := maxInput / 20
 	if g < 512 {
 		g = 512
 	}
 	return g
 }
 
-// ContextCompactor holds the thresholds and the one-shot summarization path
-// used when no agent loop is running (the manual "compact now" API).
 type ContextCompactor struct {
 	client *provider.ModelClient
 }
@@ -521,32 +352,15 @@ func NewContextCompactor(client *provider.ModelClient) *ContextCompactor {
 	return &ContextCompactor{client: client}
 }
 
-// ShouldCompactCount reports whether the (calibrated, provider-scale) context
-// count reached an absolute token limit. The limit comes from
-// AgentLoop.autoCompactLimit — a fraction of the context window clamped to the
-// input budget — so the threshold no longer depends on how large the output
-// reserve happens to be. limit <= 0 means "unknown budget": never compact.
 func (c *ContextCompactor) ShouldCompactCount(currentTokens, limit int) bool {
 	return limit > 0 && currentTokens >= limit
 }
 
-// SummarizeAndRebuild is the compaction path for a session with NO running
-// agent loop (the manual POST /api/sessions/{id}/compact endpoint). It
-// reproduces exactly what a compaction turn does inside the loop: append the
-// compaction instruction to the stored context and ask the model for the
-// summary, then restart the context from [system][summary][verbatim tail].
-//
-// tools MUST be the same tool schemas the session sends on a normal turn,
-// otherwise the request stops being a prefix of the previous one and the
-// provider recomputes the whole context.
 func (c *ContextCompactor) SummarizeAndRebuild(ctx context.Context, messages []provider.Message, tools []provider.ToolSchema, instruction string) ([]provider.Message, error) {
 	if len(messages) == 0 {
 		return messages, fmt.Errorf("会话为空,无需压缩")
 	}
 	compEst := calibratedEstimator(c.client.ModelName(), tools)
-	// The request is the existing context plus one user message: everything
-	// before it is byte-identical to the last normal request, so the provider
-	// serves it from the KV prefix cache.
 	req := append(append([]provider.Message(nil), messages...), BuildCompactRequest(instruction))
 	resp, err := c.client.ChatStream(ctx, req, tools, nil)
 	if err != nil {
@@ -570,9 +384,6 @@ func (c *ContextCompactor) SummarizeAndRebuild(ctx context.Context, messages []p
 	return out, nil
 }
 
-// ExtractSummary picks the summary out of a model reply. Reasoning models can
-// place (or spend the whole budget in) reasoning_content, so fall back to it
-// rather than writing an empty summary block.
 func ExtractSummary(content, reasoning string) string {
 	if s := strings.TrimSpace(stripCodeFence(content)); s != "" {
 		return s
@@ -580,8 +391,6 @@ func ExtractSummary(content, reasoning string) string {
 	return strings.TrimSpace(stripCodeFence(reasoning))
 }
 
-// stripCodeFence removes a single wrapping ``` fence, which some models add
-// around a Markdown answer.
 func stripCodeFence(s string) string {
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, "```") {

@@ -10,7 +10,6 @@ import (
 	"testing"
 )
 
-// pluginHome points the process at a throwaway home with a plugins directory.
 func pluginHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -22,7 +21,6 @@ func pluginHome(t *testing.T) string {
 	return dir
 }
 
-// installPlugin writes ~/.mini_code/plugins/<id>/ with a manifest and files.
 func installPlugin(t *testing.T, home, id, manifest string, files map[string]string) {
 	t.Helper()
 	base := filepath.Join(home, ".mini_code", "plugins", id)
@@ -43,9 +41,6 @@ func installPlugin(t *testing.T, home, id, manifest string, files map[string]str
 	}
 }
 
-// TestPluginAssetsNotInjectedWithoutMarkerOrPlugins: the page is unchanged when
-// no plugin is installed (byte-for-byte), which is what keeps the shipped UI
-// identical for everyone who never installs one.
 func TestPluginAssetsNotInjectedWithoutPlugins(t *testing.T) {
 	pluginHome(t)
 	page, err := embeddedPage()
@@ -62,7 +57,6 @@ func TestPluginAssetsNotInjectedWithoutPlugins(t *testing.T) {
 	}
 }
 
-// TestPluginAssetsInjected checks skins and a wallpaper land in the page.
 func TestPluginAssetsInjected(t *testing.T) {
 	home := pluginHome(t)
 	installPlugin(t, home, "skin", `{"id":"skin","styles":["skin.css"],"wallpaper":"bg.webp"}`,
@@ -79,9 +73,6 @@ func TestPluginAssetsInjected(t *testing.T) {
 	if !strings.Contains(got, `/plugins/skin/bg.webp`) {
 		t.Fatal("wallpaper not injected")
 	}
-	// The wallpaper must be one scaled image, not a tiled pattern: the CSS
-	// default for background-repeat is `repeat`, and a tiled photo is never
-	// what a wallpaper means.
 	if !strings.Contains(got, "background-size:cover") {
 		t.Error("wallpaper is not sized with cover")
 	}
@@ -91,16 +82,11 @@ func TestPluginAssetsInjected(t *testing.T) {
 	if strings.Contains(got, pluginAssetsMarker) {
 		t.Fatal("marker was not replaced")
 	}
-	// The injected tags must come after the built-in stylesheets so a skin can
-	// override them.
 	if strings.Index(got, "/css/layers.css") > strings.Index(got, "/plugins/skin/skin.css") {
 		t.Fatal("plugin skin was injected before the built-in stylesheets")
 	}
 }
 
-// TestPluginAssetRouteServes: 200 + content type for a whitelisted file,
-// 404 for a missing one, 403 for a disallowed extension, and containment for
-// a traversal attempt.
 func TestPluginAssetRouteServes(t *testing.T) {
 	home := pluginHome(t)
 	installPlugin(t, home, "skin", `{"id":"skin","styles":["skin.css"]}`, map[string]string{
@@ -136,20 +122,12 @@ func TestPluginAssetRouteServes(t *testing.T) {
 	if code != 404 {
 		t.Errorf("missing file: code = %d, want 404", code)
 	}
-	// HTML a plugin merely happens to contain is NOT served (it would turn the
-	// plugin directory into a web root on the app's origin); only a fragment the
-	// manifest declares as a slot is. Plain text is never served.
 	for _, p := range []string{"/plugins/skin/evil.html", "/plugins/skin/notes.txt"} {
 		code, _, _ = get(p)
 		if code != 403 {
 			t.Errorf("%s: code = %d, want 403", p, code)
 		}
 	}
-	// Traversal attempts never resolve. Note: net/http cleans ".." segments
-	// before the handler runs, so "/plugins/skin/../skin/skin.css" is
-	// rewritten into the legitimate "/plugins/skin/skin.css" — no escape ever
-	// reaches the handler. The cases below are the ones that survive cleaning
-	// (percent-encoded dot segments, unknown dir, wrong shape).
 	for _, p := range []string{
 		"/plugins/skin/%2e%2e/skin.css",
 		"/plugins/skin/%2e%2e%2fskin.css",
@@ -166,8 +144,6 @@ func TestPluginAssetRouteServes(t *testing.T) {
 	}
 }
 
-// TestPluginAssetHeaders: a plugin stylesheet must not be sniffed into
-// something executable and must not be cached over an edit.
 func TestPluginAssetHeaders(t *testing.T) {
 	home := pluginHome(t)
 	installPlugin(t, home, "skin", `{"id":"skin","styles":["skin.css"]}`, map[string]string{"skin.css": "body{}"})
@@ -191,8 +167,6 @@ func TestPluginAssetHeaders(t *testing.T) {
 	}
 }
 
-// TestPluginsListAPI: GET /api/plugins lists what is installed, with kinds and
-// tool names, and is stable.
 func TestPluginsListAPI(t *testing.T) {
 	home := pluginHome(t)
 	installPlugin(t, home, "b-skin", `{"id":"b-skin","name":"B Skin","version":"2.0.0","styles":["s.css"]}`,
@@ -222,25 +196,17 @@ func TestPluginsListAPI(t *testing.T) {
 	if strings.Contains(body, `"error"`) {
 		t.Error("/api/plugins reported an error for a valid plugin")
 	}
-	// The centre lists disabled plugins too (that is where you turn them back
-	// on), each flagged with enabled:false and a reason. The agent's own view
-	// (plugin.Load) is the one that filters them out — see the plugin package
-	// tests for that side.
 	if !strings.Contains(body, `"id":"disabled"`) || !strings.Contains(body, `"enabled":false`) {
 		t.Error("/api/plugins should list a disabled plugin with enabled:false")
 	}
-	// Sorted by id: a-tools before b-skin.
 	if strings.Index(body, "a-tools") > strings.Index(body, "b-skin") {
 		t.Error("/api/plugins is not sorted by id")
 	}
-	// Tool names are sorted so the payload is deterministic.
 	if strings.Index(body, "a_tool") > strings.Index(body, "z_tool") {
 		t.Error("tool names are not sorted")
 	}
 }
 
-// TestPluginPageServesAssets: the served page actually references the plugin
-// assets, end to end over HTTP.
 func TestPluginPageServesAssets(t *testing.T) {
 	home := pluginHome(t)
 	installPlugin(t, home, "skin", `{"id":"skin","styles":["skin.css"]}`, map[string]string{"skin.css": "body{}"})
@@ -256,7 +222,6 @@ func TestPluginPageServesAssets(t *testing.T) {
 	if !strings.Contains(string(b), "/plugins/skin/skin.css") {
 		t.Fatal("the served page does not reference the plugin stylesheet")
 	}
-	// And that link actually resolves.
 	resp, err = http.Get(srv.URL + "/plugins/skin/skin.css")
 	if err != nil {
 		t.Fatalf("GET plugin css: %v", err)
@@ -267,9 +232,6 @@ func TestPluginPageServesAssets(t *testing.T) {
 	}
 }
 
-// TestDeclaredSlotHTMLIsServed: the one .html a manifest declares as a slot
-// fragment IS served (the page frames it), with a locked-down CSP and nosniff —
-// while an undeclared .html in the same directory stays 403.
 func TestDeclaredSlotHTMLIsServed(t *testing.T) {
 	home := pluginHome(t)
 	installPlugin(t, home, "bar", `{"id":"bar","ui":{"slots":[{"slot":"composer-bar","html":"bar.html"}]}}`,

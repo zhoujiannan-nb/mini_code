@@ -16,9 +16,6 @@ const (
 	altNudgeSecondPhrase = "STILL alternating"
 )
 
-// alternatingSSEServer serves a scripted sequence of tool-call batches:
-// odd turns issue callA, even turns callB, until `altTurns` tool turns are
-// done; then (optionally) one extra batch callC; then a final text answer.
 func alternatingSSEServer(t *testing.T, altTurns int, withBreak bool) *httptest.Server {
 	t.Helper()
 	var requests int64
@@ -42,10 +39,6 @@ func alternatingSSEServer(t *testing.T, altTurns int, withBreak bool) *httptest.
 	}))
 }
 
-// TestNudgeOnAlternatingToolCalls: the model ping-pongs between two distinct
-// calls for six turns (A,B,A,B,A,B); the loop must inject exactly one
-// alternating-stall nudge (and no exact-repeat nudge), and the task still
-// completes when the model recovers with a text answer.
 func TestNudgeOnAlternatingToolCalls(t *testing.T) {
 	reg := tools.NewToolRegistry()
 	reg.Register(&fakeTool{name: "exec", result: "ok"})
@@ -73,14 +66,11 @@ func TestNudgeOnAlternatingToolCalls(t *testing.T) {
 	}
 }
 
-// TestNoAltNudgeOnBrokenAlternation: A,B,A,B,A followed by a genuinely
-// different call is progress, not a stall — the strict period-2 window is
-// broken and no nudge may be injected.
 func TestNoAltNudgeOnBrokenAlternation(t *testing.T) {
 	reg := tools.NewToolRegistry()
 	reg.Register(&fakeTool{name: "exec", result: "ok"})
 
-	srv := alternatingSSEServer(t, 5, true) // A B A B A, then C, then done
+	srv := alternatingSSEServer(t, 5, true)
 	defer srv.Close()
 
 	loop, client := newTestLoop(t, srv.URL)
@@ -103,13 +93,11 @@ func TestNoAltNudgeOnBrokenAlternation(t *testing.T) {
 	}
 }
 
-// TestAltNudgeEscalatesOnce: the model ignores the first nudge and keeps
-// alternating; a second, firmer nudge must appear — and no third one.
 func TestAltNudgeEscalatesOnce(t *testing.T) {
 	reg := tools.NewToolRegistry()
 	reg.Register(&fakeTool{name: "exec", result: "ok"})
 
-	srv := alternatingSSEServer(t, 12, false) // A B A B A B [nudge] A B A B A B [nudge] done
+	srv := alternatingSSEServer(t, 12, false)
 	defer srv.Close()
 
 	loop, client := newTestLoop(t, srv.URL)
@@ -132,8 +120,6 @@ func TestAltNudgeEscalatesOnce(t *testing.T) {
 	}
 }
 
-// TestAlternatingPairPure: unit checks of the period-2 detector on raw
-// signature windows.
 func TestAlternatingPairPure(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -157,7 +143,6 @@ func TestAlternatingPairPure(t *testing.T) {
 	}
 }
 
-// TestCallDescPure: callDesc renders name and truncated arguments.
 func TestCallDescPure(t *testing.T) {
 	if got := callDesc("exec\x00"); got != "exec" {
 		t.Errorf("empty args: got %q, want %q", got, "exec")

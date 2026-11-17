@@ -1,21 +1,3 @@
-// Package channels implements the unified message channel (message bus) of
-// mini_code.
-//
-// All message sources (CLI, HTTP server, ...) produce inbound
-// messages into the Hub. The Hub consumes them, resolves the owning session
-// for each message — creating a new session when the message does not belong
-// to any session — runs the agent loop, and produces outbound messages
-// (assistant replies, tool events, errors, lifecycle notices) that are fanned
-// out to every subscriber.
-//
-// Session routing is keyed on session_id: an inbound message carries either
-// an explicit session_id (continue that conversation), a stable session_key
-// (an external conversation id — the first message of a conversation
-// creates and binds a new session), or neither (a new session is created).
-//
-// Every completed agent turn persists the conversation to the database (see
-// session.AgentLoop), so an interrupted task can be resumed from the last
-// persisted state after a restart.
 package channels
 
 import (
@@ -32,31 +14,23 @@ import (
 	"github.com/user/mini_code/util"
 )
 
-// Message kinds flowing through the hub.
 const (
-	KindUser      = "user"       // inbound user message from a channel
-	KindAssistant = "assistant"  // final assistant reply for a task
-	KindToolStart = "tool_start" // a tool call is starting
-	KindToolEnd   = "tool_end"   // a tool call has finished
-	// KindToolOutput is a chunk of output from a tool that is still running
-	// (display only: never persisted, never part of the model's context).
+	KindUser      = "user"
+	KindAssistant = "assistant"
+	KindToolStart = "tool_start"
+	KindToolEnd   = "tool_end"
 	KindToolOutput = "tool_output"
-	// KindToolArgs is the arguments of a tool call the model is STILL generating
-	// (Content = everything generated so far). It exists because a big write_file
-	// payload takes minutes to type out while tool_start only fires afterwards;
-	// display only, never persisted.
 	KindToolArgs         = "tool_args"
-	KindContextUsage     = "context_usage"     // per-turn context token count for the UI token bar
-	KindUsage            = "usage"             // real per-call provider usage (prompt/cached/completion tokens) for the cache-hit indicator
-	KindStatus           = "status"            // lifecycle notice (see Status* constants)
-	KindError            = "error"             // task failed
-	KindReasoning        = "reasoning_delta"   // live (cumulative) reasoning_content of the model
-	KindContent          = "content_delta"     // live (cumulative) assistant text of the model
-	KindApprovalRequest  = "approval_request"  // cautious mode: a destructive operation awaits user approval (Content = ApprovalRequestPayload JSON)
-	KindApprovalResolved = "approval_resolved" // the approval was decided / timed out (Content = ApprovalResolvedPayload JSON)
+	KindContextUsage     = "context_usage"
+	KindUsage            = "usage"
+	KindStatus           = "status"
+	KindError            = "error"
+	KindReasoning        = "reasoning_delta"
+	KindContent          = "content_delta"
+	KindApprovalRequest  = "approval_request"
+	KindApprovalResolved = "approval_resolved"
 )
 
-// Status payloads for Kind == KindStatus (carried in Status).
 const (
 	StatusSessionCreated = "session_created"
 	StatusTaskStarted    = "task_started"
@@ -64,52 +38,35 @@ const (
 	StatusInterrupted    = "interrupted"
 )
 
-// Channel names used across the project.
 const (
 	ChannelCLI = "cli"
 	ChannelWeb = "web"
 )
 
-// Message is the unified envelope flowing through the hub.
 type Message struct {
 	ID         string `json:"id"`
 	Kind       string `json:"kind"`
 	Channel    string `json:"channel"`
-	TaskID     string `json:"task_id,omitempty"` // on terminal messages: inbound message ID that triggered the task
-	Status     string `json:"status,omitempty"`  // on KindStatus messages: one of the Status* constants
+	TaskID     string `json:"task_id,omitempty"`
+	Status     string `json:"status,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
-	SessionKey string `json:"session_key,omitempty"` // stable external conversation key
-	Mode       string `json:"mode,omitempty"`        // permission mode for a NEW session (full / cautious); ignored when the message continues an existing session
-	Model      string `json:"model,omitempty"`       // model name for a NEW session (config key); ignored when the message continues an existing session
-	// Thinking / ReasoningEffort are the per-session thinking-depth override for
-	// a NEW session (web UI composer). Empty = the model's configured default.
-	// Ignored when the message continues an existing session.
+	SessionKey string `json:"session_key,omitempty"`
+	Mode       string `json:"mode,omitempty"`
+	Model      string `json:"model,omitempty"`
 	Thinking        string   `json:"thinking,omitempty"`
 	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
-	// WorkerID puts a NEW session into that worker (工作大类) straight away: the
-	// sidebar's switcher sends it when the user starts a chat inside a worker.
-	// "" = the fixed 其他 bucket (the catch-all — every root session is born
-	// inside a worker); ignored when the message continues an existing session,
-	// whose membership is already decided.
 	WorkerID string `json:"worker_id,omitempty"`
 	Content         string   `json:"content"`
-	Images          []string `json:"images,omitempty"`    // data URLs (data:image/...;base64,...) attached to a user message; the model sees them on the first turn
-	Reasoning       string   `json:"reasoning,omitempty"` // on assistant messages: model reasoning_content; on KindReasoning: cumulative live reasoning
+	Images          []string `json:"images,omitempty"`
+	Reasoning       string   `json:"reasoning,omitempty"`
 	ToolName        string   `json:"tool_name,omitempty"`
 	ToolArgs        string   `json:"tool_args,omitempty"`
 	ToolResult      string   `json:"tool_result,omitempty"`
-	Tokens          int      `json:"tokens,omitempty"` // on KindContextUsage: context tokens in use
-	// On KindUsage: the provider-reported usage of the last LLM call.
+	Tokens          int      `json:"tokens,omitempty"`
 	PromptTokens     int `json:"prompt_tokens,omitempty"`
-	CachedTokens     int `json:"cached_tokens,omitempty"` // prompt tokens served from the KV prefix cache
+	CachedTokens     int `json:"cached_tokens,omitempty"`
 	CompletionTokens int `json:"completion_tokens,omitempty"`
-	// CacheReported tells whether the provider actually included cache-hit
-	// information (even a genuine 0), so the UI can tell "0% hits" apart from
-	// "this deployment does not report cache hits".
 	CacheReported bool `json:"cache_reported,omitempty"`
-	// On KindUsage: the average output speed of the last LLM call in
-	// tokens/second (completion tokens over the call's wall time). 0 when the
-	// provider reported no completion count.
 	Speed     float64   `json:"speed,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -120,34 +77,26 @@ func (m *Message) ensureID() {
 	}
 }
 
-// NewUserMessage builds an inbound user message for the given channel.
 func NewUserMessage(channel, content string) Message {
 	return Message{ID: util.RandomHex(12), Kind: KindUser, Channel: channel, Content: content, CreatedAt: time.Now()}
 }
 
-// NewAssistantMessage builds the terminal assistant-reply message of a task.
 func NewAssistantMessage(taskID, sessionID, channel, content string) Message {
 	return Message{ID: util.RandomHex(12), Kind: KindAssistant, TaskID: taskID, Channel: channel, SessionID: sessionID, Content: content, CreatedAt: time.Now()}
 }
 
-// NewReasoningDeltaMessage builds a live reasoning update. Content carries
-// the cumulative reasoning_text produced so far in the current LLM call.
 func NewReasoningDeltaMessage(sessionID, sessionKey, content string) Message {
 	return Message{ID: util.RandomHex(12), Kind: KindReasoning, SessionID: sessionID, SessionKey: sessionKey, Reasoning: content, CreatedAt: time.Now()}
 }
 
-// NewContentDeltaMessage builds a live text update. Content carries the
-// cumulative assistant text produced so far in the current LLM call.
 func NewContentDeltaMessage(sessionID, sessionKey, content string) Message {
 	return Message{ID: util.RandomHex(12), Kind: KindContent, SessionID: sessionID, SessionKey: sessionKey, Content: content, CreatedAt: time.Now()}
 }
 
-// NewErrorMessage builds the terminal error message of a task.
 func NewErrorMessage(taskID, sessionID, sessionKey, channel, text string) Message {
 	return Message{ID: util.RandomHex(12), Kind: KindError, TaskID: taskID, Channel: channel, SessionID: sessionID, SessionKey: sessionKey, Content: text, CreatedAt: time.Now()}
 }
 
-// NewStatusMessage builds a lifecycle notice for a task.
 func NewStatusMessage(taskID, sessionID, channel, status, sessionKey string) Message {
 	content := status
 	if status == StatusSessionCreated {
@@ -156,7 +105,6 @@ func NewStatusMessage(taskID, sessionID, channel, status, sessionKey string) Mes
 	return Message{ID: util.RandomHex(12), Kind: KindStatus, TaskID: taskID, Channel: channel, Status: status, SessionID: sessionID, SessionKey: sessionKey, Content: content, CreatedAt: time.Now()}
 }
 
-// NewToolStartMessage builds a tool-call-started message.
 func NewToolStartMessage(sessionID, sessionKey, name string, params map[string]interface{}) Message {
 	var args string
 	if b, err := json.Marshal(params); err == nil {
@@ -165,22 +113,14 @@ func NewToolStartMessage(sessionID, sessionKey, name string, params map[string]i
 	return Message{ID: util.RandomHex(12), Kind: KindToolStart, SessionID: sessionID, SessionKey: sessionKey, ToolName: name, ToolArgs: args, CreatedAt: time.Now()}
 }
 
-// NewToolOutputMessage builds one live output chunk of a still-running tool.
-// Content carries the chunk; nothing here is persisted or replayed — the final
-// tool result is the record, this stream only exists so the UI is not a frozen
-// "运行中" label for the length of the command.
 func NewToolOutputMessage(sessionID, sessionKey, name, chunk string) Message {
 	return Message{ID: util.RandomHex(12), Kind: KindToolOutput, SessionID: sessionID, SessionKey: sessionKey, ToolName: name, Content: chunk, CreatedAt: time.Now()}
 }
 
-// NewToolArgsMessage reports the arguments generated SO FAR for a tool call the
-// model is still writing (see KindToolArgs). Cumulative, not a delta: the UI
-// re-renders the whole value each time, so a dropped event costs nothing.
 func NewToolArgsMessage(sessionID, sessionKey, name, argsSoFar string) Message {
 	return Message{ID: util.RandomHex(12), Kind: KindToolArgs, SessionID: sessionID, SessionKey: sessionKey, ToolName: name, Content: argsSoFar, CreatedAt: time.Now()}
 }
 
-// NewToolEndMessage builds a tool-call-finished message.
 func NewToolEndMessage(sessionID, sessionKey, name string, params map[string]interface{}, result string) Message {
 	var args string
 	if b, err := json.Marshal(params); err == nil {
@@ -189,22 +129,14 @@ func NewToolEndMessage(sessionID, sessionKey, name string, params map[string]int
 	return Message{ID: util.RandomHex(12), Kind: KindToolEnd, SessionID: sessionID, SessionKey: sessionKey, ToolName: name, ToolArgs: args, ToolResult: result, CreatedAt: time.Now()}
 }
 
-// NewContextUsageMessage builds a per-turn context-usage update for the UI
-// token bar. Tokens reflects the context about to be sent to the model.
 func NewContextUsageMessage(sessionID, sessionKey string, tokens int) Message {
 	return Message{ID: util.RandomHex(12), Kind: KindContextUsage, SessionID: sessionID, SessionKey: sessionKey, Tokens: tokens, CreatedAt: time.Now()}
 }
 
-// NewUsageMessage builds a real-usage update for the UI cache-hit indicator.
-// promptTokens/cachedTokens/completionTokens come from the provider's usage
-// block of the last LLM call; cachedTokens is 0 when the provider does not
-// report cache hits. speed is the call's average output speed (tokens/second).
 func NewUsageMessage(sessionID, sessionKey string, promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64) Message {
 	return Message{ID: util.RandomHex(12), Kind: KindUsage, SessionID: sessionID, SessionKey: sessionKey, PromptTokens: promptTokens, CachedTokens: cachedTokens, CompletionTokens: completionTokens, CacheReported: cacheReported, Speed: speed, CreatedAt: time.Now()}
 }
 
-// ApprovalRequestPayload is the JSON carried in a KindApprovalRequest
-// message's Content.
 type ApprovalRequestPayload struct {
 	ID          string    `json:"id"`
 	SessionID   string    `json:"session_id"`
@@ -216,29 +148,22 @@ type ApprovalRequestPayload struct {
 	Deadline    time.Time `json:"deadline"`
 }
 
-// NewApprovalRequestMessage builds the approval popup event.
 func NewApprovalRequestMessage(p ApprovalRequestPayload) Message {
 	b, _ := json.Marshal(p)
 	return Message{ID: util.RandomHex(12), Kind: KindApprovalRequest, SessionID: p.SessionID, Content: string(b), CreatedAt: time.Now()}
 }
 
-// ApprovalResolvedPayload is the JSON carried in a KindApprovalResolved
-// message's Content.
 type ApprovalResolvedPayload struct {
 	ID       string `json:"id"`
 	Approved bool   `json:"approved"`
 	Reason   string `json:"reason"`
 }
 
-// NewApprovalResolvedMessage builds the approval-decided event.
 func NewApprovalResolvedMessage(p ApprovalResolvedPayload) Message {
 	b, _ := json.Marshal(p)
 	return Message{ID: util.RandomHex(12), Kind: KindApprovalResolved, Content: string(b), CreatedAt: time.Now()}
 }
 
-// Hub is the message channel: producers Submit inbound messages, the hub
-// consumes them and drives the agent loop, and subscribers consume the
-// produced outbound messages.
 type Hub struct {
 	mgr       *session.SessionManager
 	agentRole string
@@ -254,18 +179,15 @@ type Hub struct {
 	subs   map[string]chan Message
 
 	lockMu sync.Mutex
-	locks  map[string]*sync.Mutex // per-session serialization
+	locks  map[string]*sync.Mutex
 
 	taskMu sync.Mutex
-	tasks  map[string]context.CancelFunc // sessionID -> cancel of the running task
+	tasks  map[string]context.CancelFunc
 
 	closed  bool
 	closeMu sync.Mutex
 }
 
-// NewHub creates a hub bound to a session manager. agentRole and workDir are
-// used for sessions that are created on demand; maxTurns is the per-task
-// turn budget (0 means the loop default).
 func NewHub(mgr *session.SessionManager, agentRole, workDir string, maxTurns int) *Hub {
 	if agentRole == "" {
 		agentRole = "build"
@@ -283,10 +205,6 @@ func NewHub(mgr *session.SessionManager, agentRole, workDir string, maxTurns int
 	}
 }
 
-// WorkDirFor returns the working directory a session key is bound to: the
-// existing session's workdir, or the shared workDir a new session would get.
-// The directory is created when it does not exist yet, so callers (e.g. an
-// external file downloader) can write into it before the session is created.
 func (h *Hub) WorkDirFor(sessionKey string) string {
 	if sessionKey != "" {
 		if s, err := h.mgr.GetByChannelKey(sessionKey); err == nil && s != nil {
@@ -298,14 +216,9 @@ func (h *Hub) WorkDirFor(sessionKey string) string {
 	return h.workDir
 }
 
-// Attach wires message production into the session manager: every session
-// (including sub-agent sessions created by the task tool) reports its tool
-// events into the hub, so they reach all channel subscribers.
 func (h *Hub) Attach(mgr *session.SessionManager) {
 	mgr.SetSessionCallbackFactory(func(sessionID string) *session.SessionCallbacks {
-		// The channel key is resolved lazily per event: the factory runs at
-		// session creation, before the hub binds the message's session key.
-		var lastReasoning, lastContent string // dedupe: stream deltas only when the text grows
+		var lastReasoning, lastContent string
 		return &session.SessionCallbacks{
 			OnToolStart: func(name string, params map[string]interface{}) {
 				h.emit(NewToolStartMessage(sessionID, h.channelKeyFor(sessionID), name, params))
@@ -313,14 +226,9 @@ func (h *Hub) Attach(mgr *session.SessionManager) {
 			OnToolEnd: func(name string, params map[string]interface{}, result string) {
 				h.emit(NewToolEndMessage(sessionID, h.channelKeyFor(sessionID), name, params, result))
 			},
-			// Live output of a running tool: emitted straight through, never
-			// stored. h.emit is non-blocking, so a slow subscriber can never
-			// stall the command whose output it is watching.
 			OnToolOutput: func(name string, chunk string) {
 				h.emit(NewToolOutputMessage(sessionID, h.channelKeyFor(sessionID), name, chunk))
 			},
-			// Arguments still being generated (a long write_file typing itself
-			// out). Same pass-through rule as the output feed above.
 			OnToolArgs: func(name string, argsSoFar string) {
 				h.emit(NewToolArgsMessage(sessionID, h.channelKeyFor(sessionID), name, argsSoFar))
 			},
@@ -328,17 +236,11 @@ func (h *Hub) Attach(mgr *session.SessionManager) {
 				h.emit(NewContextUsageMessage(sessionID, h.channelKeyFor(sessionID), tokens))
 			},
 			OnUsage: func(promptTokens, cachedTokens, completionTokens int, cacheReported bool, speed float64) {
-				// Only emit when the provider reported a usable prompt count, so
-				// providers that never send usage don't spam empty indicators.
 				if promptTokens > 0 {
 					h.emit(NewUsageMessage(sessionID, h.channelKeyFor(sessionID), promptTokens, cachedTokens, completionTokens, cacheReported, speed))
 				}
 			},
 			OnReply: func(content string, reasoning string) {
-				// Stream reasoning and text live so the UI can show the
-				// model thinking and typing while it works. The final
-				// assistant message (with both fields) still terminates
-				// the task.
 				if reasoning != "" && reasoning != lastReasoning {
 					lastReasoning = reasoning
 					h.emit(NewReasoningDeltaMessage(sessionID, h.channelKeyFor(sessionID), reasoning))
@@ -350,11 +252,6 @@ func (h *Hub) Attach(mgr *session.SessionManager) {
 			},
 		}
 	})
-	// Delivering a message to an IDLE session starts a task via the hub (a
-	// running session queues it for its next loop turn instead). This lives in
-	// Attach — not in main — so every hub↔manager pair gets the wiring; a test
-	// hub that forgot it silently dropped settle-drain messages (session.go
-	// deliverIdle had no hook to run).
 	mgr.SetDeliverHook(func(sessionID, text string) {
 		msg := NewUserMessage(ChannelWeb, text)
 		msg.SessionID = sessionID
@@ -362,15 +259,9 @@ func (h *Hub) Attach(mgr *session.SessionManager) {
 			slog.Warn("deliver: hub submit failed", "session", sessionID, "err", err)
 		}
 	})
-	// Authoritative live-task check: the hub's in-memory registry. Keeps
-	// delivery decisions / status UIs from trusting a persisted "running"
-	// status that is stale after a restart (such a session has no live loop,
-	// so queued messages would sit there forever).
 	mgr.SetActiveTaskCheck(func(sessionID string) bool { return h.ActiveTask(sessionID) })
 }
 
-// channelKeyFor resolves the external conversation key of a session, walking
-// up to the parent for sub-agent sessions (which carry no key of their own).
 func (h *Hub) channelKeyFor(sessionID string) string {
 	seen := make(map[string]bool)
 	cur := sessionID
@@ -388,9 +279,6 @@ func (h *Hub) channelKeyFor(sessionID string) string {
 	return ""
 }
 
-// Run consumes inbound messages until ctx is done. It must be started once
-// (e.g. in a goroutine). Inbound user messages are processed concurrently
-// across sessions; messages of the same session are serialized.
 func (h *Hub) Run(ctx context.Context) {
 	h.runMu.Lock()
 	h.runCtx = ctx
@@ -410,8 +298,6 @@ func (h *Hub) Run(ctx context.Context) {
 				m.CreatedAt = time.Now()
 			}
 			if m.Kind != KindUser {
-				// Non-user inbound (e.g. status emitted by a channel
-				// adapter): just fan it out.
 				h.emit(m)
 				continue
 			}
@@ -420,18 +306,8 @@ func (h *Hub) Run(ctx context.Context) {
 	}
 }
 
-// hubSubmitWait bounds how long Submit waits for a slot in the input queue.
-// Long enough to ride out a burst (a group of messages arriving while the hub is
-// busy starting a session), short enough that an HTTP caller can still answer.
 const hubSubmitWait = 2 * time.Second
 
-// Submit delivers an inbound message and reports whether it was accepted.
-//
-// The earlier version was non-blocking and dropped the message when the queue
-// was full with a log line: a burst, or one slow session, silently lost what the
-// user typed while the UI showed it as sent. A producer now waits (bounded) for
-// a slot and gets an error it can surface — the HTTP layer turns it into 429 and
-// the client retries instead of believing a message that never entered the hub.
 func (h *Hub) Submit(m Message) error {
 	m.ensureID()
 	if m.CreatedAt.IsZero() {
@@ -451,8 +327,6 @@ func (h *Hub) Submit(m Message) error {
 	}
 }
 
-// Subscribe registers (or returns) the outbound stream for a subscriber name.
-// All subscribers receive all produced messages; consumers filter as needed.
 func (h *Hub) Subscribe(name string) <-chan Message {
 	h.subsMu.Lock()
 	defer h.subsMu.Unlock()
@@ -464,7 +338,6 @@ func (h *Hub) Subscribe(name string) <-chan Message {
 	return ch
 }
 
-// Unsubscribe removes a subscriber and closes its stream.
 func (h *Hub) Unsubscribe(name string) {
 	h.subsMu.Lock()
 	ch, ok := h.subs[name]
@@ -475,12 +348,6 @@ func (h *Hub) Unsubscribe(name string) {
 	h.subsMu.Unlock()
 }
 
-// ActiveTask reports whether the session has a task running in this
-// process. The task registry is in-memory, so it answers "is a task
-// actually running right now, on this server" — it never reports stale
-// tasks of a crashed or restarted process, which is exactly what the web
-// UI needs after a page refresh (the persisted session status alone
-// cannot distinguish a live task from a stale "running" row).
 func (h *Hub) ActiveTask(sessionID string) bool {
 	h.taskMu.Lock()
 	defer h.taskMu.Unlock()
@@ -488,11 +355,6 @@ func (h *Hub) ActiveTask(sessionID string) bool {
 	return ok
 }
 
-// CancelTask cancels the currently running task of a session (if any). It
-// reports whether a running task was found and cancelled. Canceling a
-// session also cancels all of its running sub-agent jobs (父取消,子代理
-// 一起死): foreground sub-agents die with the parent's context anyway;
-// background jobs are registered here via RegisterExternalTask.
 func (h *Hub) CancelTask(sessionID string) bool {
 	h.taskMu.Lock()
 	cancel, ok := h.tasks[sessionID]
@@ -513,26 +375,18 @@ func (h *Hub) CancelTask(sessionID string) bool {
 	return ok
 }
 
-// RegisterExternalTask registers a task that runs outside the hub's normal
-// process() path (background sub-agent jobs) so ActiveTask / CancelTask /
-// the UI's running indicator and stop button all work for it.
 func (h *Hub) RegisterExternalTask(sessionID string, cancel context.CancelFunc) {
 	h.taskMu.Lock()
 	h.tasks[sessionID] = cancel
 	h.taskMu.Unlock()
 }
 
-// UnregisterExternalTask removes a previously registered external task.
 func (h *Hub) UnregisterExternalTask(sessionID string) {
 	h.taskMu.Lock()
 	delete(h.tasks, sessionID)
 	h.taskMu.Unlock()
 }
 
-// RunOnce submits an inbound message and blocks until the task it triggered
-// produces a terminal message (assistant reply or error). It returns the
-// final content, the resolved session ID, and any error. The task keeps
-// running in the background if ctx is cancelled first.
 func (h *Hub) RunOnce(ctx context.Context, m Message) (string, string, error) {
 	m.ensureID()
 	name := "await-" + m.ID
@@ -549,13 +403,10 @@ func (h *Hub) RunOnce(ctx context.Context, m Message) (string, string, error) {
 			return "", sessionID, ctx.Err()
 		case msg, ok := <-out:
 			if !ok {
-				// The subscriber was evicted for falling behind (see emit). The task
-				// itself is still running: saying "hub closed" made a live task look
-				// like a crash to the one caller that waits synchronously.
 				return "", sessionID, fmt.Errorf("stopped waiting: this call fell behind and its stream was dropped; the task is still running")
 			}
 			if msg.TaskID != m.ID {
-				continue // belongs to another task
+				continue
 			}
 			if sessionID == "" && msg.SessionID != "" {
 				sessionID = msg.SessionID
@@ -574,12 +425,6 @@ func (h *Hub) RunOnce(ctx context.Context, m Message) (string, string, error) {
 	}
 }
 
-// emit fans a produced message out to every subscriber (non-blocking).
-// A subscriber whose queue is full is stalled (its SSE writer is blocked);
-// dropping single messages would lose the terminal events the UI needs to
-// converge, so the slow subscriber is unsubscribed instead: its connection
-// closes, the client's EventSource reconnects, and a fresh stream is
-// established (streaming deltas are cumulative, so the view self-heals).
 func (h *Hub) emit(m Message) {
 	m.ensureID()
 	if m.CreatedAt.IsZero() {
@@ -625,14 +470,8 @@ func (h *Hub) getRunCtx() context.Context {
 	return context.Background()
 }
 
-// process resolves the owning session for one inbound user message, runs the
-// agent loop, and emits the produced messages.
 func (h *Hub) process(m Message) {
 	taskID := m.ID
-	// Last-resort panic containment: a panic anywhere in task handling that
-	// escaped the inner guards (session.Prompt / tool execution) must not
-	// kill the hub goroutine and with it the whole server. The affected task
-	// gets a clean error; everything else keeps working.
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("task processing panicked, contained", "task", taskID, "session", m.SessionID, "panic", r)
@@ -650,8 +489,6 @@ func (h *Hub) process(m Message) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	// Make sure the session's workspace exists (it may have been removed
-	// while the process was down).
 	if wd := sess.WorkDir(); wd != "" {
 		if err := os.MkdirAll(wd, 0o755); err != nil {
 			slog.Warn("ensure session workspace failed", "dir", wd, "err", err)
@@ -659,23 +496,12 @@ func (h *Hub) process(m Message) {
 	}
 
 	taskCtx, cancel := context.WithCancel(h.getRunCtx())
-	// process() holds the per-session lock across Prompt, so register and
-	// unregister bracket the only running task of this session.
 	h.registerTask(sess.ID(), cancel)
 	defer h.unregisterTask(sess.ID())
-	// The task is now in the registry (ActiveTask=true). Emit a lifecycle
-	// event so the web UI refreshes the session list right away and lights
-	// up the "running" indicator, instead of waiting for its periodic poll.
-	// Ordered after session_created (FIFO per subscriber channel), so the
-	// UI can adopt the new session first and then see it active.
 	h.emit(NewStatusMessage(taskID, sess.ID(), m.Channel, StatusTaskStarted, sess.ChannelKey()))
 
 	slog.Info("task started", "task", taskID, "session", sess.ID(), "channel", m.Channel)
 	content, reasoning, err := sess.Prompt(taskCtx, m.Content, m.Images, h.maxTurns)
-	// Nothing to flush here: settlement notices and group messages queued while
-	// this task ran are drained by the loop itself (Session.QueueUserMessage →
-	// AgentLoop.SetInjections), and any that arrived after the final turn are
-	// dispatched as a fresh task by Session.Prompt before it returns.
 	if err != nil {
 		slog.Error("task failed", "task", taskID, "session", sess.ID(), "err", err)
 		h.emit(NewErrorMessage(taskID, sess.ID(), sess.ChannelKey(), m.Channel, err.Error()))
@@ -700,10 +526,6 @@ func (h *Hub) process(m Message) {
 	h.emit(NewStatusMessage(taskID, sess.ID(), m.Channel, StatusTaskDone, sess.ChannelKey()))
 }
 
-// resolveSession decides which session an inbound message belongs to:
-//  1. an explicit SessionID that still exists;
-//  2. an existing session bound to the message's SessionKey;
-//  3. otherwise a brand-new session is created (and bound to the key).
 func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 	if m.SessionID != "" {
 		if s, err := h.mgr.Get(m.SessionID); err == nil && s != nil {
@@ -717,18 +539,10 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 		}
 	}
 
-	// The message does not belong to any session: create a new one.
-	// The title is a placeholder until the session's first finished task gets it a
-	// real one (session/title.go); the length lives with that logic.
 	title := util.TruncateRunes(strings.TrimSpace(m.Content), session.FallbackTitleRunes)
 	if title == "" {
 		title = "Chat"
 	}
-	// The worker is decided BEFORE the row is written. A session born under a
-	// worker is born inside its shared directory: the first persisted row, the
-	// restored projections and the prompt's Working Directory block then all
-	// name one folder (worker dir == session dir, database == prompt) for the
-	// whole life of the session — membership is fixed at birth.
 	wid := m.WorkerID
 	if wid == "" {
 		wid = session.WorkerOtherID
@@ -743,22 +557,16 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Permission mode for the new session (web UI chip). Channels that do
-	// not set it (CLI) get the default: full.
 	if m.Mode != "" {
 		if err := h.mgr.SetMode(created.ID(), m.Mode); err != nil {
 			slog.Warn("set new session mode failed", "session", created.ID(), "mode", m.Mode, "err", err)
 		}
 	}
-	// Model for the new session (web UI dropdown). Channels that do not
-	// set it (CLI) get the default model.
 	if m.Model != "" {
 		if err := h.mgr.SetModel(created.ID(), m.Model); err != nil {
 			slog.Warn("set new session model failed", "session", created.ID(), "model", m.Model, "err", err)
 		}
 	}
-	// Thinking depth for the new session (web UI composer). Empty = the
-	// model's configured default.
 	if m.Thinking != "" || m.ReasoningEffort != "" {
 		created.SetReasoningOverride(m.Thinking, m.ReasoningEffort)
 	}
@@ -767,10 +575,6 @@ func (h *Hub) resolveSession(m Message) (*session.Session, error) {
 			slog.Warn("bind channel key failed", "session", created.ID(), "key", m.SessionKey, "err", err)
 		}
 	}
-	// Attach the membership (name label + shared dir were already resolved above
-	// into birthDir). Attaching happens before the first task, so the very first
-	// request already carries the worker — the retired join reminder used to
-	// cost two turns here.
 	if err := h.mgr.MoveToWorker(created.ID(), wid); err != nil {
 		slog.Warn("attach new session to worker failed", "session", created.ID(), "worker", wid, "err", err)
 	}

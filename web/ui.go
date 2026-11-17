@@ -27,7 +27,6 @@ import (
 //go:embed ui/index.html ui/css ui/js ui/favicon.ico
 var uiFS embed.FS
 
-// embeddedPage returns the built-in web UI page.
 func embeddedPage() (string, error) {
 	b, err := uiFS.ReadFile("ui/index.html")
 	if err != nil {
@@ -36,9 +35,6 @@ func embeddedPage() (string, error) {
 	return string(b), nil
 }
 
-// uiAssetExts whitelists the file types the UI asset route may serve. Anything
-// else falls through to the index handler (see handleIndex), so a request for
-// "/favicon.ico" or a bogus path keeps its previous behaviour.
 var uiAssetExts = map[string]bool{
 	".css":   true,
 	".js":    true,
@@ -49,9 +45,6 @@ var uiAssetExts = map[string]bool{
 	".woff2": true,
 }
 
-// uiAsset is one embedded UI asset, preloaded with its content type and ETag.
-// Assets are embedded at build time and never change while the process runs,
-// so they are read once at startup and served from memory.
 type uiAsset struct {
 	body        []byte
 	contentType string
@@ -64,10 +57,6 @@ var (
 	uiAssetsErr  error
 )
 
-// loadUIAssets walks the embedded ui/ tree and caches every whitelisted file
-// under its URL path ("/css/base.css"). The startup walk doubles as a build
-// assertion: index.html referencing a file that was not embedded shows up here
-// as a startup warning instead of a silent 404 in the browser.
 func loadUIAssets() (map[string]*uiAsset, error) {
 	uiAssetsOnce.Do(func() {
 		out := make(map[string]*uiAsset)
@@ -88,7 +77,7 @@ func loadUIAssets() (map[string]*uiAsset, error) {
 				ct = "application/octet-stream"
 			}
 			if ext == ".js" {
-				ct = "text/javascript; charset=utf-8" // mime pkg is inconsistent here
+				ct = "text/javascript; charset=utf-8"
 			}
 			if ext == ".css" {
 				ct = "text/css; charset=utf-8"
@@ -96,10 +85,6 @@ func loadUIAssets() (map[string]*uiAsset, error) {
 			if ext == ".svg" {
 				ct = "image/svg+xml"
 			}
-			// .woff2 的类型也给死:Windows 上 mime.TypeByExtension 查的是系统
-			// 注册表,没登记过 .woff2 的机器会退回 application/octet-stream,再
-			// 配上下面的 nosniff,就是一次静默的字体加载失败(界面悄悄退回
-			// Consolas)。内嵌字体的渲染结果不该看宿主机的脸色,见 css/fonts.css。
 			if ext == ".woff2" {
 				ct = "font/woff2"
 			}
@@ -116,7 +101,6 @@ func loadUIAssets() (map[string]*uiAsset, error) {
 			return
 		}
 		uiAssets = out
-		// Surface index.html references that have no embedded counterpart.
 		if page, err := embeddedPage(); err == nil {
 			for _, ref := range referencedAssets(page) {
 				if _, ok := out[ref]; !ok {
@@ -128,8 +112,6 @@ func loadUIAssets() (map[string]*uiAsset, error) {
 	return uiAssets, uiAssetsErr
 }
 
-// referencedAssets extracts local href/src targets from the page (relative
-// paths only: absolute URLs, data: URIs and fragments are ignored).
 func referencedAssets(page string) []string {
 	var out []string
 	for _, attr := range []string{`href="`, `src="`} {
@@ -161,9 +143,6 @@ func referencedAssets(page string) []string {
 	return out
 }
 
-// tryServeUIAsset serves an embedded UI asset for r.URL.Path and reports
-// whether it handled the request. Paths without a whitelisted extension are
-// left alone (return false) so the index route keeps serving them.
 func (s *server) tryServeUIAsset(w http.ResponseWriter, r *http.Request) bool {
 	ext := strings.ToLower(path.Ext(r.URL.Path))
 	if !uiAssetExts[ext] {
@@ -182,9 +161,6 @@ func (s *server) tryServeUIAsset(w http.ResponseWriter, r *http.Request) bool {
 	}
 	h := w.Header()
 	h.Set("Content-Type", a.contentType)
-	// Assets are embedded, so a given exe always serves the same bytes: the
-	// ETag lets the WebView2/browser cache survive across page loads without
-	// ever pinning a stale UI after an upgrade (the tag changes with the bytes).
 	h.Set("ETag", a.etag)
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Content-Type-Options", "nosniff")

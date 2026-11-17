@@ -17,17 +17,14 @@ const (
 	nudgeSecondPhrase = "STILL repeating the same"
 )
 
-// sseToolCallChunk renders one SSE chunk carrying a complete tool call.
 func sseToolCallChunk(name, args, finish string) string {
 	return `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_test","type":"function","function":{"name":"` + name + `","arguments":"` + args + `"}}]},"finish_reason":"` + finish + `"}]}`
 }
 
-// sseTextChunk renders one SSE chunk carrying final text content.
 func sseTextChunk(content, finish string) string {
 	return `{"choices":[{"delta":{"content":"` + content + `"},"finish_reason":"` + finish + `"}]}`
 }
 
-// countNudges counts how many messages in messages carry a stall nudge.
 func countNudges(messages []provider.Message, phrase string) int {
 	n := 0
 	for _, m := range messages {
@@ -38,10 +35,6 @@ func countNudges(messages []provider.Message, phrase string) int {
 	return n
 }
 
-// TestNudgeOnRepeatedToolCall: the model repeats the exact same tool call on
-// three consecutive turns; the loop must inject exactly one corrective
-// nudge after the third repetition, and the task still completes when the
-// model recovers.
 func TestNudgeOnRepeatedToolCall(t *testing.T) {
 	reg := tools.NewToolRegistry()
 	reg.Register(&fakeTool{name: "exec", result: "ok"})
@@ -78,8 +71,6 @@ func TestNudgeOnRepeatedToolCall(t *testing.T) {
 	}
 }
 
-// TestNoNudgeOnDifferentCalls: alternating different tool calls is progress,
-// not a stall — no nudge may be injected.
 func TestNoNudgeOnDifferentCalls(t *testing.T) {
 	reg := tools.NewToolRegistry()
 	reg.Register(&fakeTool{name: "exec", result: "ok"})
@@ -118,9 +109,6 @@ func TestNoNudgeOnDifferentCalls(t *testing.T) {
 	}
 }
 
-// TestNudgeEscalatesOnce: the model ignores the first nudge and keeps
-// repeating the same call; a second, firmer nudge must appear — and no
-// third one.
 func TestNudgeEscalatesOnce(t *testing.T) {
 	reg := tools.NewToolRegistry()
 	reg.Register(&fakeTool{name: "exec", result: "ok"})
@@ -141,7 +129,7 @@ func TestNudgeEscalatesOnce(t *testing.T) {
 	loop, client := newTestLoop(t, srv.URL)
 	defer client.Close()
 	loop.tools = reg
-	loop.maxTurns = 10 // 6 repeated calls + 1 final answer
+	loop.maxTurns = 10
 
 	res, err := loop.Run(context.Background(), "system prompt", "do it", nil)
 	if err != nil {
@@ -158,9 +146,6 @@ func TestNudgeEscalatesOnce(t *testing.T) {
 	}
 }
 
-// TestToolCallSignatureCanonical: semantically identical arguments with
-// different key order or whitespace must produce the same signature;
-// different arguments must not.
 func TestToolCallSignatureCanonical(t *testing.T) {
 	a := toolCallSignature(provider.ToolCall{Function: provider.FuncCall{Name: "exec", Arguments: `{"command":"ls","timeout":5}`}})
 	b := toolCallSignature(provider.ToolCall{Function: provider.FuncCall{Name: "exec", Arguments: `{"timeout": 5, "command": "ls"}`}})
@@ -177,7 +162,6 @@ func TestToolCallSignatureCanonical(t *testing.T) {
 	}
 }
 
-// fakeTool is a minimal tool stub for loop tests.
 type fakeTool struct {
 	name   string
 	result string

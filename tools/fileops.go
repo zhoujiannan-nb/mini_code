@@ -9,15 +9,7 @@ import (
 	"strings"
 )
 
-// This file adds the missing native file-operation tools: delete_file and
-// move_file. Before this, deleting or renaming a file required the exec
-// tool (del/move in cmd.exe) — which is fragile for the model (quoting,
-// syntax) and is partly blocked by the dangerous-command guard (del /f and
-// rmdir /s are denied), so "delete this directory tree" had no reliable
-// path at all. Native tools make these operations as safe and predictable
-// as read_file / write_file / edit_file.
 
-// DeleteFileTool
 type DeleteFileTool struct{ _FsTool }
 
 func NewDeleteFileTool(workspace string) *DeleteFileTool {
@@ -76,12 +68,6 @@ func (t *DeleteFileTool) Execute(ctx context.Context, params map[string]interfac
 		n, err := removeTree(ctx, fp)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				// The user pressed stop. os.RemoveAll cannot be interrupted,
-				// which made delete_file on a large tree the one tool that
-				// ignored cancellation (measured: a 30k-file tree held the
-				// stop for 4s+). The honest report says what WAS deleted —
-				// the tree is partial, and a model that assumed "deleted"
-				// would keep reasoning on a fiction.
 				return NewTextResult(fmt.Sprintf("Interrupted: delete of %s was cancelled after removing %d entries. The tree is PARTIALLY deleted; re-run the delete to finish it or verify the remainder before assuming it is gone.", path, n)), nil
 			}
 			return NewTextResult(fmt.Sprintf("Error deleting directory tree (removed %d entries before failing): %s", n, err)), nil
@@ -95,12 +81,6 @@ func (t *DeleteFileTool) Execute(ctx context.Context, params map[string]interfac
 	return NewTextResult(fmt.Sprintf("Successfully deleted file %s", fp)), nil
 }
 
-// removeTree deletes the directory tree rooted at path bottom-up, checking
-// ctx before every entry. Same syscalls as os.RemoveAll (ReadDir + Remove
-// per entry — the stdlib does no magic), so throughput is the same within
-// measurement noise (3.8s vs 4.3s on a measured 30k-file NTFS tree), but a
-// cancelled context stops the walk on the next entry (<1ms measured) and
-// the entry count is returned so the caller can report the partial state.
 func removeTree(ctx context.Context, dir string) (int, error) {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
@@ -131,7 +111,6 @@ func removeTree(ctx context.Context, dir string) (int, error) {
 	return n, nil
 }
 
-// MoveFileTool
 type MoveFileTool struct{ _FsTool }
 
 func NewMoveFileTool(workspace string) *MoveFileTool {
@@ -180,8 +159,6 @@ func (t *MoveFileTool) Execute(ctx context.Context, params map[string]interface{
 		return NewTextResult(fmt.Sprintf("Error: source not found: %s", src)), nil
 	}
 
-	// Destination is a directory (existing, or marked with a trailing
-	// separator) -> move the source INTO it, keeping its base name.
 	dinfo, err := os.Stat(df)
 	if (err == nil && dinfo.IsDir()) ||
 		strings.HasSuffix(dst, string(os.PathSeparator)) ||
@@ -200,8 +177,6 @@ func (t *MoveFileTool) Execute(ctx context.Context, params map[string]interface{
 	}
 
 	if err := os.Rename(sf, df); err != nil {
-		// Cross-filesystem move (e.g. across drives on Windows) cannot be a
-		// rename; fall back to copy + delete.
 		if cerr := copyTree(sf, df); cerr != nil {
 			return NewTextResult(fmt.Sprintf("Error moving %s: %s (rename failed: %s)", src, cerr, err)), nil
 		}
@@ -209,7 +184,6 @@ func (t *MoveFileTool) Execute(ctx context.Context, params map[string]interface{
 	return NewTextResult(fmt.Sprintf("Successfully moved %s -> %s", sf, df)), nil
 }
 
-// CopyFileTool
 type CopyFileTool struct{ _FsTool }
 
 func NewCopyFileTool(workspace string) *CopyFileTool {
@@ -264,8 +238,6 @@ func (t *CopyFileTool) Execute(ctx context.Context, params map[string]interface{
 		return NewTextResult(fmt.Sprintf("Error: source not found: %s", src)), nil
 	}
 
-	// Destination is a directory (existing, or marked with a trailing
-	// separator) -> copy the source INTO it, keeping its base name.
 	dinfo, err := os.Stat(df)
 	if (err == nil && dinfo.IsDir()) ||
 		strings.HasSuffix(dst, string(os.PathSeparator)) ||
@@ -276,8 +248,6 @@ func (t *CopyFileTool) Execute(ctx context.Context, params map[string]interface{
 	if sf == df {
 		return NewTextResult(fmt.Sprintf("Nothing to do: source and destination are the same path (%s)", sf)), nil
 	}
-	// Copying a directory into itself (or into one of its subdirectories)
-	// would recurse forever; reject it up front.
 	if sinfo.IsDir() {
 		if rel, rerr := filepath.Rel(sf, df); rerr == nil && rel != "." && !strings.HasPrefix(rel, "..") {
 			return NewTextResult(fmt.Sprintf("Error: destination %s is inside the source directory %s — copying a directory into itself is not allowed.", df, sf)), nil
@@ -313,17 +283,8 @@ func (t *CopyFileTool) Execute(ctx context.Context, params map[string]interface{
 	return NewTextResult(fmt.Sprintf("Successfully copied %s -> %s", sf, df)), nil
 }
 
-// CopyTree copies a file or a whole directory tree, leaving the source in
-// place: when src is a directory its contents are merged into dst, when src is
-// a file dst is the destination file path. Exported for the worker service,
-// which seeds a new shared workspace from an existing folder
-// (session.WorkerService.Create with copy_from). Not to be confused with the
-// unexported copyTree, which is a move (it deletes the source).
 func CopyTree(src, dst string) error { return copyTreeKeep(src, dst) }
 
-// copyTreeKeep copies a file or a whole directory tree from src to dst,
-// leaving the source in place (unlike copyTree, the move fallback, which
-// deletes the source afterwards).
 func copyTreeKeep(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
@@ -347,7 +308,6 @@ func copyTreeKeep(src, dst string) error {
 	return nil
 }
 
-// countTree counts the regular files under root (recursively).
 func countTree(root string) int {
 	n := 0
 	filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
@@ -362,8 +322,6 @@ func countTree(root string) int {
 	return n
 }
 
-// copyTree copies a file or a whole directory tree from src to dst. It is
-// the fallback for os.Rename when the move crosses filesystems.
 func copyTree(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
@@ -387,7 +345,6 @@ func copyTree(src, dst string) error {
 	return os.RemoveAll(src)
 }
 
-// copyFile copies a single file, preserving the content bytes.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {

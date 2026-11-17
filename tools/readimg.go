@@ -34,8 +34,6 @@ func NewReadImgTool(workspace string) *ReadImgTool {
 	return &ReadImgTool{workspace: workspace}
 }
 
-// Name/Description/Parameters: dsh's verbatim "read_image" surface; the
-// historical "path" key stays accepted.
 func (t *ReadImgTool) Name() string                       { return "read_image" }
 func (t *ReadImgTool) Description() string                { return dshDesc("read_image") }
 func (t *ReadImgTool) IsHidden() bool                     { return false }
@@ -74,7 +72,6 @@ func (t *ReadImgTool) Execute(ctx context.Context, params map[string]interface{}
 		return NewTextResult(fmt.Sprintf("Error: unsupported or unrecognizable image format: %s", path)), nil
 	}
 
-	// Resize large images to reduce token consumption
 	raw, mime = resizeImageIfNeeded(raw, mime)
 
 	encoded := base64.StdEncoding.EncodeToString(raw)

@@ -6,9 +6,6 @@ import (
 	"time"
 )
 
-// TestHubNewSessionReasoningOverride verifies that a new session created from a
-// message carrying thinking / reasoning_effort snapshots the per-session
-// override (the composer path for a brand-new conversation).
 func TestHubNewSessionReasoningOverride(t *testing.T) {
 	env := newTestEnv(t, stepTwoTurns)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

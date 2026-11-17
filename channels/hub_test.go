@@ -18,7 +18,6 @@ import (
 	"github.com/user/mini_code/session"
 )
 
-// mockLLM is a scripted OpenAI-compatible streaming (SSE) chat endpoint.
 type mockLLM struct {
 	calls atomic.Int64
 	step  func(n int64, reqBody []byte) (content string, toolCall *mockToolCall)
@@ -71,7 +70,6 @@ func (m *mockLLM) handler() http.Handler {
 	})
 }
 
-// testEnv wires a real session manager (temp DB) + hub + mock LLM.
 type testEnv struct {
 	hub *Hub
 	mgr *session.SessionManager
@@ -112,7 +110,6 @@ func newTestEnv(t *testing.T, step func(n int64, reqBody []byte) (string, *mockT
 	return &testEnv{hub: hub, mgr: mgr}
 }
 
-// stepTwoTurns: turn 1 calls list_dir, turn 2 answers with text.
 func stepTwoTurns(n int64, _ []byte) (string, *mockToolCall) {
 	if n == 1 {
 		return "", &mockToolCall{Name: "list_dir", Args: "{}"}
@@ -136,8 +133,6 @@ func TestHubRunOnceCreatesSession(t *testing.T) {
 		t.Fatal("expected a session to be created")
 	}
 
-	// The session must be persisted with the full conversation
-	// (system prompt + user + assistant/tool turns + final reply).
 	sess, err := env.mgr.Get(sessionID)
 	if err != nil {
 		t.Fatalf("get session: %v", err)
@@ -184,7 +179,6 @@ func TestHubSessionKeyReuse(t *testing.T) {
 		t.Errorf("different conversations should get different sessions: %s %s %s", id1, id3, id4)
 	}
 
-	// The reused session must contain both user goal messages.
 	sess, _ := env.mgr.Get(id1)
 	userMsgs := 0
 	for _, m := range sess.Record().Messages {
@@ -228,11 +222,8 @@ func TestHubExplicitSessionID(t *testing.T) {
 	}
 }
 
-// TestHubToolEventsCarrySessionKey verifies that tool events carry the
-// session's channel key, so external channels can attribute them to a
-// conversation.
 func TestHubToolEventsCarrySessionKey(t *testing.T) {
-	env := newTestEnv(t, stepTwoTurns) // turn 1 calls list_dir
+	env := newTestEnv(t, stepTwoTurns)
 	out := env.hub.Subscribe("key-check")
 	defer env.hub.Unsubscribe("key-check")
 
@@ -266,23 +257,13 @@ func withKey(m Message, key string) Message {
 	return m
 }
 
-// TestHubTaskStartedEvent verifies the lifecycle event the web UI relies on
-// to light up the "running" indicator right after a send (instead of waiting
-// for its 30s poll):
-//  1. task_started is emitted only AFTER the task is registered — at the
-//     moment the event is observed ActiveTask must already be true, so the
-//     UI's immediate list refresh sees the session as active;
-//  2. messages of one session are serialized: a second message's
-//     task_started arrives only after the first task has finished
-//     (task_done in between), never while the first task still runs.
 func TestHubTaskStartedEvent(t *testing.T) {
-	// Buffered so the non-blocking send below can never race or leak.
 	release := make(chan struct{}, 1)
 	env := newTestEnv(t, func(n int64, _ []byte) (string, *mockToolCall) {
 		switch n {
-		case 1: // bootstrap task (creates the session we continue below)
+		case 1:
 			return "created", nil
-		case 2: // first task of the scenario: hold the LLM call open
+		case 2:
 			<-release
 			return "first done", nil
 		default:
@@ -303,8 +284,6 @@ func TestHubTaskStartedEvent(t *testing.T) {
 	first.SessionID = id
 	env.hub.Submit(first)
 
-	// 1) task_started for the first task must be observed while the task is
-	//    already registered (ActiveTask=true).
 	deadline := time.After(10 * time.Second)
 	for started := false; !started; {
 		select {
@@ -320,8 +299,6 @@ func TestHubTaskStartedEvent(t *testing.T) {
 		}
 	}
 
-	// 2) Second message to the same session while the first task is still
-	//    running: its task_started must not arrive yet (per-session lock).
 	second := NewUserMessage("test", "second")
 	second.SessionID = id
 	env.hub.Submit(second)
@@ -339,8 +316,6 @@ drain:
 		}
 	}
 
-	// Release the first LLM call: expect task_done(first) BEFORE
-	// task_started(second).
 	select {
 	case release <- struct{}{}:
 	default:
@@ -367,7 +342,6 @@ drain:
 		}
 	}
 
-	// Let the second task settle so the environment tears down cleanly.
 	deadline = time.After(15 * time.Second)
 	for {
 		select {
@@ -381,16 +355,12 @@ drain:
 	}
 }
 
-// TestHubActiveTaskAndCancel verifies the live task registry that the web
-// UI relies on after a page refresh: a running task is reported active,
-// CancelTask reports it and interrupts it, and both queries come back
-// empty once the task settles with a terminal status.
 func TestHubActiveTaskAndCancel(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	env := newTestEnv(t, func(n int64, _ []byte) (string, *mockToolCall) {
 		if n == 1 {
-			<-release // hold the first LLM call open so the task stays running
+			<-release
 		}
 		return "done", nil
 	})

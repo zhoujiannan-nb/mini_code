@@ -9,12 +9,9 @@ import (
 	"testing"
 )
 
-// setHome points the process at a throwaway home directory and returns it.
 func setHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	// config.GetConfigDir uses os.UserHomeDir, which reads USERPROFILE on
-	// Windows and HOME elsewhere.
 	t.Setenv("USERPROFILE", dir)
 	t.Setenv("HOME", dir)
 	if err := os.MkdirAll(filepath.Join(dir, ".mini_code", "plugins"), 0o755); err != nil {
@@ -23,7 +20,6 @@ func setHome(t *testing.T) string {
 	return dir
 }
 
-// writePlugin creates <home>/.mini_code/plugins/<dir>/plugin.json.
 func writePlugin(t *testing.T, home, dir, manifest string, files map[string]string) {
 	t.Helper()
 	base := filepath.Join(home, ".mini_code", "plugins", dir)
@@ -67,7 +63,7 @@ func TestLoadSortedAndFiltered(t *testing.T) {
 	if got[0].ID != "alpha" || got[1].ID != "zeta" {
 		t.Fatalf("plugins not sorted by id: %q, %q", got[0].ID, got[1].ID)
 	}
-	if got[1].Name != "zeta" { // name defaults to id
+	if got[1].Name != "zeta" {
 		t.Errorf("Name = %q, want the id as fallback", got[1].Name)
 	}
 }
@@ -109,9 +105,6 @@ func TestPluginToolsAppendedAfterCore(t *testing.T) {
 	}
 }
 
-// TestToolExecuteFeedsParamsOnStdin runs a real child process: the plugin
-// command is a tiny shell snippet that copies stdin to stdout, which proves the
-// parameter object reaches the program unchanged.
 func TestToolExecuteFeedsParamsOnStdin(t *testing.T) {
 	home := setHome(t)
 	writePlugin(t, home, "echo", `{"id":"echo","tools":[{"name":"echo_tool",
@@ -138,9 +131,6 @@ func TestToolExecuteFeedsParamsOnStdin(t *testing.T) {
 	}
 }
 
-// TestToolExecuteReportsFailure checks that a non-zero exit becomes a tool
-// result the model can read, not a Go error (the loop treats the latter as a
-// crash).
 func TestToolExecuteReportsFailure(t *testing.T) {
 	home := setHome(t)
 	writePlugin(t, home, "fail", `{"id":"fail","tools":[{"name":"fail_tool",

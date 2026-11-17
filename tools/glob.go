@@ -12,13 +12,6 @@ import (
 	"time"
 )
 
-// GlobTool finds files by name pattern — the dsh-aligned shape of it: the
-// model sees `rg --files --hidden --no-ignore` results (files only, ignored
-// and hidden files included, only VCS metadata directories pruned), sorted
-// by modification time, capped at 100 with the complete list spilled to a
-// file it can read. The old mc shape (sorted paths, "(N matches)" trailer,
-// node_modules silently skipped) made searches come back empty for files the
-// model then had to hunt for with a second call.
 type GlobTool struct{ _FsTool }
 
 func NewGlobTool(workspace string) *GlobTool {
@@ -50,16 +43,10 @@ func (t *GlobTool) Parameters() map[string]interface{} {
 	}
 }
 
-// globMaxResults is the dsh default cap (globSchema MAX_RESULT_PATHS): 100.
 const globMaxResults = 100
 
-// vcsMetaDirs are the only directories the glob walk prunes — ripgrep skips
-// VCS metadata unconditionally and everything else (node_modules, ignored,
-// hidden) is part of the result. Pruning more was mc-only and made the model
-// re-search for files it had been told did not exist.
 var vcsMetaDirs = map[string]bool{".git": true, ".hg": true, ".svn": true, ".bzr": true, "_darcs": true}
 
-// globEntry pairs a matched path with its modification time for ordering.
 type globEntry struct {
 	rel string
 	mod time.Time
@@ -67,13 +54,11 @@ type globEntry struct {
 
 func (t *GlobTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	pattern := strings.TrimSpace(strParam(params, "pattern"))
-	// dsh glob.js schema texts, verbatim.
 	if pattern == "" {
 		return NewTextResult("Error: invalid arguments: pattern must be a non-empty string"), nil
 	}
 
 	root := t.workspace
-	// dsh's glob.js 原文："path must be a non-empty string when given"。
 	if _, present := params["path"]; present {
 		p := strings.TrimSpace(strParam(params, "path"))
 		if p == "" {
@@ -103,10 +88,8 @@ func (t *GlobTool) Execute(ctx context.Context, params map[string]interface{}) (
 	var found []globEntry
 	filepath.WalkDir(root, func(p string, d fs.DirEntry, werr error) error {
 		if werr != nil || d == nil {
-			return nil //nolint:nilerr // skip unreadable entries
+			return nil
 		}
-		// A cancelled call must stop walking: on a large tree this loop is
-		// the difference between "stop" taking effect now and taking seconds.
 		if ctx.Err() != nil {
 			return filepath.SkipAll
 		}
@@ -117,15 +100,12 @@ func (t *GlobTool) Execute(ctx context.Context, params map[string]interface{}) (
 			return fs.SkipDir
 		}
 		if d.IsDir() {
-			return nil // dsh's glob returns files, not directories
+			return nil
 		}
 		fi, ierr := d.Info()
 		if ierr != nil {
 			return nil
 		}
-		// Matching sees the path relative to the search root (that is what
-		// rg's pattern is anchored to); the displayed path stays relative to
-		// the workspace root so it can be read back directly.
 		relScope, rerr := filepath.Rel(root, p)
 		if rerr != nil {
 			return nil
@@ -145,8 +125,6 @@ func (t *GlobTool) Execute(ctx context.Context, params map[string]interface{}) (
 	if len(found) == 0 {
 		return NewTextResult("No files found"), nil
 	}
-	// Modification-time order, newest first; ties broken by path so two runs
-	// over the same tree are byte-identical (stable model-visible output).
 	sort.Slice(found, func(i, j int) bool {
 		if !found[i].mod.Equal(found[j].mod) {
 			return found[i].mod.After(found[j].mod)
@@ -160,8 +138,6 @@ func (t *GlobTool) Execute(ctx context.Context, params map[string]interface{}) (
 		rels[i] = e.rel
 	}
 	if total > maxResults {
-		// dsh names the file holding the COMPLETE sorted list, so narrowing
-		// or paging the result costs one read instead of another search.
 		text := strings.Join(rels[:maxResults], "\n")
 		if loc := spoolWrite("glob", strings.Join(rels, "\n")+"\n"); loc != "" {
 			text += fmt.Sprintf("\n(Full sorted result stored at: %s. Read it or narrow pattern or path to see more.)", loc)
@@ -171,10 +147,6 @@ func (t *GlobTool) Execute(ctx context.Context, params map[string]interface{}) (
 	return NewTextResult(strings.Join(rels, "\n")), nil
 }
 
-// matchedFuncFor compiles pattern into a matcher over a workspace-relative
-// path, mirroring rg --glob's rules: a pattern without '/' matches the
-// basename at any depth; a pattern with '/' is anchored at the search root
-// and '*' never crosses '/'; "**" crosses separators.
 func matchedFuncFor(pattern string) (func(string) bool, error) {
 	pattern = filepath.ToSlash(pattern)
 	hasSlash := strings.Contains(pattern, "/")
@@ -234,12 +206,7 @@ func matchedFuncFor(pattern string) (func(string) bool, error) {
 	return func(rel string) bool {
 		parts := strings.Split(rel, "/")
 		if hasSlash {
-			// Anchored pattern: segment-wise compare; "**" matches any run
-			// of segments. Trailing "**" may match fewer segments than the
-			// pattern lists only when "**" occupies it.
 			if len(parts) < len(segments) {
-				// "src/**/*.go" against "src/app.go": allowed when the "**"
-				// segment collapses to zero.
 				if !segmentsCollapse(segments, len(parts)) {
 					return false
 				}
@@ -256,11 +223,8 @@ func matchedFuncFor(pattern string) (func(string) bool, error) {
 					pi++
 					continue
 				}
-				// "**": consume segments until the next literal segment
-				// matches (greedy backtracking is overkill for typical
-				// patterns; a simple scan finds the earliest match).
 				if si == len(segments)-1 {
-					return true // trailing ** matches the rest
+					return true
 				}
 				next := segRes[si+1]
 				foundIdx := false
@@ -277,9 +241,6 @@ func matchedFuncFor(pattern string) (func(string) bool, error) {
 			}
 			return pi == len(parts) || segments[len(segments)-1] == "**"
 		}
-		// Basename pattern: the last segment against the last part, at any
-		// depth. A fully literal pattern falls back to substring matching of
-		// the name (mc's historical "*" behavior stays).
 		name := parts[len(parts)-1]
 		seg := segRes[depth-1]
 		if seg != nil && !seg.MatchString(name) {
@@ -292,8 +253,6 @@ func matchedFuncFor(pattern string) (func(string) bool, error) {
 	}, nil
 }
 
-// segmentsCollapse reports whether pattern segments can legally match a path
-// with n parts (a "**" segment can absorb or vanish).
 func segmentsCollapse(segments []string, n int) bool {
 	stars := 0
 	for _, s := range segments {
@@ -304,7 +263,6 @@ func segmentsCollapse(segments []string, n int) bool {
 	return n >= len(segments)-stars
 }
 
-// stripGlobMeta removes glob metacharacters from a pattern.
 func stripGlobMeta(pattern string) string {
 	var b strings.Builder
 	for _, r := range pattern {

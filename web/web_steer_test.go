@@ -1,9 +1,5 @@
 package web
 
-// 插话(steering):会话正在跑任务时,纯文本消息注入到运行中的循环,
-// 而不是排队等任务结束。测试用一台"卡住"的 mock 模型把任务按住,
-// 期间 POST /api/messages 必须秒回 {"mode":"steer"}(走注入而不是挤会话锁),
-// 消息以写前置形式立刻进历史,模型放开后照常完成。
 
 import (
 	"context"
@@ -28,8 +24,6 @@ import (
 func TestSteerWhileRunning(t *testing.T) {
 	release := make(chan struct{})
 	var calls int64
-	// 第一次"模型对话"调用卡在 release 上(任务被按住),之后的调用立刻回 done。
-	// 只数 chat/completions:NewModelClient 可能先发 models 探测请求,别让它偷走闸口。
 	modelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/chat/completions") && atomic.AddInt64(&calls, 1) == 1 {
 			<-release
@@ -67,7 +61,6 @@ func TestSteerWhileRunning(t *testing.T) {
 	}
 	id := sess.ID()
 
-	// 第一条消息 → 任务开始,模型卡住不放。
 	r, err := http.Post(api.URL+"/api/messages", "application/json",
 		strings.NewReader(`{"session_id":"`+id+`","content":"第一条"}`))
 	if err != nil {
@@ -85,7 +78,6 @@ func TestSteerWhileRunning(t *testing.T) {
 		t.Fatal("任务没有进入运行状态,测不了插话")
 	}
 
-	// 运行中补一句:必须秒回 mode=steer(挤会话锁的旧路径要等模型放开才有空处理)。
 	start := time.Now()
 	r2, err := http.Post(api.URL+"/api/messages", "application/json",
 		strings.NewReader(`{"session_id":"`+id+`","content":"插话一句:改用 plan B"}`))
@@ -109,7 +101,6 @@ func TestSteerWhileRunning(t *testing.T) {
 		t.Fatalf("steer 没有秒回(%s):像是排队而不是注入", elapsed)
 	}
 
-	// 写前置持久化:不等任务结束,历史里已经能读到这句。
 	found := false
 	if s, err := mgr.Get(id); err == nil {
 		for _, m := range s.SnapshotMessages() {
@@ -122,8 +113,6 @@ func TestSteerWhileRunning(t *testing.T) {
 		t.Fatal("插话没有立即写进会话历史(刷新页面会看不见)")
 	}
 
-	// 放开模型,任务收尾;插话不另起任务:原任务一句、插话一句,各自恰好一条
-	// (worker 公约等运行时注入也是 user 行,所以按文本点名计数,不数总数)。
 	close(release)
 	awaitConversation(t, mgr, id, 4)
 	for i := 0; i < 200; i++ {
@@ -144,7 +133,7 @@ func TestSteerWhileRunning(t *testing.T) {
 			}
 		}
 		if steerN == 1 && firstN == 1 {
-			return // 恰好各一条:注入没有重复持久化
+			return
 		}
 		if i == 199 {
 			var dump []string

@@ -12,12 +12,6 @@ import (
 	"time"
 )
 
-// ModelParams is what ProbeModelParams learned about a served model. Every
-// field is optional: a zero value means "the deployment did not report it",
-// and the caller must then leave the config field empty so the request omits
-// it entirely (a modern framework's own default is then used). Found lists the
-// fields that were actually reported, so the UI can say what it filled and
-// what it could not.
 type ModelParams struct {
 	ModelName     string  `json:"model_name,omitempty"`
 	ContextWindow int     `json:"context_window,omitempty"`
@@ -31,7 +25,6 @@ type ModelParams struct {
 	Models []string `json:"models,omitempty"`
 }
 
-// found reports whether a field name is in the Found set.
 func (p *ModelParams) found(key string) bool {
 	for _, k := range p.Found {
 		if k == key {
@@ -48,36 +41,15 @@ func (p *ModelParams) mark(key string) {
 	}
 }
 
-// Context window keys used across serving frameworks. vLLM/SGLang report
-// max_model_len, Ollama reports context_length / num_ctx, GGUF-derived
-// deployments report n_positions / model_len.
-// ctxKeys are the names serving frameworks use for the context window. n_ctx is
-// the llama.cpp spelling (published as meta.n_ctx in the model list, which for
-// some proxies is the ONLY place the window is published).
 var ctxKeys = []string{"max_model_len", "context_length", "context_len", "num_ctx",
 	"max_context_length", "n_positions", "model_len", "ctx_len", "n_ctx"}
 
-// maxTokensKeys is only consulted on the per-model endpoints: a server-wide
-// info dump also carries token counts that mean something else (batch limits).
 var maxTokensKeys = []string{"max_output_tokens", "max_completion_tokens", "max_tokens"}
 
-// samplingKeys are the generation parameters the UI can pre-fill.
 var samplingKeys = []string{"temperature", "top_p", "top_k"}
 
-// probeClient is short-lived: the settings dialog waits on it.
 var probeClient = &http.Client{Timeout: 12 * time.Second}
 
-// ProbeModelParams asks a serving framework what it knows about one model:
-// the context window, the output cap and the default sampling parameters.
-// Nothing here is required to exist — every endpoint is tried best-effort and
-// whatever the deployment does not report stays zero in the result, which the
-// caller turns into "do not send that field".
-//
-// baseURL follows the same convention as chat/ListModels (the API root, e.g.
-// "http://host:8000/v1" or "https://api.deepseek.com"); modelID may be empty,
-// in which case the model list is fetched and the first id is probed.
-// ollama selects the native /api/show endpoint in addition to the
-// OpenAI-compatible ones, since that is where Ollama publishes its defaults.
 func ProbeModelParams(baseURL, apiKey, modelID, providerType string) (*ModelParams, error) {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base == "" {
@@ -85,11 +57,6 @@ func ProbeModelParams(baseURL, apiKey, modelID, providerType string) (*ModelPara
 	}
 	out := &ModelParams{}
 
-	// 1. Model list: resolves modelID when it was left empty, and is shown
-	//    to the user so the picker can offer alternatives. Many llama.cpp /
-	//    proxy deployments publish everything they know HERE (meta.n_ctx and
-	//    friends) and have no per-model endpoint at all, so the matching list
-	//    entry is scanned as a model card too.
 	ids, err := ListModels(base, apiKey)
 	if err != nil {
 		out.Notes = append(out.Notes, "models: "+err.Error())
@@ -105,28 +72,20 @@ func ProbeModelParams(baseURL, apiKey, modelID, providerType string) (*ModelPara
 			if entry := listEntry(obj, modelID); entry != nil {
 				applyParams(out, entry, true)
 			}
-			// The envelope itself may carry the metadata (some proxies put
-			// n_ctx / sampling defaults next to "data").
 			applyParams(out, obj, true)
 		}
 	}
 
-	// 2. {base}/models/{id}: OpenAI-compatible model card. vLLM/SGLang put
-	//    max_model_len here, and several hosted APIs publish the output cap
-	//    and sampling defaults in the same object.
 	if modelID != "" {
 		if body, err := probeGet(base+"/models/"+url.PathEscape(modelID), apiKey); err != nil {
 			out.Notes = append(out.Notes, "models/"+modelID+": "+err.Error())
 		} else if obj, ok := decodeObject(body); ok {
-			// Per-model endpoint: context, output cap and sampling all count.
 			applyParams(out, obj, true)
 		} else {
 			out.Notes = append(out.Notes, "models/"+modelID+": 无法解析 JSON")
 		}
 	}
 
-	// 3. Native Ollama: /api/show carries the context length and the
-	//    Modelfile/GGUF sampling defaults. Its root has no /v1 suffix.
 	if strings.EqualFold(providerType, "ollama") {
 		root := strings.TrimSuffix(base, "/v1")
 		body, err := probePost(root+"/api/show", apiKey, map[string]string{"model": modelID})
@@ -134,7 +93,6 @@ func ProbeModelParams(baseURL, apiKey, modelID, providerType string) (*ModelPara
 			out.Notes = append(out.Notes, "api/show: "+err.Error())
 		} else if obj, ok := decodeObject(body); ok {
 			applyParams(out, obj, true)
-			// model_info is keyed by architecture ("qwen2.context_length").
 			for k, v := range flatten(obj) {
 				low := strings.ToLower(k)
 				if i := strings.LastIndex(low, "."); i >= 0 {
@@ -147,9 +105,6 @@ func ProbeModelParams(baseURL, apiKey, modelID, providerType string) (*ModelPara
 		}
 	}
 
-	// 4. vLLM / SGLang server info: the reliable source for max_model_len on
-	//    self-hosted deployments. Only the sampling subtree counts there, so
-	//    server-wide limits are not mistaken for generation defaults.
 	root := strings.TrimSuffix(base, "/v1")
 	for _, ep := range []string{"/get_server_info", "/get_model_config"} {
 		body, err := probeGet(root+ep, apiKey)
@@ -176,10 +131,6 @@ func ProbeModelParams(baseURL, apiKey, modelID, providerType string) (*ModelPara
 	return out, nil
 }
 
-// applyParams copies recognized keys from a decoded JSON object into out.
-// withOutputCap also allows the output-cap keys (per-model endpoints only).
-// Values already found are kept: the endpoints are tried from the most
-// specific to the most general.
 func applyParams(out *ModelParams, obj map[string]interface{}, withOutputCap bool) {
 	applySubtree(out, obj, ctxKeys)
 	if withOutputCap {
@@ -215,8 +166,6 @@ func applyParams(out *ModelParams, obj map[string]interface{}, withOutputCap boo
 	}
 }
 
-// applySubtree copies the first value found under any of the given keys,
-// searching the whole nested object.
 func applySubtree(out *ModelParams, obj map[string]interface{}, keys []string) {
 	flat := flatten(obj)
 	for _, want := range keys {
@@ -242,8 +191,6 @@ func applySubtree(out *ModelParams, obj map[string]interface{}, keys []string) {
 }
 
 func setContextWindow(out *ModelParams, v int) {
-	// A served context window is a power-of-two-ish token count; anything
-	// wildly out of range came from an unrelated field with a similar name.
 	if v <= 0 || v > 1_000_000_000 || out.found("context_window") {
 		return
 	}
@@ -251,7 +198,6 @@ func setContextWindow(out *ModelParams, v int) {
 	out.mark("context_window")
 }
 
-// flatten walks a decoded JSON object into "a.b.c" → leaf value.
 func flatten(obj interface{}) map[string]interface{} {
 	out := map[string]interface{}{}
 	var walk func(prefix string, v interface{})
@@ -294,8 +240,6 @@ func asFloat(v interface{}) (float64, bool) {
 	case int:
 		return float64(t), true
 	case string:
-		// Ollama puts the Modelfile parameters in a text blob ("temperature 0.8")
-		// but some builds expose scalars as strings.
 		var f float64
 		if _, err := fmt.Sscanf(strings.TrimSpace(t), "%g", &f); err == nil {
 			return f, true
@@ -309,9 +253,6 @@ func decodeObject(body []byte) (map[string]interface{}, bool) {
 	if err := json.Unmarshal(body, &obj); err != nil {
 		return nil, false
 	}
-	// OpenAI-compatible endpoints wrap the model card in "data" when the
-	// caller asked for the list; unwrap a single-element list so both shapes
-	// work with the same key scan.
 	if list, ok := obj["data"].([]interface{}); ok && len(list) == 1 {
 		if one, ok := list[0].(map[string]interface{}); ok {
 			for k, v := range one {
@@ -324,9 +265,6 @@ func decodeObject(body []byte) (map[string]interface{}, bool) {
 	return obj, true
 }
 
-// listEntry picks the entry of an OpenAI-style model list that describes
-// modelID — the only entry when exactly one model is served. nil when nothing
-// matches, so a stale model name never inherits another model's numbers.
 func listEntry(obj map[string]interface{}, modelID string) map[string]interface{} {
 	data, ok := obj["data"].([]interface{})
 	if !ok || len(data) == 0 {

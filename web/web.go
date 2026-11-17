@@ -1,10 +1,3 @@
-// Package web is the web channel of mini_code: a single HTTP server that
-// serves the built-in web UI and the JSON API on top of the message hub.
-//
-// The hub routes every inbound message to its owning session (creating a
-// new session when none matches session_id / session_key), runs the agent
-// loop, and emits produced messages back to all subscribers — the web UI
-// follows them over a Server-Sent Events stream.
 package web
 
 import (
@@ -29,9 +22,6 @@ import (
 	"github.com/user/mini_code/util"
 )
 
-// Backend is what the HTTP server needs from the runtime: the hub, the
-// session manager, the approval service and the live-config hot-apply
-// operations.
 type Backend interface {
 	Hub() *channels.Hub
 	Mgr() *session.SessionManager
@@ -41,7 +31,6 @@ type Backend interface {
 	SaveConfig(cfg *config.AppConfig) (*SaveResult, error)
 }
 
-// ModelInfo describes one configured model for the UI dropdown.
 type ModelInfo struct {
 	Name          string `json:"name"`
 	ModelName     string `json:"model_name"`
@@ -49,9 +38,6 @@ type ModelInfo struct {
 	ContextWindow int    `json:"context_window"`
 }
 
-// StatusInfo describes the runtime state shown in the UI header.
-// Provider/ModelName/ContextWindow describe the DEFAULT model; Models
-// carries the full list for the UI dropdown.
 type StatusInfo struct {
 	WebPort       int         `json:"web_port"`
 	Provider      string      `json:"provider"`
@@ -62,7 +48,6 @@ type StatusInfo struct {
 	Compaction    bool        `json:"compaction_enabled"`
 }
 
-// SaveResult reports what a config save changed at runtime.
 type SaveResult struct {
 	Message      string   `json:"message"`
 	ModelSwapped bool     `json:"model_swapped"`
@@ -72,33 +57,21 @@ type SaveResult struct {
 type server struct {
 	be     Backend
 	static func() (string, error)
-	dirs   *DirIndex // in-memory folder index for the "@" picker
+	dirs   *DirIndex
 }
 
-// NewServer builds the full HTTP handler (API + embedded web UI) wired to
-// the runtime backend.
 func NewServer(be Backend) http.Handler {
 	s := &server{be: be, static: embeddedPage, dirs: NewDirIndex()}
 	go s.dirs.Run(context.Background())
-	// Start the process plugins that asked for autostart. It runs in the
-	// background so a slow plugin (a python service taking 3s to bind its port)
-	// never delays the UI from coming up. A failure is logged and ignored: a
-	// broken plugin must not stop the agent from starting.
 	go plugin.DefaultProcs().StartAutostart()
-	// tiktoken loads a ~1.6MB BPE table on its first encode — pay that at boot,
-	// in the background, so the first「上下文」open isn't the one that waits.
 	go util.WarmTokenizer()
 	mux := http.NewServeMux()
 
-	// --- web UI ---
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /index.html", s.handleIndex)
 	mux.HandleFunc("GET /favicon.ico", s.handleFavicon)
 
-	// --- plugins (file-based drop-ins under ~/.mini_code/plugins) ---
 	mux.HandleFunc("GET /plugins/", s.handlePluginAsset)
-	// Plugin centre: one list for the settings page (installed + switched off),
-	// plus toggles, uninstall and process control for kind-1 plugins.
 	mux.HandleFunc("GET /api/plugins", s.handlePluginCentreList)
 	mux.HandleFunc("POST /api/plugins/{id}/toggle", s.handlePluginToggle)
 	mux.HandleFunc("DELETE /api/plugins/{id}", s.handlePluginUninstall)
@@ -109,21 +82,10 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("POST /api/plugins/install", s.handlePluginInstall)
 	mux.HandleFunc("GET /api/plugins/prompt", s.handlePluginMakePrompt)
 
-	// --- startup animation clips (untrusted third-party HTML, see bootanim.go) ---
-	//
-	// A clip IS an appearance plugin with a "boot" block, so there is no separate
-	// installer here anymore: clips are installed, toggled and uninstalled
-	// through /api/plugins/*. Only the document route and the "what is
-	// installed" list survive.
 	mux.HandleFunc("GET /bootanim/", s.handleBootAnimAsset)
 	mux.HandleFunc("GET /api/bootanim", s.handleBootAnimList)
-	// The play settings (on/off, when, speed, mute) are edited from a boot
-	// plugin's detail pane, so they get their own tiny endpoint: posting the
-	// whole config from there would mean shipping the model list and the API
-	// keys just to turn a checkbox.
 	mux.HandleFunc("PUT /api/bootanim", s.handleBootAnimSave)
 
-	// --- API ---
 	mux.HandleFunc("GET /api/healthz", s.handleHealthz)
 	mux.HandleFunc("GET /api/avatar", s.handleUserAvatarGet)
 	mux.HandleFunc("POST /api/avatar", s.handleUserAvatarSet)
@@ -135,26 +97,18 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/events", s.handleSessionEvents)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("GET /api/sessions/{id}/context", s.handleSessionContext)
-	// The drawer's detail views (system prompt / tool schemas / per-message
-	// tokens or one message's full text): same {id} pattern as above.
 	mux.HandleFunc("GET /api/sessions/{id}/context/detail", s.handleSessionContextDetail)
-	// dsh 式轨迹抽屉的数据源(web/context_api.go 末段)。
 	mux.HandleFunc("GET /api/sessions/{id}/trajectory", s.handleSessionTrajectory)
 	mux.HandleFunc("POST /api/sessions/{id}/mode", s.handleSetMode)
 	mux.HandleFunc("POST /api/sessions/{id}/model", s.handleSetModel)
 	mux.HandleFunc("POST /api/sessions/{id}/reasoning", s.handleSetReasoning)
 	mux.HandleFunc("GET /api/sessions/{id}/jobs", s.handleListJobs)
-	// The goal the session carries (dsh surface, session-lifetime): the body
-	// is the goal snapshot {"cur":…,"rounds":N}, or null when no goal exists.
 	mux.HandleFunc("GET /api/sessions/{id}/goal", s.handleGetGoal)
 	mux.HandleFunc("GET /api/sessions/{id}/jobs/output", s.handleJobOutput)
 	mux.HandleFunc("POST /api/sessions/{id}/jobs/kill", s.handleKillJob)
 	mux.HandleFunc("POST /api/sessions/{id}/jobs/clear", s.handleClearJobs)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleRenameSession)
 	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handleSetArchived)
-	// Workers (工作大类): the sidebar switcher and the shared 公约 editor.
-	// (Sessions can no longer be moved between workers: membership is fixed at
-	// creation, so worker 目录 and session 工作目录 stay one folder.)
 	mux.HandleFunc("GET /api/workers", s.handleWorkersList)
 	mux.HandleFunc("POST /api/workers", s.handleWorkersCreate)
 	mux.HandleFunc("POST /api/workers/{id}/summary", s.handleWorkersSummary)
@@ -171,17 +125,13 @@ func NewServer(be Backend) http.Handler {
 	mux.HandleFunc("POST /api/llm/models", s.handleListModels)
 	mux.HandleFunc("POST /api/llm/probe", s.handleProbeModel)
 	mux.HandleFunc("GET /api/fs/search", s.handleFsSearch)
-	// A path in a chat message is clickable: the UI posts it here and the OS
-	// opens it with its default application (see fsopen.go).
 	mux.HandleFunc("POST /api/fs/open", s.handleFsOpen)
 	mux.HandleFunc("GET /api/approvals", s.handleListApprovals)
 	mux.HandleFunc("POST /api/approvals/{id}/decision", s.handleApprovalDecision)
 
-	// --- compatibility: the original simple goal API ---
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("POST /goal", s.handleGoal)
 
-	// --- super-agent (Router 子系统，可选：未 attach 时全部 503) ---
 	s.registerSuperRoutes(mux)
 
 	return mux
@@ -197,13 +147,8 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// --- UI ---
 
 func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	// CSS/JS/SVG live as separate embedded files so they stay editable and
-	// diffable; "/" itself still serves the single HTML document. Requests
-	// with a whitelisted asset extension are answered here (before the page)
-	// and never fall through to the HTML below.
 	if s.tryServeUIAsset(w, r) {
 		return
 	}
@@ -213,19 +158,12 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// UI 是内嵌的单文件:升级 exe 后必须拿到新页面,
-	// 否则 WebView2/浏览器可能继续用本地缓存的旧 UI(桌面端缓存是持久化的)
 	w.Header().Set("Cache-Control", "no-cache")
-	// 开机动画的配置直接注入页面里的占位 script:内联播放器在首帧之前就知道
-	// 要不要播、播哪个主题,不必等一次 /api 往返,首屏不会先白一下再盖黑幕。
 	page = injectBootAnim(page, s.bootAnimBootJSON())
-	// 插件皮肤/壁纸:同样在服务端注入,插件是纯落盘即生效(不改页面、不重编译)。
-	// 注入点在内置样式之后,所以皮肤可以覆盖内置主题。
 	page = injectPluginAssets(page)
 	w.Write([]byte(page))
 }
 
-// handleFavicon serves the embedded app icon as the browser tab favicon.
 func (s *server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	b, err := uiFS.ReadFile("ui/favicon.ico")
 	if err != nil {
@@ -237,21 +175,13 @@ func (s *server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
-// --- user avatar (the human user, global; stored in the config so it
-// survives restarts) ---
 
-// userAvatarPrefixes are the accepted data-URL prefixes for an uploaded
-// avatar (the UI canvas-compresses to 256x256 JPEG before sending).
 var userAvatarPrefixes = []string{
 	"data:image/jpeg;base64,",
 	"data:image/png;base64,",
 	"data:image/webp;base64,",
 }
 
-// decodeAvatarBody reads {"avatar": "<data URL>"} out of an avatar POST and
-// validates it. An empty avatar means "clear it back to the built-in default".
-// Shared by the user-avatar and the agent-avatar endpoints so both accept
-// exactly the same shapes and limits.
 func decodeAvatarBody(r *http.Request) (string, error) {
 	var req struct {
 		Avatar string `json:"avatar"`
@@ -283,8 +213,6 @@ func decodeAvatarBody(r *http.Request) (string, error) {
 	return avatar, nil
 }
 
-// saveAvatarConfig writes an avatar into the live config. pick names which
-// field to set, so the two endpoints share the save/error/logging path.
 func (s *server) saveAvatarConfig(w http.ResponseWriter, avatar string, pick func(*config.AppConfig, string)) {
 	cfg := s.be.GetConfig()
 	pick(cfg, avatar)
@@ -310,8 +238,6 @@ func (s *server) handleUserAvatarSet(w http.ResponseWriter, r *http.Request) {
 	s.saveAvatarConfig(w, avatar, func(c *config.AppConfig, v string) { c.UserAvatar = v })
 }
 
-// The agent has a single avatar for all sessions (see ui/js/avatars.js:
-// agentAvatarBox): empty config value = the built-in ink tile with "M".
 func (s *server) handleAgentAvatarGet(w http.ResponseWriter, r *http.Request) {
 	cfg := s.be.GetConfig()
 	writeJSON(w, http.StatusOK, map[string]string{"avatar": cfg.AgentAvatar})
@@ -326,7 +252,6 @@ func (s *server) handleAgentAvatarSet(w http.ResponseWriter, r *http.Request) {
 	s.saveAvatarConfig(w, avatar, func(c *config.AppConfig, v string) { c.AgentAvatar = v })
 }
 
-// --- health & status ---
 
 func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -336,48 +261,26 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.be.Status())
 }
 
-// --- sessions ---
 
 type SessionSummary struct {
 	SessionID string `json:"session_id"`
 	ParentID  string `json:"parent_id,omitempty"`
 	Title     string `json:"title"`
 	Status    string `json:"status"`
-	Model     string `json:"model,omitempty"` // configured model name; empty = default model
-	// Active is true only while this server is actually running a task for
-	// the session (hub task registry). It is the authoritative "running
-	// right now" flag for the UI: a persisted status of "running" can be
-	// stale after a process restart, but an active task never is.
+	Model     string `json:"model,omitempty"`
 	Active bool `json:"active"`
-	// ChildrenActive is true while a (transitively) descendant sub-agent
-	// session has a live task. It is a SEPARATE flag from Active on purpose:
-	// background sub-agents run in their own child sessions, so the parent is
-	// idle and must stay able to take new messages. The UI paints this as
-	// "运行中" in the sidebar and lights the stop button with it, but it must
-	// never lock the composer — that is what Active is for.
 	ChildrenActive bool   `json:"children_active"`
 	AgentRole      string `json:"agent_role"`
 	Mode           string `json:"mode"`
 	WorkDir        string `json:"work_dir"`
 	ChannelKey     string `json:"channel_key,omitempty"`
-	// WorkerID is the worker (工作大类) the session belongs to; "" = 未分配.
 	WorkerID         string `json:"worker_id,omitempty"`
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
  	MessageCount     int    `json:"message_count"`
-	// Tokens is the session-wide total (prompt+completion over every provider
-	// call); 0 for sessions predating the usage counter.
 	Tokens int64 `json:"tokens"`
-	// Thinking / ReasoningEffort are the per-session thinking-depth override
-	// (composer control); empty = the model's configured default.
 	Thinking        string `json:"thinking,omitempty"`
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
-	// JobsRunning / JobsTotal describe this session's background commands in
-	// THIS process (the live exec registry): JobsRunning counts the live ones,
-	// JobsTotal is everything not yet pruned. JobsRunning>0 is the sidebar's
-	// "后台运行中" flag; JobsTotal>0 is what makes the jobs trigger appear.
-	// Like Active they are live-only by design: a session not loaded here has
-	// no tracked work at all, which is correctly 0/0.
 	JobsRunning int `json:"jobs_running,omitempty"`
 	JobsTotal   int `json:"jobs_total,omitempty"`
 }
@@ -407,8 +310,6 @@ func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 	return sum
 }
 
-// tokensOf sums metadata.usage_total (written by recordLastUsage) from a
-// loaded record; 0 when the session has no usage counter yet.
 func tokensOf(metadata map[string]interface{}) int64 {
 	tot, _ := metadata["usage_total"].(map[string]interface{})
 	var n int64
@@ -423,7 +324,6 @@ func tokensOf(metadata map[string]interface{}) int64 {
 	return n
 }
 
-// summarizeSummary builds the same API entry from a lightweight store row
 func (s *server) summarizeSummary(r session.SessionSummary) SessionSummary {
 	sum := SessionSummary{
 		SessionID:    r.SessionID,
@@ -446,10 +346,6 @@ func (s *server) summarizeSummary(r session.SessionSummary) SessionSummary {
 	return sum
 }
 
-// jobCounts reports how many of the session's background commands are running
-// and how many are visible at all, read from the live registry of the loaded
-// session. An unloaded session has no registry (its work is not tracked by this
-// process), so it reports 0/0 — which is the true answer, not a missing one.
 func (s *server) jobCounts(id string) (running, total int) {
 	sess := s.be.Mgr().Peek(id)
 	if sess == nil {
@@ -468,9 +364,6 @@ func (s *server) jobCounts(id string) (running, total int) {
 	return running, total
 }
 
-// handleListJobs returns the session's background commands (live snapshot of
-// the exec job registry). The UI polls this while the jobs popover is open, so
-// the roster is fetched only while somebody is actually watching.
 func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	jobs := []job.Snapshot{}
@@ -491,11 +384,6 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGetGoal answers the goal half of the dsh surface over HTTP: the
-// session's current goal and the automatic rounds delivered for it. The body
-// is the persisted snapshot ({"cur":…,"rounds":N}) or null when the session
-// has no goal. The session must be live — the same store the model's
-// get_goal tool reads, so the two views can never disagree.
 func (s *server) handleGetGoal(w http.ResponseWriter, r *http.Request) {
 	sess := s.be.Mgr().Peek(r.PathValue("id"))
 	if sess == nil {
@@ -512,9 +400,6 @@ func (s *server) handleGetGoal(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(snap))
 }
 
-// handleJobOutput returns the buffered output of one background command for
-// the UI's expand row. It reads without consuming (consume=false), so the
-// model's own job_output reads and the settlement notice stay unaffected.
 func (s *server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 	sess := s.be.Mgr().Peek(r.PathValue("id"))
 	if sess == nil {
@@ -534,11 +419,6 @@ func (s *server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"output": j.Output(false)})
 }
 
-// handleKillJob stops one running background command on the human's behalf —
-// the UI twin of the model's job_kill tool. It reports whether the registry
-// accepted the request; the job settles to killed asynchronously (the process
-// tree is being torn down), so the UI converges the row by polling instead of
-// trusting this immediate answer.
 func (s *server) handleKillJob(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req struct {
@@ -577,13 +457,6 @@ func (s *server) handleKillJob(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleClearJobs drops every settled background command from the session's
-// registry (Registry.Prune(0) — running commands are never touched), the UI
-// twin of the panel's Clear button. Clearing must reach the registry, not just
-// the popover: the roster is re-fetched from here on every poll, so a purely
-// local wipe would resurrect the rows the human just dismissed. A session with
-// no registry has nothing to clear, which is a success with cleared=0 rather
-// than a 404 — the click only ever races a session teardown.
 func (s *server) handleClearJobs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	cleared := 0
@@ -602,12 +475,6 @@ func (s *server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	// Root sessions only: sub-agent sessions (parent_id set) are internal.
-	// The lightweight query skips conversation payloads, so the list stays
-	// cheap enough for the UI to poll it on every SSE signal.
-	// ?worker=<id> selects one worker's bucket; ?worker=(empty) is the
-	// un-assigned one; the default is every visible session. ?archived=1 stays
-	// as a compatibility alias for the built-in 已归档 bucket.
 	bucket := session.WorkerAllID
 	if q, ok := r.URL.Query()["worker"]; ok {
 		bucket = q[0]
@@ -622,14 +489,7 @@ func (s *server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// 子 agent 在独立子会话里跑:父会话自己的回合结束后,只要(孙)子会话
-	// 还有活动任务,父会话在侧边栏也要显示"运行中",并允许从这里一键停止
-	// (CancelTask 会级联取消子任务)。这是 children_active,不是 active:
-	// 父会话此刻是空闲的,输入框必须继续能用。查询失败时只剩仅看父会话自身。
 	children, _ := s.be.Mgr().GetStore().ChildIDsByParent()
-	// The super family (resident super session + every super-worker session)
-	// lives outside the normal worker buckets: the sidebar only shows the
-	// Super-Agent entry, and these sessions are reached through the panel.
 	var superHide map[string]bool
 	if superS != nil {
 		superHide = superS.RelatedSessionIDs()
@@ -648,8 +508,6 @@ func (s *server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// childrenRunning reports whether any descendant sub-agent session of the
-// given session (transitively) still has a live task in this process.
 func childrenRunning(hub *channels.Hub, id string, children map[string][]string) bool {
 	seen := map[string]bool{id: true}
 	stack := []string{id}
@@ -681,9 +539,6 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	all := sess.SnapshotMessages()
 	sum := s.summarize(rec)
 	if !sum.Active {
-		// 与列表一致:后台子 agent 还在跑时,主会话按"有子任务在跑"返回
-		// (前端据此恢复停止按钮;syncRunning 轮询也会随之收敛)。输入框
-		// 不受影响——主会话自己的回合已经结束了。
 		if children, err := s.be.Mgr().GetStore().ChildIDsByParent(); err == nil {
 			sum.ChildrenActive = childrenRunning(s.be.Hub(), rec.SessionID, children)
 		}
@@ -692,36 +547,15 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session":  sum,
 		"messages": messageViews(all),
-		// Token estimate for the composer footer's occupancy ring (xx/window).
-		// Counted over the full context, worker notices included.
 		"tokens": util.CountMessagesTokens(all),
-		// Session-wide cumulative LLM consumption (prompt+completion across
-		// every call), the same usage_total the session list shows — the
-		// composer pill reports THIS number ("本会话一共用了多少 token").
 		"usage_tokens": tokensOf(rec.Metadata),
-		// Context window of THIS session's model (the token bar must track
-		// the per-session model, not the global default).
 		"context_window": s.be.Mgr().ContextWindowFor(rec.ModelKey),
-		// Last per-LLM-call usage report persisted in the session (DB):
-		// the UI restores the composer stats (cache-hit + output speed)
-		// from it on session open / page refresh. null when the session
-		// has no recorded LLM call yet.
 		"last_usage": sess.LastUsage(),
-		// Persistence health (F1): non-zero means the conversation on disk is
-		// behind what the model has seen. The UI shows it rather than letting a
-		// degraded session look normal.
 		"persist_failures": persistFailures,
 		"persist_error":    persistErr,
 	})
 }
 
-// messageView is one transcript row for the browser: the provider fields the UI
-// reads, plus `notice` — the kind of runtime-injected context that arrives as a
-// role:"user" turn (worker 公约, context-usage reminder, sub-agent settlement,
-// compaction instruction or summary, continue-guard steer). Without the label
-// the page paints every one of them as the human speaking; the origin lives in
-// session.NoticeKind and the message bytes stay untouched, so both the provider
-// prefix cache and old sessions keep reading the same text.
 type messageView struct {
 	Role             string              `json:"role"`
 	Content          interface{}         `json:"content"`
@@ -755,17 +589,6 @@ func messageViews(msgs []provider.Message) []messageView {
 	return out
 }
 
-// handleSessionEvents serves the session event ledger (session_event):
-// append-only facts about every run — turns, messages, tool calls and
-// results, compactions, the task outcome. The messages column stays the
-// projection the model reads; this endpoint is the truth the live UI
-// reconciles against after an SSE gap.
-//
-//	GET /api/sessions/{id}/events            first 500 events
-//	GET /api/sessions/{id}/events?after=SEQ  page forward
-//	GET /api/sessions/{id}/events?limit=N    larger page (max 5000)
-//	GET /api/sessions/{id}/events?tail_run=1 only the current run: everything
-//	                                         after the last task/end
 func (s *server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	q := r.URL.Query()
@@ -806,14 +629,10 @@ func (s *server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"events":   events,
 		"last_seq": lastSeq,
-		// Whether a task loop is live in THIS process right now — the
-		// resync uses it to decide between "keep waiting" and "freeze".
 		"active": s.be.Mgr().TaskRunning(id),
 	})
 }
 
-// reasoningOf reads the per-session thinking-depth override from a session
-// record's metadata (empty = the model's configured default).
 func reasoningOf(r *session.SessionRecord) (thinking, effort string) {
 	if r.Metadata == nil {
 		return "", ""
@@ -837,12 +656,7 @@ func (s *server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "session_id": id})
 }
 
-// handleCompactSession was the manual-compaction endpoint; it was removed
-// (需求⑦): the loop's auto-compaction stays, the new home for that history is
-// GET /api/sessions/{id}/context (see context_api.go).
 
-// handleSetMode switches a session's permission mode (full / cautious).
-// It takes effect from the next tool call on, even mid-task.
 func (s *server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if sess, err := s.be.Mgr().Get(id); err != nil || sess == nil {
@@ -866,8 +680,6 @@ func (s *server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSetModel switches a session's model (config model name; empty =
-// default model). It takes effect from the session's next task on.
 func (s *server) handleSetModel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if sess, err := s.be.Mgr().Get(id); err != nil || sess == nil {
@@ -893,8 +705,6 @@ func (s *server) handleSetModel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// validReasoningEffort reports whether effort is one of the values the
-// DeepSeek / SGLang providers accept.
 func validReasoningEffort(v string) bool {
 	switch v {
 	case "off", "low", "high", "max", "xhigh", "medium":
@@ -903,10 +713,6 @@ func validReasoningEffort(v string) bool {
 	return false
 }
 
-// handleSetReasoning sets a session's per-session thinking-depth override
-// (thinking switch + reasoning_effort); empty values clear it and fall back to
-// the model's configured default. It takes effect from the session's next
-// task on.
 func (s *server) handleSetReasoning(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if sess, err := s.be.Mgr().Get(id); err != nil || sess == nil {
@@ -942,9 +748,6 @@ func (s *server) handleSetReasoning(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleRenameSession renames a session (the sidebar title). It is valid
-// while a task is running; the UI picks up the new title from the response
-// (and the next list poll).
 func (s *server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if sess, err := s.be.Mgr().Get(id); err != nil || sess == nil {
@@ -969,12 +772,6 @@ func (s *server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSetArchived is the compatibility alias of "移动到 Worker": the archived
-// flag is now the built-in 已归档 bucket, so an old client (or a bookmarked call)
-// still works and both spellings keep one source of truth. Archived sessions
-// stay fully functional, and because the built-in bucket carries no directory
-// and no convention file, the move changes nothing the model sees — the prefix
-// stays byte-identical (cache-safe).
 func (s *server) handleSetArchived(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if sess, err := s.be.Mgr().Get(id); err != nil || sess == nil {
@@ -1003,8 +800,6 @@ func (s *server) handleSetArchived(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleListChildren returns the sub-agent sessions of one session with
-// their live state (the UI renders them under the parent in the sidebar).
 func (s *server) handleListChildren(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, err := s.be.Mgr().Get(id); err != nil {
@@ -1023,22 +818,21 @@ func (s *server) handleListChildren(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// --- messages (producer side of the channel) ---
 
 type SendMessageRequest struct {
-	SessionID        string   `json:"session_id"` // empty = let the hub create a session
+	SessionID        string   `json:"session_id"`
 	Content          string   `json:"content"`
-	Images           []string `json:"images,omitempty"`            // data URLs (data:image/...;base64,...); the model sees them on the first turn
-	Mode             string   `json:"mode,omitempty"`              // permission mode for a NEW session (full / cautious)
-	Model            string   `json:"model,omitempty"`             // model name for a NEW session (config key); ignored for existing sessions
-	Thinking         string   `json:"thinking,omitempty"`          // thinking switch for a NEW session; ignored for existing sessions
-	ReasoningEffort  string   `json:"reasoning_effort,omitempty"`  // thinking depth for a NEW session; ignored for existing sessions
-	WorkerID         string   `json:"worker_id,omitempty"`         // worker (工作大类) for a NEW session; ignored for existing sessions
+	Images           []string `json:"images,omitempty"`
+	Mode             string   `json:"mode,omitempty"`
+	Model            string   `json:"model,omitempty"`
+	Thinking         string   `json:"thinking,omitempty"`
+	ReasoningEffort  string   `json:"reasoning_effort,omitempty"`
+	WorkerID         string   `json:"worker_id,omitempty"`
 }
 
 const (
 	maxImagesPerMessage = 4
-	maxImageBytes       = 10 * 1024 * 1024 // per data URL (base64-encoded)
+	maxImageBytes       = 10 * 1024 * 1024
 )
 
 func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
@@ -1085,13 +879,6 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	msg.Thinking = strings.TrimSpace(req.Thinking)
 	msg.ReasoningEffort = strings.TrimSpace(req.ReasoningEffort)
 	msg.WorkerID = strings.TrimSpace(req.WorkerID)
-	// 插话 (steering): a plain-text message to a session whose task is running is
-	// injected into the live loop (drained at the start of its next turn) instead
-	// of starting a second task — the hub would otherwise serialize it behind the
-	// per-session lock and deliver it only after the run ended. QueueUserMessage
-	// persists the row immediately, so a refresh shows it right away; mode/model
-	// fields on this request are ignored (they only describe new tasks).
-	// Images keep the old path: injection is text-only.
 	if req.SessionID != "" && len(req.Images) == 0 && s.be.Hub().ActiveTask(req.SessionID) {
 		if sess, err := s.be.Mgr().Get(req.SessionID); err == nil {
 			sess.QueueUserMessage(req.Content)
@@ -1102,9 +889,6 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// The hub refuses rather than silently drops when its queue is full (F4), so
-	// the caller has to hear about it: 429 tells the UI "not accepted, retry"
-	// instead of leaving a message in the transcript that never reached the agent.
 	if err := s.be.Hub().Submit(msg); err != nil {
 		w.Header().Set("Retry-After", "2")
 		writeErr(w, http.StatusTooManyRequests, err.Error())
@@ -1120,9 +904,6 @@ func (s *server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	// Count the live sub-agent jobs before the cancel cascades: the UI has to
-	// tell "nothing was running" from "only background sub-agents were" (the
-	// parent's own turn had already ended, so canceled=false there too).
 	kids := 0
 	for _, c := range s.be.Mgr().ListChildrenIDs(id) {
 		if s.be.Hub().ActiveTask(c) {
@@ -1132,9 +913,6 @@ func (s *server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	canceled := s.be.Hub().CancelTask(id)
 	status := "cancelling"
 	if !canceled {
-		// No running task in this process: the session is idle (or the task
-		// belongs to a different server instance). The UI uses this to tell
-		// the user that there is nothing to stop.
 		status = "no_active_task"
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1145,10 +923,7 @@ func (s *server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- approvals (cautious mode) ---
 
-// handleListApprovals returns the open approval requests (UI sync after a
-// page reload: the SSE stream only carries events from now on).
 func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	if s.be.Approvals() == nil {
 		writeJSON(w, http.StatusOK, []approval.PendingInfo{})
@@ -1157,11 +932,10 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.be.Approvals().Pending())
 }
 
-// handleApprovalDecision applies the user's decision to one request.
 func (s *server) handleApprovalDecision(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req struct {
-		Decision string `json:"decision"` // "approve" | "deny"
+		Decision string `json:"decision"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
@@ -1185,7 +959,6 @@ func (s *server) handleApprovalDecision(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, d)
 }
 
-// --- events (consumer side: SSE stream of hub messages) ---
 
 func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	fl, ok := w.(http.Flusher)
@@ -1212,9 +985,6 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-keepalive.C:
-			// 心跳用真实 SSE 事件(而非注释行):前端 EventSource 能收到,
-			// 据此做存活检测——TCP 半开(收不到任何数据)时 UI 会在
-			// 75s 内主动重连,而不是让转圈一直挂着
 			fmt.Fprint(w, "event: ping\ndata: heartbeat\n\n")
 			fl.Flush()
 		case m, ok := <-out:
@@ -1231,7 +1001,6 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// --- config (read + hot-apply) ---
 
 func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.be.GetConfig())
@@ -1243,9 +1012,6 @@ func (s *server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	// A config posted by a UI that predates the boot-anim block carries an
-	// all-zero one: keep the live setting instead of wiping it, and normalize
-	// whatever was sent so a missing mode/speed is filled rather than rejected.
 	if cfg.BootAnim.IsZero() {
 		if cur := s.be.GetConfig(); cur != nil {
 			cfg.BootAnim = cur.BootAnim
@@ -1264,9 +1030,6 @@ func (s *server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-// handleListModels proxies the provider's OpenAI-compatible /models endpoint so
-// the web UI's "fetch models" button can populate the model picker. The caller
-// supplies the base_url and api_key to probe (not necessarily a saved model).
 func (s *server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		BaseURL string `json:"base_url"`
@@ -1289,12 +1052,6 @@ func (s *server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"models": models})
 }
 
-// handleProbeModel asks the serving framework what it knows about one model:
-// context window, output cap and default sampling parameters (temperature /
-// top_p / top_k). It backs the settings dialog's "一键获取" button. Anything the
-// deployment does not report is simply absent from the response, and the UI
-// leaves that config field empty — an empty field is never sent to the model,
-// so the framework's own default applies.
 func (s *server) handleProbeModel(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		BaseURL   string `json:"base_url"`
@@ -1319,7 +1076,6 @@ func (s *server) handleProbeModel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, params)
 }
 
-// --- folder search (the "@" picker in the composer) ---
 func (s *server) handleFsSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	limit := 20
@@ -1336,12 +1092,11 @@ func (s *server) handleFsSearch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- compatibility: the original synchronous goal API ---
 
 type GoalRequest struct {
 	Goal       string `json:"goal"`
-	SessionID  string `json:"session_id,omitempty"`  // continue this session
-	SessionKey string `json:"session_key,omitempty"` // external conversation key
+	SessionID  string `json:"session_id,omitempty"`
+	SessionKey string `json:"session_key,omitempty"`
 }
 
 type GoalResponse struct {

@@ -8,9 +8,6 @@ import (
 	"unicode/utf8"
 )
 
-// agentsmd_test.go — the AGENTS.md loader: ancestor chain to the repository
-// root, per-directory precedence, user globals first, and the 64 KiB
-// rune-safe cap.
 
 func stubGlobalInstructions(t *testing.T, files ...string) {
 	t.Helper()
@@ -31,10 +28,6 @@ func mustWrite(t *testing.T, path, content string) {
 
 func TestAgentsMdChainOrderAndStop(t *testing.T) {
 	stubGlobalInstructions(t)
-	// <tmp>/above/            AGENTS.md   (outside the repo: must NOT load)
-	// <tmp>/above/repo/       .git, AGENTS.md
-	// <tmp>/above/repo/pkg/   AGENTS.md + CLAUDE.md (AGENTS.md wins)
-	// <tmp>/above/repo/pkg/deep/  (workDir)
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "above", "AGENTS.md"), "outside the repo")
 	repo := filepath.Join(tmp, "above", "repo")
@@ -79,7 +72,7 @@ func TestAgentsMdGlobalsFirst(t *testing.T) {
 func TestAgentsMdTruncateAtRuneBoundary(t *testing.T) {
 	stubGlobalInstructions(t)
 	tmp := t.TempDir()
-	body := strings.Repeat("规", instructionFileCap) // 3 bytes per rune
+	body := strings.Repeat("规", instructionFileCap)
 	mustWrite(t, filepath.Join(tmp, "AGENTS.md"), body)
 	got := readInstructionFile(filepath.Join(tmp, "AGENTS.md"))
 	if !strings.Contains(got, "truncated at 65536 bytes") {

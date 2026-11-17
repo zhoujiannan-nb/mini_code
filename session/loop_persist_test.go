@@ -14,9 +14,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// slowTool is a fake tool that signals the test when execution starts and
-// then blocks until released. It lets the test observe exactly what the loop
-// had persisted while the tool was running.
 type slowTool struct {
 	started chan struct{}
 	release chan struct{}
@@ -44,21 +41,15 @@ func (s *slowTool) Execute(ctx context.Context, params map[string]interface{}) (
 	return tools.NewTextResult("slow done"), nil
 }
 
-// TestPersistBeforeToolExecution verifies that the assistant reply carrying a
-// tool call is persisted (onTurn hook) BEFORE tool execution starts. Before
-// the fix the hook only fired after handleToolCalls returned, so a web
-// refresh during a long tool call lost the reply from the history view.
 func TestPersistBeforeToolExecution(t *testing.T) {
 	var requests int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt64(&requests, 1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		if n == 1 {
-			// First turn: the model replies with text and a slow tool call.
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":"I will check the log"}}]}`)
 			writeSSEChunk(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_slow","type":"function","function":{"name":"slowtool","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)
 		} else {
-			// Second turn: final answer.
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":"all done"},"finish_reason":"stop"}]}`)
 		}
 		w.Write([]byte("data: [DONE]\n\n"))
@@ -105,15 +96,12 @@ func TestPersistBeforeToolExecution(t *testing.T) {
 		resCh <- runResult{res, err}
 	}()
 
-	// Wait until the slow tool has started executing.
 	select {
 	case <-slow.started:
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for tool execution to start")
 	}
 
-	// While the tool is still running, the latest persistence snapshot must
-	// already contain the assistant reply with its tool call.
 	mu.Lock()
 	if len(snapshots) == 0 {
 		mu.Unlock()
@@ -131,7 +119,6 @@ func TestPersistBeforeToolExecution(t *testing.T) {
 		t.Fatalf("assistant reply with tool call was NOT persisted before tool execution started; last snapshot has %d messages", len(last))
 	}
 
-	// Release the tool and let the loop finish.
 	close(slow.release)
 	select {
 	case r := <-resCh:

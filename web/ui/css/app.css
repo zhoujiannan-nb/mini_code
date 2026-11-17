@@ -1,9 +1,3 @@
-/* ---------- 应用骨架 ----------
-   重构后 Preact 挂载在 #app 里。它必须是 display:contents:body 是 flex 容器,
-   <aside> 与 <main> 是它的直接 flex 项(base.css/layers.css 都按这个写);
-   多包一层 div 会把两栏布局与 body 的 100vh 撑破。
-   display:contents 同时不产生包含块,worker 下拉的 position:fixed 仍然相对视口。 */
 #app { display: contents; }
 
-/* 侧栏骨架的容器本身不参与样式,只是为了让三行占位保持原间距。 */
 .sess-list-skeleton { display: block; }

@@ -19,8 +19,6 @@ import (
 	"github.com/user/mini_code/session"
 )
 
-// newTestBackend builds a fakeBackend with a mock model server (answers any
-// chat request with a trivial SSE reply) plus a running hub.
 func newTestBackend(t *testing.T) *fakeBackend {
 	t.Helper()
 	modelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,9 +54,6 @@ func newTestBackend(t *testing.T) *fakeBackend {
 	return &fakeBackend{hub: hub, mgr: mgr, ap: ap}
 }
 
-// TestSetModeAPI verifies the session permission-mode endpoint end to end:
-// POST /api/sessions/{id}/mode switches the mode, GET /api/sessions reflects
-// it, and an invalid mode is rejected.
 func TestSetModeAPI(t *testing.T) {
 	be := newTestBackend(t)
 	api := httptest.NewServer(NewServer(be))
@@ -70,7 +65,6 @@ func TestSetModeAPI(t *testing.T) {
 	}
 	id := sess.ID()
 
-	// default mode is full
 	var list []SessionSummary
 	if err := getJSON(api.URL+"/api/sessions", &list); err != nil {
 		t.Fatalf("GET /api/sessions: %v", err)
@@ -79,7 +73,6 @@ func TestSetModeAPI(t *testing.T) {
 		t.Fatalf("expected one session in full mode, got %+v", list)
 	}
 
-	// switch to cautious
 	var modeResp map[string]string
 	if err := postJSON(api.URL+"/api/sessions/"+id+"/mode", map[string]string{"mode": "cautious"}, &modeResp); err != nil {
 		t.Fatalf("POST mode: %v", err)
@@ -94,7 +87,6 @@ func TestSetModeAPI(t *testing.T) {
 		t.Fatalf("expected list mode cautious, got %q", list[0].Mode)
 	}
 
-	// unknown mode falls back to full (NormalizeMode)
 	if err := postJSON(api.URL+"/api/sessions/"+id+"/mode", map[string]string{"mode": "bogus"}, &modeResp); err != nil {
 		t.Fatalf("POST bogus mode: %v", err)
 	}
@@ -102,7 +94,6 @@ func TestSetModeAPI(t *testing.T) {
 		t.Fatalf("expected bogus to normalize to full, got %q", modeResp["mode"])
 	}
 
-	// unknown session → 404
 	resp, err := http.Post(api.URL+"/api/sessions/nope/mode", "application/json",
 		strings.NewReader(`{"mode":"cautious"}`))
 	if err != nil {
@@ -114,10 +105,6 @@ func TestSetModeAPI(t *testing.T) {
 	}
 }
 
-// TestRenameAPI verifies the session rename endpoint end to end:
-// POST /api/sessions/{id}/rename updates the title (trimmed),
-// GET /api/sessions reflects it, blank/over-long titles are rejected with
-// 400, and an unknown session returns 404.
 func TestRenameAPI(t *testing.T) {
 	be := newTestBackend(t)
 	api := httptest.NewServer(NewServer(be))
@@ -146,7 +133,6 @@ func TestRenameAPI(t *testing.T) {
 		t.Fatalf("expected renamed session in list, got %+v", list)
 	}
 
-	// blank title → 400
 	resp, err := http.Post(api.URL+"/api/sessions/"+id+"/rename", "application/json",
 		strings.NewReader(`{"title":"   "}`))
 	if err != nil {
@@ -157,7 +143,6 @@ func TestRenameAPI(t *testing.T) {
 		t.Fatalf("expected 400 for blank title, got %d", resp.StatusCode)
 	}
 
-	// over-long title → 400
 	long := strings.Repeat("长", session.MaxTitleLen+1)
 	resp, err = http.Post(api.URL+"/api/sessions/"+id+"/rename", "application/json",
 		strings.NewReader(`{"title":"`+long+`"}`))
@@ -169,7 +154,6 @@ func TestRenameAPI(t *testing.T) {
 		t.Fatalf("expected 400 for over-long title, got %d", resp.StatusCode)
 	}
 
-	// unknown session → 404
 	resp, err = http.Post(api.URL+"/api/sessions/nope/rename", "application/json",
 		strings.NewReader(`{"title":"x"}`))
 	if err != nil {
@@ -181,15 +165,8 @@ func TestRenameAPI(t *testing.T) {
 	}
 }
 
-// TestSetModelAPI verifies the per-session model endpoint end to end:
-// POST /api/sessions/{id}/model switches the model and reports the new
-// context window, GET /api/sessions and the session detail reflect it,
-// unknown model names are rejected with 400, an empty name resets to the
-// default model, and an unknown session returns 404.
 func TestSetModelAPI(t *testing.T) {
 	be := newTestBackend(t)
-	// The test backend registers one default client under key ""; add a
-	// second named model so there is something to switch to.
 	reg := be.mgr.Models()
 	second, err := provider.NewModelClient(config.ModelConfig{
 		Provider: "vllm", BaseURL: "http://127.0.0.1:1", APIKey: "k",
@@ -209,7 +186,6 @@ func TestSetModelAPI(t *testing.T) {
 	}
 	id := sess.ID()
 
-	// default model: empty key
 	var list []SessionSummary
 	if err := getJSON(api.URL+"/api/sessions", &list); err != nil {
 		t.Fatalf("GET /api/sessions: %v", err)
@@ -218,7 +194,6 @@ func TestSetModelAPI(t *testing.T) {
 		t.Fatalf("expected one session on the default model, got %+v", list)
 	}
 
-	// switch to the named model
 	var modelResp map[string]interface{}
 	if err := postJSON(api.URL+"/api/sessions/"+id+"/model", map[string]string{"model": "second"}, &modelResp); err != nil {
 		t.Fatalf("POST model: %v", err)
@@ -236,7 +211,6 @@ func TestSetModelAPI(t *testing.T) {
 		t.Fatalf("expected list model second, got %q", list[0].Model)
 	}
 
-	// the session detail carries the model and its context window
 	var detail map[string]interface{}
 	if err := getJSON(api.URL+"/api/sessions/"+id, &detail); err != nil {
 		t.Fatalf("GET session detail: %v", err)
@@ -249,7 +223,6 @@ func TestSetModelAPI(t *testing.T) {
 		t.Fatalf("expected detail context_window 8192, got %v", detail["context_window"])
 	}
 
-	// unknown model → 400
 	resp, err := http.Post(api.URL+"/api/sessions/"+id+"/model", "application/json",
 		strings.NewReader(`{"model":"bogus"}`))
 	if err != nil {
@@ -260,7 +233,6 @@ func TestSetModelAPI(t *testing.T) {
 		t.Fatalf("expected 400 for unknown model, got %d", resp.StatusCode)
 	}
 
-	// empty model → back to default
 	var resetResp map[string]interface{}
 	if err := postJSON(api.URL+"/api/sessions/"+id+"/model", map[string]string{"model": ""}, &resetResp); err != nil {
 		t.Fatalf("POST reset model: %v", err)
@@ -269,7 +241,6 @@ func TestSetModelAPI(t *testing.T) {
 		t.Fatalf("expected empty model after reset, got %q", resetResp["model"])
 	}
 
-	// unknown session → 404
 	resp, err = http.Post(api.URL+"/api/sessions/nope/model", "application/json",
 		strings.NewReader(`{"model":"second"}`))
 	if err != nil {
@@ -281,9 +252,6 @@ func TestSetModelAPI(t *testing.T) {
 	}
 }
 
-// TestApprovalsAPI verifies the approval request lifecycle through the HTTP
-// API: a pending request appears in GET /api/approvals, a decision resolves
-// the blocked RequestApproval call, and a double decision returns 409.
 func TestApprovalsAPI(t *testing.T) {
 	be := newTestBackend(t)
 	be.ap.SetTimeout(30 * time.Second)
@@ -309,7 +277,6 @@ func TestApprovalsAPI(t *testing.T) {
 		decisionCh <- d
 	}()
 
-	// wait until the request is pending
 	var pend []approval.PendingInfo
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -329,7 +296,6 @@ func TestApprovalsAPI(t *testing.T) {
 		t.Fatalf("unexpected pending payload: %+v", pend[0])
 	}
 
-	// approve via the API
 	var resolved map[string]interface{}
 	if err := postJSON(api.URL+"/api/approvals/"+reqID+"/decision",
 		map[string]string{"decision": "approve"}, &resolved); err != nil {
@@ -347,7 +313,6 @@ func TestApprovalsAPI(t *testing.T) {
 		t.Fatal("RequestApproval did not return after decision")
 	}
 
-	// the request is gone now
 	if err := getJSON(api.URL+"/api/approvals", &pend); err != nil {
 		t.Fatalf("GET /api/approvals after resolve: %v", err)
 	}
@@ -355,7 +320,6 @@ func TestApprovalsAPI(t *testing.T) {
 		t.Fatalf("expected no pending after resolve, got %d", len(pend))
 	}
 
-	// a second decision on the same id → 409
 	resp, err := http.Post(api.URL+"/api/approvals/"+reqID+"/decision", "application/json",
 		strings.NewReader(`{"decision":"deny"}`))
 	if err != nil {
@@ -367,9 +331,6 @@ func TestApprovalsAPI(t *testing.T) {
 	}
 }
 
-// TestChildrenAPI verifies GET /api/sessions/{id}/children: a root session
-// starts empty, a sub-agent session (parent_id set) shows up, and the root
-// list endpoint keeps hiding it.
 func TestChildrenAPI(t *testing.T) {
 	be := newTestBackend(t)
 	api := httptest.NewServer(NewServer(be))
@@ -394,7 +355,6 @@ func TestChildrenAPI(t *testing.T) {
 		t.Fatalf("unexpected children: %+v", kids)
 	}
 
-	// the root list must not include the child
 	var roots []SessionSummary
 	if err := getJSON(api.URL+"/api/sessions", &roots); err != nil {
 		t.Fatalf("GET /api/sessions: %v", err)
@@ -403,7 +363,6 @@ func TestChildrenAPI(t *testing.T) {
 		t.Fatalf("root list should contain only the parent: %+v", roots)
 	}
 
-	// unknown parent → empty list, not an error
 	if err := getJSON(api.URL+"/api/sessions/unknown/children", &kids); err != nil {
 		t.Fatalf("GET children unknown: %v", err)
 	}

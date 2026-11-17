@@ -1,22 +1,3 @@
-// Plugin catalogue + installer.
-//
-// The remote catalogue is the same index.json the boot-animation themes already
-// use (zhoujiannan-nb/mini_code-plugins), extended with more kinds:
-//
-//	{"schema":1,"repo":"...","ref":"main","kinds":{
-//	   "boot-anim":[{"id":..., "path":"boot-anim/x", "files":[{"path":..., "sha256":...}]}],
-//	   "tool":     [...],
-//	   "process":  [...],
-//	   "skin":     [...],
-//	   "wallpaper":[...],
-//	   "pet":      [...]
-//	}}
-//
-// Adding a kind is therefore a pure data change in that repo: no protocol bump,
-// no new endpoint. Everything a catalogue entry says is verified before it lands
-// (sha256 per file, path containment, extension whitelist), and the swap is the
-// same staging-directory + rename the boot animation installer uses, so a failed
-// download can never leave a half-installed plugin behind.
 package web
 
 import (
@@ -43,32 +24,18 @@ import (
 )
 
 const (
-	// pluginCatalogueTTL is how long a fetched index.json is reused. Long enough
-	// that opening the centre repeatedly is free, short enough that a new
-	// release shows up on the next visit.
 	pluginCatalogueTTL    = 5 * time.Minute
 	pluginCatalogueMaxAge = 5 * time.Second
-	// pluginMaxFiles / pluginMaxFileBytes / pluginMaxTotalBytes bound what one
-	// catalogue entry may install. A skin is a few hundred KB; a process plugin
-	// is a script. Anything near these numbers is a mistake or an attack.
 	pluginMaxFiles      = 40
 	pluginMaxFileBytes  = 8 << 20
 	pluginMaxTotalBytes = 24 << 20
-	// catalogueMarker is written into an installed plugin directory. Its presence
-	// is what lets the centre call a plugin "installed from the catalogue" and
-	// lets the uninstall path know the directory is ours to delete.
 	catalogueMarker = ".catalogue"
 
-	// catalogueFetchTimeout bounds one raw-file request and the index fetch.
 	catalogueFetchTimeout = 12 * time.Second
 )
 
-// installMu serializes installs: two of them at once would both try to rename
-// the same target directory.
 var installMu sync.Mutex
 
-// randSuffix is a short random string used to make staging/old directory names
-// unique, so two interrupted installs can never collide.
 func randSuffix() string {
 	var b [6]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -77,15 +44,11 @@ func randSuffix() string {
 	return hex.EncodeToString(b[:])
 }
 
-// oldExists reports whether a path exists (used before moving a version aside).
 func oldExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
 }
 
-// pluginCatalogueIndex mirrors the parts of index.json this host understands.
-// Unknown fields (colours, durationMs, preview…) are ignored: they are boot
-// animation metadata.
 type pluginCatalogueIndex struct {
 	Schema int                              `json:"schema"`
 	Repo   string                           `json:"repo"`
@@ -93,7 +56,6 @@ type pluginCatalogueIndex struct {
 	Kinds  map[string][]pluginCatalogueItem `json:"kinds"`
 }
 
-// pluginCatalogueItem is one installable entry.
 type pluginCatalogueItem struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
@@ -114,7 +76,6 @@ type pluginCatalogueItem struct {
 	} `json:"files"`
 }
 
-// catalogueEntry is one row for the UI: the item plus what is already installed.
 type catalogueEntry struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
@@ -132,8 +93,6 @@ type catalogueEntry struct {
 	Bytes       int64    `json:"bytes"`
 }
 
-// pluginCatalogueCache memoizes index.json. Failures are cached for a much
-// shorter time so one offline click does not make the button look broken.
 var pluginCatalogueCache = struct {
 	mu    sync.Mutex
 	key   string
@@ -143,9 +102,6 @@ var pluginCatalogueCache = struct {
 	errAt time.Time
 }{}
 
-// pluginCatalogueRepo is the GitHub "owner/name" the catalogue comes from. It
-// reuses the boot animation setting on purpose: one place to point mini_code at
-// a fork, and the plugin repo already holds both kinds.
 func (s *server) pluginCatalogueRepo() string {
 	if cfg := s.be.GetConfig(); cfg != nil {
 		b := cfg.BootAnim
@@ -155,7 +111,6 @@ func (s *server) pluginCatalogueRepo() string {
 	return config.DefaultBootAnimRepo
 }
 
-// remotePluginCatalogue fetches (or returns the cached) index.json.
 func (s *server) remotePluginCatalogue() (*pluginCatalogueIndex, error) {
 	repo := s.pluginCatalogueRepo()
 	if !config.ValidBootAnimRepo(repo) {
@@ -183,9 +138,6 @@ func (s *server) remotePluginCatalogue() (*pluginCatalogueIndex, error) {
 	return idx, nil
 }
 
-// fetchPluginCatalogue downloads and loosely validates index.json. The boot
-// animation fetcher already parses the same file; this one keeps the extra kinds
-// and tolerates a schema it has never seen.
 func fetchPluginCatalogue(url string) (*pluginCatalogueIndex, error) {
 	client := &http.Client{Timeout: catalogueFetchTimeout}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -217,7 +169,6 @@ func fetchPluginCatalogue(url string) (*pluginCatalogueIndex, error) {
 	return &idx, nil
 }
 
-// catalogueKindCategory maps an index.json bucket to the centre's category.
 func catalogueKindCategory(kind string) string {
 	switch strings.ToLower(kind) {
 	case "process", "program", "service", "daemon":
@@ -230,15 +181,13 @@ func catalogueKindCategory(kind string) string {
 	return plugin.CategoryAppearance
 }
 
-// handlePluginCatalog: GET /api/plugins/catalog — the remote catalogue, merged
-// across kinds and annotated with what is already installed.
 func (s *server) handlePluginCatalog(w http.ResponseWriter, r *http.Request) {
 	idx, err := s.remotePluginCatalogue()
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	have := map[string]string{} // id → installed version ("" = installed, unknown version)
+	have := map[string]string{}
 	for _, p := range plugin.Discover() {
 		if p.LoadError == "" {
 			have[p.ID] = p.Version
@@ -249,10 +198,7 @@ func (s *server) handlePluginCatalog(w http.ResponseWriter, r *http.Request) {
 	for k := range idx.Kinds {
 		kinds = append(kinds, k)
 	}
-	sort.Strings(kinds) // deterministic order: the UI groups by category anyway
-	// 一个 id 只出现一次。index.json 允许同一批插件挂在两个桶里(仓库给老宿主留的
-	// "别名桶",比如 appearance 之外再来一份 boot-anim),市场要的是"装哪个",
-	// 不是"它声明了几次" —— 不去重的话同一段开机动画会并列出两张卡。
+	sort.Strings(kinds)
 	seen := map[string]bool{}
 	for _, kind := range kinds {
 		for _, it := range idx.Kinds[kind] {
@@ -261,7 +207,6 @@ func (s *server) handlePluginCatalog(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if seen[it.ID] {
-				// 别名桶排在后面(桶名有序),所以先命中的那份说了算。
 				slog.Debug("plugin catalogue: deduplicated entry", "kind", kind, "id", it.ID)
 				continue
 			}
@@ -304,11 +249,6 @@ func (s *server) handlePluginCatalog(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePluginInstall: POST /api/plugins/install {"id": "...", "kind": "..."}.
-//
-// Every file is downloaded to a staging directory, its size and sha256 compared
-// with the catalogue, and only then is the staging directory renamed into place.
-// An existing version is moved aside and restored if the new one does not load.
 func (s *server) handlePluginInstall(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID   string `json:"id"`
@@ -356,7 +296,6 @@ func (s *server) handlePluginInstall(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// findCatalogueItem locates one entry, optionally restricted to a kind.
 func findCatalogueItem(idx *pluginCatalogueIndex, id, kind string) (*pluginCatalogueItem, string) {
 	kinds := make([]string, 0, len(idx.Kinds))
 	for k := range idx.Kinds {
@@ -374,16 +313,12 @@ func findCatalogueItem(idx *pluginCatalogueIndex, id, kind string) (*pluginCatal
 			}
 		}
 	}
-	// An id may exist under a different kind than the one asked for (a skin that
-	// was recategorised). Retry unrestricted so the install still works.
 	if kind != "" {
 		return findCatalogueItem(idx, id, "")
 	}
 	return nil, ""
 }
 
-// installCatalogPlugin is the atomic install: stage → verify → rename → validate
-// → (roll back on failure).
 func installCatalogPlugin(root, rawBase, kind string, item *pluginCatalogueItem) (*plugin.Plugin, error) {
 	if !validPluginID(item.ID) {
 		return nil, fmt.Errorf("非法的插件 id %q", item.ID)
@@ -391,8 +326,6 @@ func installCatalogPlugin(root, rawBase, kind string, item *pluginCatalogueItem)
 	if len(item.Files) == 0 || len(item.Files) > pluginMaxFiles {
 		return nil, fmt.Errorf("插件文件数不合法(%d)", len(item.Files))
 	}
-	// The manifest has to be in the bundle: without it the directory is not a
-	// plugin, and we would install something the host cannot even describe.
 	var haveManifest bool
 	for _, f := range item.Files {
 		if path.Base(path.Clean(f.Path)) == "plugin.json" &&
@@ -407,7 +340,6 @@ func installCatalogPlugin(root, rawBase, kind string, item *pluginCatalogueItem)
 		return nil, fmt.Errorf("无法创建插件目录 %s: %w", root, err)
 	}
 
-	// One install at a time: two of them would race on the same target directory.
 	installMu.Lock()
 	defer installMu.Unlock()
 
@@ -442,8 +374,6 @@ func installCatalogPlugin(root, rawBase, kind string, item *pluginCatalogueItem)
 			return nil, err
 		}
 	}
-	// Marker: this directory came from the catalogue, so the centre can show
-	// "已安装" and uninstall is allowed to delete it.
 	if err := os.WriteFile(filepath.Join(stage, catalogueMarker),
 		[]byte(kind+"\n"+item.Version+"\n"), 0o644); err != nil {
 		return nil, fmt.Errorf("无法写入安装标记: %w", err)
@@ -468,9 +398,6 @@ func installCatalogPlugin(root, rawBase, kind string, item *pluginCatalogueItem)
 	}
 	cleanup = false
 
-	// Validate under the real name: the manifest's id must match the directory,
-	// and every referenced file must exist. A bundle that cannot be loaded puts
-	// the previous version back rather than leaving the user with a broken skin.
 	installed, err := loadPluginFromDir(target, item.ID)
 	if err != nil {
 		rollback()
@@ -482,8 +409,6 @@ func installCatalogPlugin(root, rawBase, kind string, item *pluginCatalogueItem)
 	return &installed, nil
 }
 
-// catalogueBundleRelPath maps a repo-root-relative catalogue path to the file
-// name it gets inside the plugin directory, refusing anything outside it.
 func catalogueBundleRelPath(itemPath, p string) (string, error) {
 	clean := path.Clean(strings.TrimSpace(p))
 	prefix := path.Clean(itemPath) + "/"
@@ -500,25 +425,6 @@ func catalogueBundleRelPath(itemPath, p string) (string, error) {
 	return name, nil
 }
 
-// catalogueDownloadExtTypes is what may be *downloaded*. It is deliberately
-// wider than pluginAssetExtTypes, which is what may be *served*:
-//
-//   - .js / .mjs    a startup-animation plugin (boot block) animates with code.
-//     It runs in a sandboxed iframe via /bootanim/…, and the normal
-//     /plugins/ route still refuses .js, so nothing gains access to the app's
-//     own origin by this being downloadable.
-//   - audio (.mp3 …) a clip may carry voice cues (see bootanimExtTypes).
-//   - .json / .md    manifests and plugin data.
-//   - .py / .sh      the implementation of a TOOL plugin (kind 2). Its whole
-//     purpose is to run an external program: the manifest already names the
-//     command ("python") and the host execs it, so refusing to download the
-//     script does not remove any capability — it only forces authors to smuggle
-//     the same code through `python -c "<10 KB of source>"` in the manifest.
-//     Note this is download-only: the /plugins/ asset route still refuses .py.
-//
-// A file that is downloaded but never served is inert: the point of the
-// whitelist is to keep junk and surprises out of the install, not to enumerate
-// every route.
 var catalogueDownloadExtTypes = func() map[string]bool {
 	out := make(map[string]bool, len(pluginAssetExtTypes)+10)
 	for ext := range pluginAssetExtTypes {
@@ -531,13 +437,10 @@ var catalogueDownloadExtTypes = func() map[string]bool {
 	return out
 }()
 
-// rawURL joins a raw-file base and a repo-relative path.
 func rawURL(rawBase, p string) string {
 	return rawBase + path.Clean(strings.TrimSpace(p))
 }
 
-// downloadVerified fetches one raw file and checks its size and sha256 against
-// the catalogue. A mismatch is fatal: the bundle is discarded.
 func downloadVerified(client *http.Client, url, dst string, wantSize int64, wantSHA string) error {
 	resp, err := client.Get(url)
 	if err != nil {
@@ -580,9 +483,6 @@ func downloadVerified(client *http.Client, url, dst string, wantSize int64, want
 	return nil
 }
 
-// loadPluginFromDir re-reads one installed plugin directory through the plugin
-// package's own loader, so the installer and the normal load path agree on what
-// "valid" means.
 func loadPluginFromDir(dir, id string) (plugin.Plugin, error) {
 	return plugin.LoadDir(dir, id)
 }

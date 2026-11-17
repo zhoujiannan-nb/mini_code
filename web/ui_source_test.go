@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// uiSource returns everything the built-in UI ships to the browser: the HTML
-// shell plus every embedded stylesheet and script, concatenated in a stable
-// order. The UI used to be a single index.html; after the front-end was split
-// into html/css/js the markup lives in the shell while most of the behaviour
-// lives in the modules, so tests that assert "the UI carries X" have to look at
-// all of it rather than at index.html alone.
 func uiSource(t *testing.T) string {
 	t.Helper()
 	page, err := embeddedPage()
@@ -31,7 +25,6 @@ func uiSource(t *testing.T) string {
 	return b.String()
 }
 
-// jsModulesForTest returns the concatenated embedded JS modules.
 func jsModulesForTest(t *testing.T) string {
 	t.Helper()
 	var b strings.Builder
@@ -42,7 +35,6 @@ func jsModulesForTest(t *testing.T) string {
 	return b.String()
 }
 
-// embeddedUIAssets lists embedded UI files with one of exts, sorted by path.
 func embeddedUIAssets(t *testing.T, exts ...string) []string {
 	t.Helper()
 	want := make(map[string]bool, len(exts))
@@ -69,7 +61,6 @@ func embeddedUIAssets(t *testing.T, exts ...string) []string {
 	return paths
 }
 
-// uiAssetBody reads one embedded UI file.
 func uiAssetBody(t *testing.T, p string) []byte {
 	t.Helper()
 	body, err := uiFS.ReadFile(p)

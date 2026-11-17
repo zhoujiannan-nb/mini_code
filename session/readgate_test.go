@@ -12,8 +12,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// gateLoop returns a loop wired with a file memory rooted at dir, which is all
-// checkWriteBeforeRead needs.
 func gateLoop(t *testing.T, dir string) *AgentLoop {
 	t.Helper()
 	l := &AgentLoop{}
@@ -29,9 +27,6 @@ func params(kv ...interface{}) map[string]interface{} {
 	return m
 }
 
-// TestWriteGateRefusesUnreadFile is the whole point of the gate: an existing
-// file this session never read is not overwritten, and the refusal tells the
-// model what to do instead of just failing.
 func TestWriteGateRefusesUnreadFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("important\n"), 0644); err != nil {
@@ -47,15 +42,12 @@ func TestWriteGateRefusesUnreadFile(t *testing.T) {
 		if !strings.Contains(deny, "has not been read") || !strings.Contains(deny, "call read on") {
 			t.Fatalf("%s refusal is not actionable: %s", tool, deny)
 		}
-		// the historical "path" key must gate the same way
 		if deny := l.checkWriteBeforeRead(tool, params("path", "a.txt")); deny == "" {
 			t.Fatalf("%s on an unread file was allowed via the legacy path key", tool)
 		}
 	}
 }
 
-// TestWriteGateAllowsAfterContentRead: reading the file is the fix, and one
-// read covers every later tool.
 func TestWriteGateAllowsAfterContentRead(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "a.txt")
@@ -68,16 +60,11 @@ func TestWriteGateAllowsAfterContentRead(t *testing.T) {
 	if deny := l.checkWriteBeforeRead("edit_file", params("path", "a.txt")); deny != "" {
 		t.Fatalf("edit after read was refused: %s", deny)
 	}
-	// A relative path spelling of the same file must be the same key.
 	if deny := l.checkWriteBeforeRead("edit_file", params("path", filepath.Join(dir, "a.txt"))); deny != "" {
 		t.Fatalf("absolute path after read was refused: %s", deny)
 	}
 }
 
-// TestWriteGateRefusesStaleRead: the file changed on disk after the read, so
-// the copy in context is not the file anymore. This is the case a
-// "have you read it" flag alone misses, and the one a long local-model session
-// hits most (a formatter or another agent rewrote the file in between).
 func TestWriteGateRefusesStaleRead(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "a.txt")
@@ -87,7 +74,6 @@ func TestWriteGateRefusesStaleRead(t *testing.T) {
 	l := gateLoop(t, dir)
 	l.obs.NoteContentRead(fp)
 
-	// External change: different content, different size.
 	if err := os.WriteFile(fp, []byte("v2 changed externally\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -100,9 +86,6 @@ func TestWriteGateRefusesStaleRead(t *testing.T) {
 	}
 }
 
-// TestWriteGateIgnoresListingOnly: a glob or directory listing proves a name
-// exists, not what the file contains. Authorising an overwrite from it would
-// defeat the gate (one glob at the repo root would authorise everything).
 func TestWriteGateIgnoresListingOnly(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "a.txt")
@@ -110,7 +93,7 @@ func TestWriteGateIgnoresListingOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := gateLoop(t, dir)
-	l.obs.NoteRead(fp) // list_dir / glob / search_files
+	l.obs.NoteRead(fp)
 
 	deny := l.checkWriteBeforeRead("edit_file", params("path", "a.txt"))
 	if deny == "" || !strings.Contains(deny, "only been listed") {
@@ -118,9 +101,6 @@ func TestWriteGateIgnoresListingOnly(t *testing.T) {
 	}
 }
 
-// TestWriteGateAllowsCreateAndAppend: creating a file is not a blind overwrite,
-// and append cannot destroy content (it is the documented way to build a large
-// file in chunks, so gating it would break that workflow).
 func TestWriteGateAllowsCreateAndAppend(t *testing.T) {
 	dir := t.TempDir()
 	l := gateLoop(t, dir)
@@ -134,15 +114,11 @@ func TestWriteGateAllowsCreateAndAppend(t *testing.T) {
 	if deny := l.checkWriteBeforeRead("write_file", params("path", "old.txt", "content", "y", "append", true)); deny != "" {
 		t.Fatalf("append was refused: %s", deny)
 	}
-	// Reads are never gated.
 	if deny := l.checkWriteBeforeRead("read_file", params("path", "old.txt")); deny != "" {
 		t.Fatalf("read was gated: %s", deny)
 	}
 }
 
-// TestNoteToolOutcomeAuthorisesNextEdit: a successful write makes its own
-// result the new truth — otherwise every second edit in a row would demand a
-// redundant re-read and the gate would become the churn it is meant to stop.
 func TestNoteToolOutcomeAuthorisesNextEdit(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "a.txt")
@@ -153,7 +129,6 @@ func TestNoteToolOutcomeAuthorisesNextEdit(t *testing.T) {
 	if deny := l.checkWriteBeforeRead("edit_file", params("path", "a.txt")); deny == "" {
 		t.Fatal("precondition: the file should start unread")
 	}
-	// What the edit_file tool returns on success, with the file now written.
 	if err := os.WriteFile(fp, []byte("v2\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -164,8 +139,6 @@ func TestNoteToolOutcomeAuthorisesNextEdit(t *testing.T) {
 	}
 }
 
-// TestNoteToolOutcomeIgnoresFailures: a failed edit changed nothing, so it must
-// not mark the file as known.
 func TestNoteToolOutcomeIgnoresFailures(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "a.txt")
@@ -185,10 +158,6 @@ func TestNoteToolOutcomeIgnoresFailures(t *testing.T) {
 	}
 }
 
-// TestEditWithoutReadIsRefusedEndToEnd drives the whole path: a model that
-// calls edit_file on an existing file it never read gets the refusal as the
-// tool result, and the file on disk is untouched. This is the wiring test —
-// the unit tests above cannot catch a gate that is never called.
 func TestEditWithoutReadIsRefusedEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "a.txt")
@@ -235,7 +204,6 @@ func TestEditWithoutReadIsRefusedEndToEnd(t *testing.T) {
 		t.Fatalf("the refused edit still changed the file: %q", string(got))
 	}
 
-	// Now the same edit with the file read first: it must go through.
 	if err := os.WriteFile(fp, []byte("hello\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

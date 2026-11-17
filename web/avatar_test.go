@@ -14,8 +14,6 @@ import (
 	"github.com/user/mini_code/session"
 )
 
-// avatarFakeBE is a minimal Backend for the user-avatar endpoints: it only
-// backs the config get/save pair, keeping the persisted pointer alive.
 type avatarFakeBE struct {
 	cfg *config.AppConfig
 }
@@ -30,9 +28,6 @@ func (f *avatarFakeBE) SaveConfig(cfg *config.AppConfig) (*SaveResult, error) {
 	return &SaveResult{Message: "saved"}, nil
 }
 
-// TestUserAvatarSetGet verifies the user-avatar API: set -> persisted in the
-// config -> readable back; rejects a bad data-URL prefix, invalid base64 and
-// oversize payloads; an empty string clears the avatar.
 func TestUserAvatarSetGet(t *testing.T) {
 	be := &avatarFakeBE{cfg: &config.AppConfig{}}
 	s := &server{be: be}
@@ -83,10 +78,6 @@ func TestUserAvatarSetGet(t *testing.T) {
 	}
 }
 
-// TestAgentAvatarSetGet covers the agent-side twin of the avatar API: setting
-// the agent avatar must not touch the user avatar (the two share one config
-// struct and one validation path), and clearing it falls back to the built-in
-// default tile the UI renders.
 func TestAgentAvatarSetGet(t *testing.T) {
 	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte{0x89, 'P', 'N', 'G'})
 	be := &avatarFakeBE{cfg: &config.AppConfig{UserAvatar: "data:image/png;base64,dXNlcg=="}}

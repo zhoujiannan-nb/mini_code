@@ -1,7 +1,5 @@
 package desktopwin
 
-// Windows 专用自检:证明 DPI 感知真的落到进程上、窗口尺寸换算符合预期。
-// 只查 API 返回值,不创建可见窗口,跑在 CI/无桌面上都安全。
 
 import (
 	"testing"
@@ -14,13 +12,11 @@ var (
 	procGetProcessDpiAwareness = windows.NewLazySystemDLL("shcore.dll").NewProc("GetProcessDpiAwareness")
 )
 
-// TestDPIAwarenessApplied 直接问系统"当前进程是哪种 DPI 感知"。
-// 没修之前这里是 0(DPI unaware,整窗会被 DWM 位图拉伸 = 高分屏发糊的根因)。
 func TestDPIAwarenessApplied(t *testing.T) {
 	if procGetProcessDpiAwareness.Find() != nil {
 		t.Skip("shcore.GetProcessDpiAwareness 不可用")
 	}
-	enableDPIAwareness() // 包 init() 已调过,这里再调一次应当静默(已被别处定下)
+	enableDPIAwareness()
 	var awareness int32
 	r, _, _ := procGetProcessDpiAwareness.Call(0, uintptr(unsafe.Pointer(&awareness)))
 	if r != 0 {
@@ -43,7 +39,6 @@ func TestSystemDPIAndScale(t *testing.T) {
 		t.Fatal("SystemParametersInfoW(SPI_GETWORKAREA) 失败")
 	}
 	if dpi == 96 {
-		// 100% 缩放的机器上尺寸必须与改动前逐像素一致(外接 1080P 屏零影响)
 		if w, h := scaledWindowSize(1280, 800); w != 1280 || h != 800 {
 			gotW, gotH := scaledWindowSize(1280, 800)
 			t.Fatalf("100%% 缩放不该改尺寸,得到 %dx%d", gotW, gotH)
@@ -75,13 +70,11 @@ func TestScaledWindowSize(t *testing.T) {
 		}
 		t.Logf("%dx%d 逻辑 → %dx%d 物理", c.lw, c.lh, w, h)
 	}
-	// 0 尺寸交给库的默认值,别乱动
 	if w, h := scaledWindowSize(0, 0); w != 0 || h != 0 {
 		t.Errorf("0x0 应保持 0x0,得到 %dx%d", w, h)
 	}
 }
 
-// TestWindowDPIFollowsMonitor 建一个离屏窗口,验证它的真实 DPI 不再是 96。
 func TestWindowDPIFollowsMonitor(t *testing.T) {
 	if windowDPI(uintptr(windows.GetDesktopWindow())) == 0 {
 		t.Skip("GetDpiForWindow 不可用(早于 Win10 1607)")

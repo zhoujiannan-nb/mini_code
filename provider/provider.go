@@ -113,13 +113,11 @@ func (m *Message) GetText() string {
 	return text
 }
 
-// SetTextContent sets text-only content (clears ContentParts)
 func (m *Message) SetTextContent(text string) {
 	m.Content = text
 	m.ContentParts = nil
 }
 
-// SetMultimodalContent sets content with parts (clears Content string)
 func (m *Message) SetMultimodalContent(parts []ContentPart) {
 	m.ContentParts = parts
 	m.Content = ""
@@ -145,31 +143,19 @@ type ChatResponse struct {
 	Error            string     `json:"-"`
 }
 
-// StreamChunk is delivered to the onChunk callback during streaming.
-// Content and ReasoningContent are accumulated values (never deltas),
-// so the consumer can render them directly.
 type StreamChunk struct {
 	Content          string
 	ReasoningContent string
-	// ToolCalls lists the tool calls being generated so far, in stream order,
-	// with the arguments accumulated up to this point. It exists so a caller can
-	// show what the model is about to call WHILE it is still typing the
-	// arguments (a 20 KB write_file payload takes minutes to generate, and until
-	// now the UI had nothing to show for it). Same accumulate-not-delta
-	// convention as Content, so a dropped snapshot costs nothing.
 	ToolCalls []StreamToolCallProgress
 }
 
-// StreamToolCallProgress is one in-flight tool call mid-generation.
 type StreamToolCallProgress struct {
-	Index int    // stream index; parallel calls arrive as 0, 1, ...
-	ID    string // may be empty until the provider sends it
-	Name  string // arrives with the first delta of this call
-	Args  string // arguments accumulated so far (raw JSON, possibly incomplete)
+	Index int
+	ID    string
+	Name  string
+	Args  string
 }
 
-// PromptTokensDetails is the OpenAI/SGLang/vLLM cache-hit shape:
-// usage.prompt_tokens_details.cached_tokens.
 type PromptTokensDetails struct {
 	CachedTokens int `json:"cached_tokens"`
 }
@@ -179,19 +165,10 @@ type Usage struct {
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
-	// Cache-hit reporting. Providers use different fields: SGLang/vLLM (and
-	// OpenAI) populate PromptTokensDetails.CachedTokens, while DeepSeek uses the
-	// custom top-level PromptCacheHitTokens. Both are parsed; CachedTokens()
-	// reads whichever is present.
 	PromptTokensDetails  *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
 	PromptCacheHitTokens int                  `json:"prompt_cache_hit_tokens,omitempty"`
 }
 
-// CachedTokens returns the number of prompt tokens served from the provider's
-// KV prefix cache, reading whichever field the provider populated. It returns
-// 0 when the provider does not report cache hits (e.g. an SGLang server started
-// without --enable-cache-report), so callers can treat 0 as "unknown/none"
-// rather than a real miss.
 func (u *Usage) CachedTokens() int {
 	if u == nil {
 		return 0
@@ -202,12 +179,6 @@ func (u *Usage) CachedTokens() int {
 	return u.PromptCacheHitTokens
 }
 
-// CacheReported reports whether the provider actually included cache-hit
-// information, even when the hit count is a genuine 0. OpenAI/SGLang/vLLM
-// include the prompt_tokens_details object (so its presence means "reported"),
-// while DeepSeek only sends prompt_cache_hit_tokens when reporting is on. This
-// lets the UI tell "0% cache hits" apart from "this deployment does not report
-// cache hits at all".
 func (u *Usage) CacheReported() bool {
 	if u == nil {
 		return false
@@ -215,14 +186,10 @@ func (u *Usage) CacheReported() bool {
 	return u.PromptTokensDetails != nil || u.PromptCacheHitTokens > 0
 }
 
-// streamOptions requests the provider to include a usage block in the final
-// streaming chunk. Without it, OpenAI-compatible servers (vLLM/SGLang) omit
-// usage from streams, so cache-hit accounting would be invisible.
 type streamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
 }
 
-// thinkingConfig is DeepSeek's thinking-mode switch: {"type":"enabled"|"disabled"}.
 type thinkingConfig struct {
 	Type string `json:"type"`
 }
@@ -239,24 +206,14 @@ type ToolSchemaFunc struct {
 }
 
 type Provider interface {
-	// ProviderName() was dropped: no caller ever asked a provider its own
-	// name — the registry keys everything by model name instead.
 	BuildURL() string
 	BuildHeaders() map[string]string
 	GetContextWindow() int
 	GetMaxTokens() int
 	GetMaxInput() int
-	// ConfigureRequest sets provider-specific request-body fields (top_p,
-	// stream_options, thinking mode, ...) on a request whose model/messages/
-	// temperature/max_tokens/stream are already set. Providers that add nothing
-	// leave the request unchanged.
 	ConfigureRequest(req *chatRequest)
 }
 
-// maxInputBudget is the input space a request may use: the context window minus the
-// output reserve minus a small safety margin for template/chat-format overhead.
-// An unknown window (0) means the budget is unknown too, so this returns 0 rather
-// than inventing one — callers then skip window-based thresholds entirely.
 func maxInputBudget(contextWindow, maxTokens int) int {
 	if contextWindow <= 0 {
 		return 0
@@ -272,15 +229,9 @@ type ChatOption func(*chatOptions)
 type chatOptions struct {
 	Temperature float64
 	MaxTokens   int
-	// TemperatureExplicit marks a per-call temperature override (e.g. the
-	// 0.3 compaction summary). Providers may apply their own sampling
-	// defaults unless this is set.
 	TemperatureExplicit bool
 }
 
-// (There used to be a WithTemperature option: no caller ever set it, so the
-// providers' own sampling defaults always applied. ChatOption itself stays —
-// WithMaxTokens below is the live one.)
 
 func WithMaxTokens(n int) ChatOption {
 	return func(o *chatOptions) { o.MaxTokens = n }

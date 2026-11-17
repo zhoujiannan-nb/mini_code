@@ -21,8 +21,6 @@ import (
 	"github.com/user/mini_code/session"
 )
 
-// newTestWorkerBackend wires the worker service over the standard fake backend
-// (the shape main.go builds at startup) and serves the whole API.
 func newTestWorkerBackend(t *testing.T) (*fakeBackend, *httptest.Server) {
 	t.Helper()
 	be := newTestBackend(t)
@@ -32,8 +30,6 @@ func newTestWorkerBackend(t *testing.T) (*fakeBackend, *httptest.Server) {
 	return be, srv
 }
 
-// workerReq is getJSON/postJSON with the two things they cannot do: a non-GET
-// method and a non-200 status the test wants to assert on.
 func workerReq(t *testing.T, method, url, body string, out interface{}) int {
 	t.Helper()
 	code, raw := doJSON(t, method, url, body)
@@ -52,7 +48,6 @@ func mustOK(t *testing.T, label string, code int, body string) {
 	}
 }
 
-// noteVer reads the version out of a note-write response.
 func noteVer(t *testing.T, body string) int {
 	t.Helper()
 	var v struct {
@@ -98,10 +93,6 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 		t.Fatalf("a fresh session should be born under 其他, got %+v", before)
 	}
 
-	// Move it in through the service: the "移动到 Worker" HTTP endpoint is gone
-	// (membership is fixed at birth), only the birth attach and the legacy
-	// archive alias call MoveToWorker any more. The bucket list must follow,
-	// and the session takes the worker's shared directory.
 	if err := be.mgr.MoveToWorker(id, created.WorkerID); err != nil {
 		t.Fatalf("move into worker: %v", err)
 	}
@@ -129,13 +120,11 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 		UnassignedActive  int `json:"unassigned_active"`
 	}
 	workerReq(t, "GET", srv.URL+"/api/workers", "", &list)
-	// The list always carries the fixed 其他 bucket plus the one created here.
 	var mine, other int
 	for _, wk := range list.Workers {
 		switch {
 		case wk.WorkerID == created.WorkerID:
 			mine++
-			// Nothing runs in this test yet, so the busy counter must be 0.
 			if wk.Sessions != 1 || wk.Active != 0 || wk.Builtin || wk.Reserved {
 				t.Fatalf("the created worker is reported wrong: %+v", wk)
 			}
@@ -150,7 +139,6 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 		t.Fatalf("worker list wrong: %+v", list)
 	}
 
-	// The 公约 through the API (the human path: no approval involved).
 	var note struct {
 		Content string `json:"content"`
 		Ver     int    `json:"ver"`
@@ -169,8 +157,6 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 		t.Fatalf("note write did not persist: %+v", note)
 	}
 
-	// A session already in this worker is told the new text on its next task —
-	// no refresh call, no restart.
 	live, err := be.mgr.Get(id)
 	if err != nil || live == nil {
 		t.Fatalf("get session: %+v %v", live, err)
@@ -179,13 +165,9 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 		t.Fatalf("the session was not told about the edited 公约: %q", n.GetText())
 	}
 
-	// Summary edit (what other sessions read when they decide to join).
 	code, body = doJSON(t, "POST", srv.URL+"/api/workers/"+created.WorkerID+"/summary", `{"summary":"换成带宽测试"}`)
 	mustOK(t, "POST summary", code, body)
 
-	// Rename: only the label moves — the workspace stays put and each session's
-	// own worker-name label follows (it is rendered into their prompts). The
-	// fixed 其他 has a written-in-stone name.
 	code, body = doJSON(t, "POST", srv.URL+"/api/workers/"+created.WorkerID+"/rename", `{"name":"带宽基准"}`)
 	mustOK(t, "POST rename", code, body)
 	if !strings.Contains(body, "带宽基准") {
@@ -202,7 +184,6 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 		t.Fatalf("renaming 其他 should be refused, got %d (%s)", code, body)
 	}
 
-	// Deleting the worker takes its sessions with it and keeps the workspace.
 	var del struct {
 		DeletedSessions int `json:"deleted_sessions"`
 	}
@@ -222,9 +203,6 @@ func TestWorkersAPIEndToEnd(t *testing.T) {
 	}
 }
 
-// TestArchiveAPIIsTheWorkerBucket pins the replacement of the old archive flag:
-// the endpoint still answers, but it now means "move into the built-in 已归档
-// bucket", which the default list keeps out of sight.
 func TestArchiveAPIIsTheWorkerBucket(t *testing.T) {
 	be, srv := newTestWorkerBackend(t)
 	sess, err := be.mgr.CreateSessionRecord("legacy", "build", t.TempDir(), nil)
@@ -247,8 +225,6 @@ func TestArchiveAPIIsTheWorkerBucket(t *testing.T) {
 		t.Fatalf("archive did not map to the built-in bucket: %+v", bucket)
 	}
 
-	// Restoring means "back to the fixed 其他 bucket" — there is no unassigned
-	// state anymore.
 	code, body = doJSON(t, "POST", srv.URL+"/api/sessions/"+id+"/archive", `{"archived":false}`)
 	mustOK(t, "POST un-archive", code, body)
 	workerReq(t, "GET", srv.URL+"/api/sessions", "", &visible)
@@ -257,27 +233,16 @@ func TestArchiveAPIIsTheWorkerBucket(t *testing.T) {
 	}
 }
 
-// TestWorkersAPIRejectsUnknownTargets keeps a stale sidebar (a worker deleted in
-// another window) from silently filing a session nowhere. The session does not
-// have to exist for the worker lookup to answer, so the unknown worker wins.
 func TestWorkersAPIRejectsUnknownTargets(t *testing.T) {
 	_, srv := newTestWorkerBackend(t)
-	// A worker without a workspace cannot host a convention file edit.
 	if code, body := doJSON(t, "POST", srv.URL+"/api/workers/nope/note", `{"content":"x"}`); code == http.StatusOK {
 		t.Fatalf("note write on an unknown worker succeeded: %s", body)
 	}
-	// A session that no longer exists (deleted in another window) must answer 404
-	// on the membership route that survives — it used to nil-deref and drop the
-	// connection. (The /worker move route itself is gone: membership at birth.)
 	if code, msg := doJSON(t, "POST", srv.URL+"/api/sessions/s-gone/archive", `{"archived":true}`); code != http.StatusNotFound {
 		t.Errorf("/api/sessions/s-gone/archive: status = %d (%s), want 404", code, msg)
 	}
 }
 
-// TestNewSessionCarriesWorker checks the sidebar's switcher really puts a brand
-// new session into the worker: the first message creates the session already
-// attached, so its very first request carries the worker block (no mid-life
-// prefix break).
 func TestNewSessionCarriesWorker(t *testing.T) {
 	_, srv := newTestWorkerBackend(t)
 	base := t.TempDir()
@@ -294,7 +259,6 @@ func TestNewSessionCarriesWorker(t *testing.T) {
 	code, body = doJSON(t, "POST", srv.URL+"/api/messages", `{"content":"开工","worker_id":"`+created.WorkerID+`"}`)
 	mustOK(t, "POST /api/messages", code, body)
 
-	// The hub creates the session asynchronously; poll the bucket list for it.
 	var got []SessionSummary
 	for i := 0; i < 100; i++ {
 		workerReq(t, "GET", srv.URL+"/api/sessions?worker="+created.WorkerID, "", &got)
@@ -311,18 +275,11 @@ func TestNewSessionCarriesWorker(t *testing.T) {
 	}
 }
 
-// The two notice markers, mirrored here because they are unexported in the
-// session package. These assertions are about what reaches the *model*.
 const (
 	noticeJoinMarker = "__MC_WORKER_JOIN__"
 	noticeNoteMarker = "__MC_WORKER_NOTE__"
 )
 
-// TestWorkerNoticeReachesModel is the end-to-end check of where worker reminders
-// land: as one user message at the tail of a task's conversation, once per task,
-// never as a system section (the system prompt is frozen for a session's whole
-// lifetime, so a message is the only place a mid-life join or an edited 公约 can
-// reach the model) — and, unlike the old brief, visible in the UI transcript.
 func TestWorkerNoticeReachesModel(t *testing.T) {
 	var mu sync.Mutex
 	var bodies []string
@@ -359,8 +316,6 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 	srv := httptest.NewServer(NewServer(&fakeBackend{hub: hub, mgr: mgr, ap: approval.NewService(hub, mgr)}))
 	defer srv.Close()
 
-	// awaitBody waits for a captured model request containing want. Each POST
-	// /api/messages answers with a plain "stop" so it produces exactly one request.
 	awaitBody := func(what, want string) string {
 		t.Helper()
 		deadline := time.Now().Add(20 * time.Second)
@@ -380,8 +335,6 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 		}
 	}
 
-	// 1) A fresh session is born under the fixed 其他 bucket and receives no
-	// notice at all — the old "pick or create a worker" reminder is retired.
 	code, body := doJSON(t, "POST", srv.URL+"/api/messages", `{"content":"随便问一句"}`)
 	mustOK(t, "POST /api/messages", code, body)
 	if req := awaitBody("first task", "随便问一句"); strings.Contains(req, noticeJoinMarker) || strings.Contains(req, noticeNoteMarker) {
@@ -401,8 +354,6 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 	}
 	id := list[0].SessionID
 
-	// 2) Joining through the sidebar: attached, but the worker has no 公约 yet, so
-	// the next task still says nothing — and the retired join reminder stays gone.
 	base := t.TempDir()
 	code, body = doJSON(t, "POST", srv.URL+"/api/workers", `{"name":"gpu","summary":"统一跑分脚本","base_dir":"`+jsonEscape(base)+`"}`)
 	mustOK(t, "POST /api/workers", code, body)
@@ -427,8 +378,6 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 		t.Error("a worker with an empty v0 公约 should not send a notice")
 	}
 
-	// 3) A human edits the 公约 in the sidebar. The next task is told the new text,
-	// appended after the user's own message; nothing already in the history moves.
 	note, _ := json.Marshal(map[string]string{"content": "新约定:跑分统一用 bench.py"})
 	code, body = doJSON(t, "POST", srv.URL+"/api/workers/"+created.WorkerID+"/note", string(note))
 	mustOK(t, "POST note", code, body)
@@ -445,8 +394,6 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 		t.Error("the 公约 notice was not appended after the user message")
 	}
 
-	// 4) The UI transcript shows them — they are context the user is entitled to
-	// see — while the system prompt stays worker-free and byte-stable.
 	awaitNotices(t, mgr, id, 1)
 	var view struct {
 		Messages []struct {
@@ -486,7 +433,6 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 		t.Error("the system prompt still carries worker content; it must stay byte-stable")
 	}
 
-	// 5) A second edit is a second notice; editing nothing changes nothing.
 	note2, _ := json.Marshal(map[string]string{"content": "新约定二:结果写 results/"})
 	code, body = doJSON(t, "POST", srv.URL+"/api/workers/"+created.WorkerID+"/note", string(note2))
 	mustOK(t, "POST note 2", code, body)
@@ -499,12 +445,9 @@ func TestWorkerNoticeReachesModel(t *testing.T) {
 	if !strings.Contains(req, noticeNoteMarker+created.WorkerID+":2") {
 		t.Error("the second notice does not carry v2")
 	}
-	// The record keeps notices: the model must see them on every later turn.
 	awaitNotices(t, mgr, id, 2)
 }
 
-// awaitNotices polls until the session's record carries want notices — one is
-// persisted only after its model request completes.
 func awaitNotices(t *testing.T, mgr *session.SessionManager, id string, want int) {
 	t.Helper()
 	for i := 0; i < 200; i++ {
@@ -538,10 +481,6 @@ func jsonEscape(s string) string {
 	return string(b[1 : len(b)-1])
 }
 
-// TestWorkersListBusyCounts pins what the sidebar switcher's status dots read:
-// every bucket carries how many of its sessions run right now, and a session
-// counts as busy even when only one of its sub-agents still runs — the same rule
-// the session rows use, so a worker's dot and the dots of its rows can't disagree.
 func TestWorkersListBusyCounts(t *testing.T) {
 	be, srv := newTestWorkerBackend(t)
 	base := t.TempDir()
@@ -572,7 +511,6 @@ func TestWorkersListBusyCounts(t *testing.T) {
 		t.Fatalf("move into worker: %v", err)
 	}
 
-	// busy reads the switcher payload: per-worker busy count + 未分配's.
 	busy := func() (map[string]int, int) {
 		t.Helper()
 		var v struct {
@@ -594,7 +532,6 @@ func TestWorkersListBusyCounts(t *testing.T) {
 		t.Fatalf("idle buckets reported busy: %+v / 未分配 %d", got, freeN)
 	}
 
-	// A task on the worker's own session → that bucket reads 1, 未分配 stays 0.
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	be.hub.RegisterExternalTask(inWorker.ID(), cancel)
@@ -603,9 +540,6 @@ func TestWorkersListBusyCounts(t *testing.T) {
 	}
 	be.hub.UnregisterExternalTask(inWorker.ID())
 
-	// A task on a sub-agent only: the sub-agent is not a root session, so the
-	// number has to come from its parent's bucket — exactly like the session row.
-	// The parent is a plain session, which now lives in the fixed 其他 bucket.
 	_, cancel2 := context.WithCancel(context.Background())
 	defer cancel2()
 	be.hub.RegisterExternalTask(kid.ID(), cancel2)
@@ -614,11 +548,6 @@ func TestWorkersListBusyCounts(t *testing.T) {
 	}
 }
 
-// TestWorkersDeleteRemovesSessionsIncludingARunningOne is the API half of "the
-// sidebar did not refresh after I deleted the worker": the delete must return on
-// its own, and every session of the worker (its sub-agents included) must be gone
-// from every bucket right after — otherwise the client is left staring at rows
-// that no longer exist. A session with a live task is the interesting case.
 func TestWorkersDeleteRemovesSessionsIncludingARunningOne(t *testing.T) {
 	be, srv := newTestWorkerBackend(t)
 	base := t.TempDir()
@@ -649,14 +578,10 @@ func TestWorkersDeleteRemovesSessionsIncludingARunningOne(t *testing.T) {
 			t.Fatalf("move %s: %v", sid, err)
 		}
 	}
-	// The worker's first session has a live task, as when you delete the worker
-	// you are currently watching work.
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	be.hub.RegisterExternalTask(s1, cancel)
 
-	// A hung delete shows up as a client timeout: the UI would otherwise sit
-	// there with the old rows on screen and no explanation.
 	cl := &http.Client{Timeout: 8 * time.Second}
 	req, err := http.NewRequest(http.MethodDelete, srv.URL+"/api/workers/"+created.WorkerID, nil)
 	if err != nil {

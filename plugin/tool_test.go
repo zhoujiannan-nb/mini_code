@@ -9,12 +9,8 @@ import (
 	"testing"
 )
 
-// TestToolUTF8OutputSurvives checks the Windows encoding trap: a child process
-// whose stdout is not clean UTF-8 must not break the tool result (which is
-// JSON-marshalled into the next request).
 func TestToolUTF8OutputSurvives(t *testing.T) {
 	home := setHome(t)
-	// cmd emits a byte sequence that is not valid UTF-8 (0xFF) followed by text.
 	writePlugin(t, home, "raw", `{"id":"raw","tools":[{"name":"raw_tool",
 		"command":"cmd","args":["/C","echo \u00ffhello"]}]}`, nil)
 	ts := PluginTools(Load())
@@ -30,10 +26,8 @@ func TestToolUTF8OutputSurvives(t *testing.T) {
 	}
 }
 
-// TestToolEnvForcesUTF8 checks the child environment carries the UTF-8 knobs.
 func TestToolEnvForcesUTF8(t *testing.T) {
 	home := setHome(t)
-	// The child echoes its own PYTHONIOENCODING (cmd expands %VAR%).
 	writePlugin(t, home, "env", `{"id":"env","tools":[{"name":"env_tool",
 		"command":"cmd","args":["/C","echo %PYTHONIOENCODING% %PYTHONUTF8%"]}]}`, nil)
 	ts := PluginTools(Load())
@@ -49,9 +43,8 @@ func TestToolEnvForcesUTF8(t *testing.T) {
 	}
 }
 
-// TestTruncateKeepsUTF8Intact: cutting mid-rune would produce invalid UTF-8.
 func TestTruncateKeepsUTF8Intact(t *testing.T) {
-	s := strings.Repeat("中", 100) // 3 bytes each
+	s := strings.Repeat("中", 100)
 	got := truncate(s, 10)
 	if !strings.HasPrefix(got, "中中中") {
 		t.Fatalf("truncate lost characters: %q", got)
@@ -59,7 +52,6 @@ func TestTruncateKeepsUTF8Intact(t *testing.T) {
 	if !strings.Contains(got, "truncated") {
 		t.Fatal("truncate did not mark the cut")
 	}
-	// Whatever the boundary, the result stays valid UTF-8.
 	for n := 1; n < 12; n++ {
 		if !utf8Valid(truncate(s, n)) {
 			t.Fatalf("truncate(%d) produced invalid UTF-8", n)
@@ -77,8 +69,6 @@ func utf8Valid(s string) bool {
 	return len(b) == 0 || string(b) == s
 }
 
-// TestToolTimeoutIsReported: a hung command must come back as a tool result the
-// model can read, not as a stuck loop.
 func TestToolTimeoutIsReported(t *testing.T) {
 	home := setHome(t)
 	writePlugin(t, home, "slow", `{"id":"slow","tools":[{"name":"slow_tool",
@@ -96,8 +86,6 @@ func TestToolTimeoutIsReported(t *testing.T) {
 	}
 }
 
-// TestToolParametersDefault: a manifest without a parameters block still yields
-// a valid object schema (a nil `required` would be rejected by the API).
 func TestToolParametersDefault(t *testing.T) {
 	home := setHome(t)
 	writePlugin(t, home, "bare", `{"id":"bare","tools":[{"name":"bare_tool","command":"cmd","args":["/C","echo hi"]}]}`, nil)
@@ -114,8 +102,6 @@ func TestToolParametersDefault(t *testing.T) {
 	}
 }
 
-// TestToolWorkingDirectoryIsThePluginDir lets a plugin ship a script next to its
-// manifest and run it by relative path.
 func TestToolWorkingDirectoryIsThePluginDir(t *testing.T) {
 	home := setHome(t)
 	writePlugin(t, home, "rel", `{"id":"rel","tools":[{"name":"rel_tool",
@@ -131,6 +117,6 @@ func TestToolWorkingDirectoryIsThePluginDir(t *testing.T) {
 	if !strings.Contains(res.Text, "marker-ok") {
 		t.Fatalf("the child did not run in the plugin directory: %q", res.Text)
 	}
-	_ = filepath.Join // keep the import used if the assertions change
+	_ = filepath.Join
 	_ = os.Getenv
 }

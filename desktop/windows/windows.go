@@ -1,6 +1,3 @@
-// Package desktopwin implements the desktop shell on Windows: a native
-// WebView2 window (jchv/go-webview2), single-instance named mutex + named
-// pipe, MessageBoxW fatal dialogs and DWM dark title bars.
 package desktopwin
 
 import (
@@ -44,22 +41,15 @@ const (
 	swRestore   = 9
 	gclpHIcon   = -14
 	gclpHIconSm = -34
-	dwmwaDark20 = 20 // DWMWA_USE_IMMERSIVE_DARK_MODE: Win10 1809+ / Win11
-	dwmwaDark19 = 19 // 早期 Win10 构建的旧属性号
-	// DWMWA_WINDOW_CORNER_PREFERENCE(Win11+):2 = DWMWCP_ROUND。桌面无边框模式
-	// 摘掉 WS_CAPTION 后系统默认可能把四角拉成方的,这里显式要圆角,和页面侧
-	// body 的 18px 圆角壳配套 —— OS 裁掉圆弧以外的像素,四角露出的是桌面而不是
-	// 页面底色。Win10 没有这个属性,调用静默失败,由页面侧圆角壳自行收口。
+	dwmwaDark20 = 20
+	dwmwaDark19 = 19
 	dwmwaCornerPref = 33
 )
 
-// New returns the Windows desktop shell.
 func New() desktop.Platform { return &platform{} }
 
 type platform struct{}
 
-// Fatal reports a startup problem to the user. Console builds also print it;
-// -H windowsgui builds have no console, so a message box is used.
 func (p *platform) Fatal(msg string) {
 	slog.Error("desktop: " + msg)
 	fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
@@ -69,10 +59,6 @@ func (p *platform) Fatal(msg string) {
 	os.Exit(1)
 }
 
-// AcquireSingleInstance locks the desktop instance mutex.
-//
-// NOTE: x/sys Proc.Call returns Errno(0) (non-nil) on success, so the result
-// must be checked numerically, not with a nil test.
 func (p *platform) AcquireSingleInstance() (bool, func()) {
 	name, _ := windows.UTF16PtrFromString(instanceMutex)
 	r, _, lastErr := procCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(name)))
@@ -94,7 +80,6 @@ func (p *platform) AcquireSingleInstance() (bool, func()) {
 	return true, func() { windows.CloseHandle(h) }
 }
 
-// NotifyExisting asks the running instance to show/focus its window.
 func (p *platform) NotifyExisting() error {
 	pipe, _ := windows.UTF16PtrFromString(pipeName)
 	deadline := time.Now().Add(5 * time.Second)
@@ -121,8 +106,6 @@ func (p *platform) NotifyExisting() error {
 	return fmt.Errorf("no reachable instance: %w", lastErr)
 }
 
-// StartShowListener listens for "show" commands from second launches.
-// It returns immediately; the listener runs in its own goroutine.
 func (p *platform) StartShowListener(onShow func()) {
 	go p.showListenerLoop(onShow)
 }
@@ -147,8 +130,6 @@ func (p *platform) showListenerLoop(onShow func()) {
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		// Read the whole short command. The client writes and closes
-		// immediately, so read until EOF or the keyword is seen.
 		var data []byte
 		buf := make([]byte, 64)
 		for {
@@ -164,7 +145,6 @@ func (p *platform) showListenerLoop(onShow func()) {
 				break
 			}
 		}
-		// Reset the pipe so the next ConnectNamedPipe can listen again.
 		windows.DisconnectNamedPipe(pipe)
 		if len(data) > 0 {
 			slog.Info("desktop: instance pipe message", "data", string(data))
@@ -175,8 +155,6 @@ func (p *platform) showListenerLoop(onShow func()) {
 	}
 }
 
-// NewWindow creates the WebView2 window. WebView2 user data (persistent
-// localStorage) lives in %APPDATA%\mini_code\wv2data.
 func (p *platform) NewWindow(opts desktop.WindowOptions) (desktop.Window, error) {
 	appData, _ := os.UserConfigDir()
 	dataPath := filepath.Join(appData, "mini_code", "wv2data")
@@ -185,27 +163,22 @@ func (p *platform) NewWindow(opts desktop.WindowOptions) (desktop.Window, error)
 		dataPath = ""
 	}
 
-	// 开机动画的语音要在【用户一次都没点过】的情况下出声,而 Chromium 的自动播放
-	// 策略默认禁止(实测:沙箱 iframe、allow="autoplay"、甚至顶层文档都拦,加这个
-	// 开关后沙箱里能正常播)。WebView2 支持用环境变量传浏览器参数,已有值就追加。
 	if args := os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"); !strings.Contains(args, "autoplay-policy") {
 		os.Setenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
 			strings.TrimSpace(args+" --autoplay-policy=no-user-gesture-required"))
 	}
 
-	// 进程现在是 DPI-aware(dpi.go),CreateWindowExW 收的是物理像素,
-	// 所以先把设计尺寸按系统 DPI 换算,并夹到工作区 90% 以内。
 	winW, winH := scaledWindowSize(uint(opts.Width), uint(opts.Height))
 	slog.Debug("desktop: creating window", "logical", opts.Width, "w", winW, "h", winH, "dpi", systemDPI())
 
 	wv := webview2.NewWithOptions(webview2.WebViewOptions{
-		Debug:    true, // F12 devtools + right-click context menu
+		Debug:    true,
 		DataPath: dataPath,
 		WindowOptions: webview2.WindowOptions{
 			Title:  opts.Title,
 			Width:  winW,
 			Height: winH,
-			IconId: 1, // app icon from rsrc resources, 0 = default
+			IconId: 1,
 			Center: true,
 		},
 	})
@@ -213,19 +186,11 @@ func (p *platform) NewWindow(opts desktop.WindowOptions) (desktop.Window, error)
 		return nil, fmt.Errorf("WebView2 初始化失败：请确认已安装 Microsoft Edge WebView2 运行时（Win10/Win11 通常自带；https://developer.microsoft.com/microsoft-edge/webview2/）")
 	}
 	w := &window{wv: wv}
-	// go-webview2 tries the icon itself, but has been observed to end up
-	// with a default icon, so we enforce it.
 	applyWindowIcon(w.Handle())
-	// dsh 式无边框:去原生标题栏,页面自绘顶条(见 js/lib/titlebar.js)。
-	// Mica 背后板在 installFrameless 里开;WebView 透明背景走上面的环境变量,
-	// 页面 mc-glass 与 Mica 成对生效(见 transparency.go)。
 	installFrameless(w)
 	return w, nil
 }
 
-// ShowWindow makes the (already open) window visible and foreground. It may
-// be called from the pipe-reader goroutine, hence plain ShowWindow /
-// SetForegroundWindow cross-thread calls.
 func (p *platform) ShowWindow(w desktop.Window) {
 	hwnd := uintptr(w.Handle())
 	if hwnd == 0 {
@@ -244,12 +209,10 @@ func isIconic(hwnd uintptr) bool {
 	return r != 0
 }
 
-// applyWindowIcon loads the app icon (resource ID 1, from rsrc resources)
-// and sets it on the window class.
 func applyWindowIcon(hwnd unsafe.Pointer) uintptr {
 	var hinstance windows.Handle
 	_ = windows.GetModuleHandleEx(0, nil, &hinstance)
-	icon, _, _ := procLoadImageW.Call(uintptr(hinstance), 1, 1, 0, 0, 0xC0) // MAKEINTRESOURCE(1), IMAGE_ICON, LR_DEFAULTSIZE|LR_SHARED
+	icon, _, _ := procLoadImageW.Call(uintptr(hinstance), 1, 1, 0, 0, 0xC0)
 	if icon == 0 {
 		return 0
 	}
@@ -259,8 +222,6 @@ func applyWindowIcon(hwnd unsafe.Pointer) uintptr {
 	return icon
 }
 
-// SetDarkTitleBar 用 DWM 沉浸式深色模式把原生标题栏切到深色/浅色,
-// 与页面内主题(浅色/深色/随系统)保持一致,避免深色界面顶着白条标题栏。
 func (p *platform) SetDarkTitleBar(w desktop.Window, dark bool) {
 	hwnd := uintptr(w.Handle())
 	if hwnd == 0 {
@@ -275,8 +236,6 @@ func (p *platform) SetDarkTitleBar(w desktop.Window, dark bool) {
 	}
 }
 
-// PrefersDark 读 Windows"个人化 → 选择模式"(应用深色),
-// 用于窗口刚创建、页面还没加载时的标题栏初始颜色(页面加载后 JS 会再校正)。
 func (p *platform) PrefersDark() bool {
 	k, err := registry.OpenKey(
 		registry.CURRENT_USER,
@@ -291,7 +250,6 @@ func (p *platform) PrefersDark() bool {
 	return err == nil && v == 0
 }
 
-// RunTray starts the system tray: 打开窗口 / 退出.
 func (p *platform) RunTray(icon []byte, onOpen func(), onExit func()) {
 	go systray.Run(func() {
 		systray.SetIcon(icon)
@@ -313,7 +271,6 @@ func (p *platform) RunTray(icon []byte, onOpen func(), onExit func()) {
 	}, nil)
 }
 
-// window adapts a go-webview2.WebView to desktop.Window.
 type window struct {
 	wv webview2.WebView
 }

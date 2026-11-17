@@ -1,8 +1,3 @@
-/* ---------- 开机动画(播放器) ----------
-   黑幕写在最早加载的一张表里:第一帧就把整个视口铺黑,不会先白一下再盖住。
-   与配置注入配套,见服务端 web/bootanim.go 的 injectBootAnim。
-   主题本身是不可信的第三方 HTML,放进 sandbox="allow-scripts" 的 iframe 里跑,
-   只能往父窗口 postMessage。播放器逻辑见 js/bootanim-player.js。 */
 html.mc-boot::after {
   content: ""; position: fixed; inset: 0; z-index: 2147483000;
   background: #05070a; pointer-events: auto;
@@ -26,9 +21,6 @@ html.mc-boot-out::after { opacity: 0; }
 html.mc-boot #mc-boot-skip.show { opacity: .75; }
 #mc-boot-skip:hover { opacity: 1 !important; color: #e6edf3; border-color: rgba(255,255,255,.3); }
 
-/* 桌面无边框(v3.2):开机黑幕/播放器也按 18px 圆弧裁切 —— fixed 层不受
-   body 圆角壳裁切,不补这一条,开机那两秒四角就是方的。 */
 html.frameless.mc-boot::after,
 html.frameless #mc-boot { border-radius: 18px; }
-/* v3.4:frameless 下 html 底色改成了页面底色,开机期间要把缝也铺黑,黑幕才完整。 */
 html.frameless.mc-boot { background: #05070a; }

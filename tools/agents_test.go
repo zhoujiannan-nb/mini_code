@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// fakeAgents is a stand-in dispatcher: it records what the tools asked for and
-// replays canned answers, so the tests below pin the tool surface (validation,
-// wording, name plumbing) without a session manager.
 type fakeAgents struct {
 	lastSpec  AgentSpec
 	lastSend  string
@@ -61,9 +58,6 @@ func (f *fakeAgents) Cancel(agent string) bool {
 
 func (f *fakeAgents) List(string) []JobInfo { return f.list }
 
-// TestAgentToolValidation covers the required parameters and the role whitelist:
-// a bad call must come back as one actionable sentence, not a panic or an
-// empty result.
 func TestAgentToolValidation(t *testing.T) {
 	d := &fakeAgents{}
 	tool := NewAgentTool()
@@ -88,9 +82,6 @@ func TestAgentToolValidation(t *testing.T) {
 	}
 }
 
-// TestAgentToolForegroundAndBackground pins the dsh answer shape: subagent is
-// always asynchronous — every call returns the name plus the tools that reach
-// it later, never the result itself.
 func TestAgentToolForegroundAndBackground(t *testing.T) {
 	d := &fakeAgents{run: AgentRun{Name: "reviewer", ChildID: "child-9", Status: "completed", Result: "all good"}}
 	tool := NewAgentTool()
@@ -131,8 +122,6 @@ func TestAgentToolForegroundAndBackground(t *testing.T) {
 	}
 }
 
-// TestSendMessageWording: steering and waking are different events and the model
-// must be able to tell them apart (one continues a run, the other starts one).
 func TestSendMessageWording(t *testing.T) {
 	d := &fakeAgents{mode: "steer", sendName: "reviewer"}
 	tool := NewSendMessageTool("parent", d)
@@ -152,8 +141,6 @@ func TestSendMessageWording(t *testing.T) {
 	}
 }
 
-// TestListAgentsRendersStatus: running and inactive are the two states; a failed
-// last run is surfaced as such, and the conversation itself is always row one.
 func TestListAgentsRendersStatus(t *testing.T) {
 	d := &fakeAgents{list: []JobInfo{
 		{ID: "c1", Name: "reviewer", Role: "work", Description: "code review", Goal: "review the diff", Status: "running"},
@@ -175,8 +162,6 @@ func TestListAgentsRendersStatus(t *testing.T) {
 	}
 }
 
-// TestUnknownAgentHintListsNames: a typo must come back with the names that do
-// exist, so the fix is one retry rather than a list_agents round trip.
 func TestUnknownAgentHintListsNames(t *testing.T) {
 	d := &fakeAgents{
 		sendErr: context.DeadlineExceeded,

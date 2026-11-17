@@ -16,31 +16,21 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// titleInstructionNeedle identifies the auxiliary title request among the calls a
-// fake model server sees. Keep it in sync with titleRequest.
 const titleInstructionNeedle = "Name the request below"
 
 type capturedCall struct {
 	messages  []interface{}
-	tools     string // serialized tools field
-	thinking  string // serialized thinking field (only providers with a switch send it)
-	kwargs    string // serialized chat_template_kwargs field (the Qwen3 thinking switch)
+	tools     string
+	thinking  string
+	kwargs    string
 	titleCall bool
 }
 
-// titleProbe records every model request and answers: the request that ends with
-// the title instruction gets a decorated title (the decoration must be stripped on
-// the way in), everything else gets a plain one-line answer.
 type titleProbe struct {
 	mu     sync.Mutex
 	calls  []capturedCall
-	notice string // reply for the title request
-	// finish is the finish_reason of the title reply ("" = "stop"). A naming reply
-	// cut off by the budget must still be used, which is what that knob proves.
+	notice string
 	finish string
-	// holdTask, when non-nil, makes an ordinary (task) reply wait until the naming
-	// call has reached the server. A design that titled only after the task
-	// finished would stall here and never produce a title.
 	holdTask chan bool
 	held     sync.Once
 }
@@ -109,8 +99,6 @@ func (p *titleProbe) titleCalls() int {
 	return n
 }
 
-// lastTaskCall is the last ordinary (non-title) request: the one whose prefix the
-// title request is supposed to reuse.
 func (p *titleProbe) lastTaskCall() (capturedCall, bool) {
 	calls := p.snapshot()
 	for i := len(calls) - 1; i >= 0; i-- {
@@ -126,9 +114,6 @@ func newTitleEnv(t *testing.T, probe *titleProbe) *SessionManager {
 	return newTitleEnvProvider(t, probe, "vllm")
 }
 
-// newTitleEnvProvider is newTitleEnv on a chosen provider type. The DeepSeek one
-// exists to prove the thinking switch really goes out on a naming call (see
-// TestTitleRequestTurnsThinkingOff) — vLLM has no switch to observe.
 func newTitleEnvProvider(t *testing.T, probe *titleProbe, providerType string) *SessionManager {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(probe.handle))
@@ -149,9 +134,6 @@ func newTitleEnvProvider(t *testing.T, probe *titleProbe, providerType string) *
 	return mgr
 }
 
-// awaitTitle polls the stored title until it becomes want (or the wait runs out,
-// in which case it reports what it saw). The request is fired in the background on
-// purpose, so a test can only wait for the outcome.
 func awaitTitle(t *testing.T, mgr *SessionManager, sessionID, want string, wait time.Duration) string {
 	t.Helper()
 	deadline := time.Now().Add(wait)
@@ -174,16 +156,10 @@ func titlePrompt(t *testing.T, s *Session, goal string) {
 	}
 }
 
-// TestSessionTitleGeneratedAfterFirstTask is the whole mechanism: the placeholder
-// title is replaced by the model's, the naming call is one small user message with
-// no tools, the instruction is never persisted, and it happens exactly once per
-// session.
 func TestSessionTitleGeneratedAfterFirstTask(t *testing.T) {
 	probe := &titleProbe{}
 	mgr := newTitleEnv(t, probe)
 	mgr.SetTitlePolicy(true, "")
-	// Production shape: the hub names a new session after its first message, so
-	// the title here must equal the goal or the guard would read it as a rename.
 	goal := "帮我给 nginx 打开 gzip 支持"
 	s := mustSession(t, mgr, goal)
 	titlePrompt(t, s, goal)
@@ -194,10 +170,6 @@ func TestSessionTitleGeneratedAfterFirstTask(t *testing.T) {
 	if n := probe.titleCalls(); n != 1 {
 		t.Fatalf("%d title requests, want exactly 1", n)
 	}
-	// The naming call is its own small request: one user message quoting the first
-	// ask, no assistant turns, no tools. Assistant turns would drag in
-	// reasoning_content semantics (DeepSeek rejects them while thinking is on), and
-	// a tool list invites the model to start the task instead of naming it.
 	task, ok := probe.lastTaskCall()
 	if !ok {
 		t.Fatal("the fake model never saw a task request")
@@ -224,7 +196,6 @@ func TestSessionTitleGeneratedAfterFirstTask(t *testing.T) {
 	if len(task.tools) < 20 {
 		t.Errorf("fixture sanity: the task request should carry tools to contrast with, got %q", task.tools)
 	}
-	// Nothing of the auxiliary turn is persisted into the session.
 	rec, err := mgr.GetStore().Get(s.ID())
 	if err != nil || rec == nil {
 		t.Fatalf("read session: %v", err)
@@ -234,7 +205,6 @@ func TestSessionTitleGeneratedAfterFirstTask(t *testing.T) {
 			t.Fatalf("the title instruction leaked into the stored conversation: %q", m.GetText())
 		}
 	}
-	// A second task must not spend another request.
 	titlePrompt(t, s, "再加一个开关")
 	time.Sleep(200 * time.Millisecond)
 	if n := probe.titleCalls(); n != 1 {
@@ -245,8 +215,6 @@ func TestSessionTitleGeneratedAfterFirstTask(t *testing.T) {
 	}
 }
 
-// TestRenamedSessionIsPinned: a human-chosen title wins forever — no request is
-// even made for it.
 func TestRenamedSessionIsPinned(t *testing.T) {
 	probe := &titleProbe{}
 	mgr := newTitleEnv(t, probe)
@@ -269,8 +237,6 @@ func TestRenamedSessionIsPinned(t *testing.T) {
 	}
 }
 
-// TestTitleOffUntilWired: the policy is off unless the runtime sets it, so tests
-// (and any future wiring gap) never fire the extra request.
 func TestTitleOffUntilWired(t *testing.T) {
 	probe := &titleProbe{}
 	mgr := newTitleEnv(t, probe)
@@ -286,8 +252,6 @@ func TestTitleOffUntilWired(t *testing.T) {
 	}
 }
 
-// TestSubagentSessionNotTitled: a sub-agent session is named by its goal, and
-// titling it would be a request nobody reads the result of.
 func TestSubagentSessionNotTitled(t *testing.T) {
 	probe := &titleProbe{}
 	mgr := newTitleEnv(t, probe)
@@ -305,8 +269,6 @@ func TestSubagentSessionNotTitled(t *testing.T) {
 	}
 }
 
-// TestTitleReplyCapped: a rambling reply is cut to the cap, not rejected — a
-// slightly too long title is still better than the first sentence of the user.
 func TestTitleReplyCapped(t *testing.T) {
 	probe := &titleProbe{notice: "关于 nginx gzip 配置的若干说明与追问,这里没有可直接使用的标题"}
 	mgr := newTitleEnv(t, probe)
@@ -322,10 +284,8 @@ func TestTitleReplyCapped(t *testing.T) {
 	}
 }
 
-// TestTitleFailureKeepsPlaceholder: a reply that is not a title leaves the
-// placeholder alone, and the one attempt stays spent — no retry on later tasks.
 func TestTitleFailureKeepsPlaceholder(t *testing.T) {
-	probe := &titleProbe{notice: "\n\n"} // the model answered nothing usable
+	probe := &titleProbe{notice: "\n\n"}
 	mgr := newTitleEnv(t, probe)
 	mgr.SetTitlePolicy(true, "")
 	s := mustSession(t, mgr, "帮我看看这个报错")
@@ -345,14 +305,11 @@ func TestTitleFailureKeepsPlaceholder(t *testing.T) {
 	}
 }
 
-// TestLegacyRenamedTitleIsPinned: sessions renamed before title_src existed carry
-// no marker, so the shape of the title is the only evidence. A title that is not a
-// truncation of the first message was typed by someone and gets pinned.
 func TestLegacyRenamedTitleIsPinned(t *testing.T) {
 	probe := &titleProbe{}
 	mgr := newTitleEnv(t, probe)
 	mgr.SetTitlePolicy(true, "")
-	s := mustSession(t, mgr, "nginx 排错") // a hand-made title, years old in DB terms
+	s := mustSession(t, mgr, "nginx 排错")
 	titlePrompt(t, s, "帮我把这个报错的栈贴给你看看")
 	time.Sleep(300 * time.Millisecond)
 	if n := probe.titleCalls(); n != 0 {
@@ -382,7 +339,6 @@ func TestLooksLikePlaceholder(t *testing.T) {
 	if looksLikePlaceholder("x", nil) {
 		t.Fatal("a session without messages has nothing to compare against")
 	}
-	// A compaction instruction is injected, not typed by the user.
 	notices := []provider.Message{
 		BuildCompactRequest(""),
 		{Role: "user", Content: "真实第一句"},
@@ -420,12 +376,6 @@ func TestSanitizeTitle(t *testing.T) {
 	}
 }
 
-// TestTitleRequestTurnsThinkingOff: naming a session is not a reasoning task, so on
-// a provider with a thinking switch the naming call must go out switched OFF while
-// the task request next to it keeps the model's own default. This is the field
-// failure the design change is about: a thinking model spent the output budget on
-// its draft and answered with finish=length and no title, so no session ever got a
-// generated one.
 func TestTitleRequestTurnsThinkingOff(t *testing.T) {
 	probe := &titleProbe{}
 	mgr := newTitleEnvProvider(t, probe, "deepseek")
@@ -448,30 +398,18 @@ func TestTitleRequestTurnsThinkingOff(t *testing.T) {
 	if titleCall.thinking != `{"type":"disabled"}` {
 		t.Fatalf("the naming call carried thinking %s, want {\"type\":\"disabled\"}", titleCall.thinking)
 	}
-	// Sanity on the other side: the switch is per call, not a global mute. DeepSeek
-	// thinks by default, so the task request carries thinking enabled — the naming
-	// call is the only place it goes off.
 	if taskCall.thinking != `{"type":"enabled"}` {
 		t.Errorf("the task request should keep the model's own thinking default, got %s", taskCall.thinking)
 	}
 }
 
-// TestTitleRequestQuotesOnlyTheFirstMessage: the naming call carries the first thing
-// a human typed, and nothing else — injected notices name nothing, and a huge paste
-// is cut rather than sent whole.
 func TestTitleRequestQuotesOnlyTheFirstMessage(t *testing.T) {
 	probe := &titleProbe{}
 	mgr := newTitleEnv(t, probe)
 	mgr.SetTitlePolicy(true, "")
-	full := strings.Repeat("很长的报错日志 ", 120) // 960 runes, well past titleInputRunes
-	// The hub's placeholder: the first message cut to FallbackTitleRunes. Hand the
-	// session anything else and it reads as a hand-typed title, which gets pinned
-	// rather than renamed (TestLegacyRenamedTitleIsPinned covers that path).
+	full := strings.Repeat("很长的报错日志 ", 120)
 	placeholder := string([]rune(full)[:FallbackTitleRunes]) + "…"
 	s := mustSession(t, mgr, placeholder)
-	// Three turns, not the usual one: a 960-rune first message can leave the loop
-	// doing context housekeeping before it answers, and this test is only about the
-	// naming call that follows the task.
 	if _, _, err := s.Prompt(context.Background(), full, nil, 3); err != nil {
 		t.Fatalf("Prompt(%q…): %v", full[:60], err)
 	}
@@ -492,8 +430,6 @@ func TestTitleRequestQuotesOnlyTheFirstMessage(t *testing.T) {
 		t.Fatalf("the request does not hold the quoted ask:\n%.120s", body)
 	}
 	quoted := body[i+len(marker):]
-	// The loop may already have trimmed an oversized message before it reached the
-	// history, so what this test pins is the ceiling and the head, not a length.
 	if n := len([]rune(quoted)); n > titleInputRunes+1 {
 		t.Fatalf("the quoted request is %d runes, over the cap of %d", n, titleInputRunes)
 	}
@@ -502,12 +438,10 @@ func TestTitleRequestQuotesOnlyTheFirstMessage(t *testing.T) {
 	}
 }
 
-// TestTitleQuoteCaps: the cap is its own cheap decision — name a pasted log from
-// its head, never send it whole.
 func TestTitleQuoteCaps(t *testing.T) {
-	long := strings.Repeat("很长的报错日志 ", 300) // 2400 runes
+	long := strings.Repeat("很长的报错日志 ", 300)
 	q := titleQuote(long)
-	if n := len([]rune(q)); n != titleInputRunes+1 { // +1 for the ellipsis
+	if n := len([]rune(q)); n != titleInputRunes+1 {
 		t.Errorf("titleQuote of a 2400-rune ask = %d runes, want %d", n, titleInputRunes+1)
 	}
 	if !strings.HasSuffix(q, "…") {
@@ -518,16 +452,9 @@ func TestTitleQuoteCaps(t *testing.T) {
 	}
 }
 
-// TestTitleRequestTurnsThinkingOffOnVLLM is the field case. The models in use are
-// Qwen3-style behind vLLM, where the thinking switch is a chat template variable —
-// and WithReasoning used to be a no-op on this provider, so every naming request
-// thought its way past the output budget and answered with nothing (finish=length,
-// no title, in production, for every session). The call must carry
-// enable_thinking=false; ordinary task calls must not carry the kwarg at all, so
-// nothing about normal traffic changes.
 func TestTitleRequestTurnsThinkingOffOnVLLM(t *testing.T) {
 	probe := &titleProbe{}
-	mgr := newTitleEnv(t, probe) // provider "vllm", like the config in use
+	mgr := newTitleEnv(t, probe)
 	mgr.SetTitlePolicy(true, "")
 	goal := "帮我把 worker 列表排个序"
 	s := mustSession(t, mgr, goal)
@@ -552,11 +479,6 @@ func TestTitleRequestTurnsThinkingOffOnVLLM(t *testing.T) {
 	}
 }
 
-// TestTitleSurvivesATruncatedReply: the naming call asks for thinking off, but a
-// model that thinks anyway can name the session and then ramble past the output
-// budget. The title arrived before the cut, so it must be kept — this is exactly
-// what the old finish=length guard threw away, and it is why not one session ever
-// got a generated title while a thinking model was wired up.
 func TestTitleSurvivesATruncatedReply(t *testing.T) {
 	probe := &titleProbe{finish: "length"}
 	mgr := newTitleEnv(t, probe)
@@ -569,12 +491,6 @@ func TestTitleSurvivesATruncatedReply(t *testing.T) {
 	}
 }
 
-// TestTitleDoesNotWaitForTheTask: the naming request goes out with the first
-// message, not when the task finishes. The probe holds the task's answer until it
-// sees the naming call, so a design that waited for the task would run out of here
-// without a title. In the field this is the difference between a sidebar that names
-// a session in a couple of seconds and one that shows "帮我看看这个报错…" for the
-// hour its first task takes.
 func TestTitleDoesNotWaitForTheTask(t *testing.T) {
 	release := make(chan bool)
 	probe := &titleProbe{holdTask: release}
@@ -594,8 +510,6 @@ func TestTitleDoesNotWaitForTheTask(t *testing.T) {
 	if got := awaitTitle(t, mgr, s.ID(), "配置 nginx 的 gzip", 5*time.Second); got != "配置 nginx 的 gzip" {
 		t.Fatalf("no title while the task was still unanswered: %q", got)
 	}
-	// The naming call reached the server (that is what released the task reply).
-	// Let the task finish so the session can be closed cleanly.
 	select {
 	case <-done:
 	case <-time.After(6 * time.Second):

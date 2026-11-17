@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// addUsageTotal accumulates across calls and survives a store round-trip
-// (JSON loads numbers back as float64, which must not break the sum). cached
-// (KV-cache-served prompt tokens) accumulates next to prompt/completion.
 func TestAddUsageTotal(t *testing.T) {
 	s := &Session{record: &SessionRecord{Metadata: map[string]interface{}{}}}
 	s.addUsageTotal(1000, 950, 40)
@@ -16,8 +13,6 @@ func TestAddUsageTotal(t *testing.T) {
 	if tot["prompt"] != int64(1250) || tot["cached"] != int64(1200) || tot["completion"] != int64(50) {
 		t.Fatalf("in-memory totals = %v, want 1250/1200/50", tot)
 	}
-	// Simulate a reload from the store: JSON numbers come back as float64.
-	// Old rows without the cached key read as 0 rather than breaking the sum.
 	s.record.Metadata[usageTotalMetadataKey] = map[string]interface{}{
 		"prompt": float64(1250), "completion": float64(50),
 	}
@@ -28,9 +23,6 @@ func TestAddUsageTotal(t *testing.T) {
 	}
 }
 
-// The lightweight list rows (root summaries and ListChildren) carry the
-// session-wide token totals extracted from metadata, so the sub-agent panel
-// can show per-task tokens without loading payloads.
 func TestUsageTotalInSummaries(t *testing.T) {
 	store, err := NewSessionStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
@@ -59,7 +51,6 @@ func TestUsageTotalInSummaries(t *testing.T) {
 		t.Errorf("child totals = %d/%d, want 123456/789", kids[0].TotalPrompt, kids[0].TotalCompletion)
 	}
 
-	// The root (no counter yet) reads 0/0 rather than missing.
 	roots, err := store.ListSessionSummaries(100, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)

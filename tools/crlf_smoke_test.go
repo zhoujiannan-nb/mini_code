@@ -11,7 +11,6 @@ import (
 func TestCRLFSmokeReadFile(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "crlf.txt")
-	// CRLF file: 3 lines
 	if err := os.WriteFile(p, []byte("alpha\r\nbeta\r\ngamma\r\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +29,6 @@ func TestCRLFSmokeReadFile(t *testing.T) {
 		t.Fatalf("expected total 3 lines, got: %q", res.Text)
 	}
 
-	// search_files must also be CR-free
 	st := NewSearchTool(dir)
 	res2, err := st.Execute(context.Background(), map[string]interface{}{"pattern": "beta"})
 	if err != nil {
@@ -43,8 +41,6 @@ func TestCRLFSmokeReadFile(t *testing.T) {
 		t.Fatalf("unexpected search_files output: %q", res2.Text)
 	}
 
-	// edit_file on the CRLF file: old_text copied from the (now clean) read
-	// output must match, and the file must keep CRLF endings.
 	et := NewEditFileTool(dir)
 	res3, err := et.Execute(context.Background(), map[string]interface{}{
 		"path": "crlf.txt", "old_text": "beta", "new_text": "BETA",

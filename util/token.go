@@ -8,9 +8,6 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// tiktokenWarnOnce keeps the offline warning to one line per process. It used to
-// be logged on every count — thousands of identical lines that buried the one
-// fact that matters: every context decision is running on the fallback estimate.
 var tiktokenWarnOnce sync.Once
 
 func warnTiktokenUnavailable(err error) {
@@ -21,21 +18,12 @@ func warnTiktokenUnavailable(err error) {
 	})
 }
 
-// WarmTokenizer forces the one-time BPE table load now instead of on the
-// first real count (that first GetEncoding parses a ~1.6MB table and used to
-// cost the unlucky first UI open a second or two). Safe to call concurrently
-// with counting; GetEncoding is internally guarded and cached.
 func WarmTokenizer() {
 	if _, err := tiktoken.GetEncoding("cl100k_base"); err != nil {
 		warnTiktokenUnavailable(err)
 	}
 }
 
-// CountMessagesTokens counts tokens in messages using tiktoken.
-// Image parts are counted with the Qwen2-VL visual-token formula (see
-// image_tokens.go) instead of a fixed estimate, so context budgeting reflects
-// the real token cost of each image. This is a pure read: it never mutates the
-// messages, so it cannot affect the context sequence sent to the model.
 func CountMessagesTokens(messages []provider.Message) int {
 	tke, err := tiktoken.GetEncoding("cl100k_base")
 	if err != nil {
@@ -45,7 +33,7 @@ func CountMessagesTokens(messages []provider.Message) int {
 
 	total := 0
 	for _, msg := range messages {
-		total += 3 // message overhead
+		total += 3
 		total += len(tke.Encode(msg.Role, nil, nil))
 
 		if len(msg.ContentParts) > 0 {
@@ -78,15 +66,14 @@ func CountMessagesTokens(messages []provider.Message) int {
 
 		if msg.Name != "" {
 			total += len(tke.Encode(msg.Name, nil, nil))
-			total += 1 // extra token for name field
+			total += 1
 		}
 	}
 
-	total += 3 // reply prefix
+	total += 3
 	return total
 }
 
-// EstimateTokens estimates tokens for a single text string.
 func EstimateTokens(text string) int {
 	tke, err := tiktoken.GetEncoding("cl100k_base")
 	if err != nil {
@@ -96,7 +83,6 @@ func EstimateTokens(text string) int {
 	return len(tke.Encode(text, nil, nil))
 }
 
-// fallbackCountMessagesTokens provides fallback when tiktoken is unavailable.
 func fallbackCountMessagesTokens(messages []provider.Message) int {
 	total := 0
 	for _, msg := range messages {
@@ -135,24 +121,10 @@ func fallbackCountMessagesTokens(messages []provider.Message) int {
 }
 
 const (
-	// cjkTokensPerRune is the fallback cost of one CJK character. cl100k (and
-	// Qwen, whose tokenizer is close) spend roughly 1-1.5 tokens per Chinese
-	// character; the old len/4 fallback spent 0.75 and therefore under-counted a
-	// Chinese conversation by about half. Under-counting is the dangerous
-	// direction: compaction fires late and the provider answers with a 400.
 	cjkTokensPerRune = 1.5
-	// asciiBytesPerToken is the well-known cl100k rule of thumb for English and
-	// code.
 	asciiBytesPerToken = 4.0
 )
 
-// EstimateTextFallback estimates a string's token count without a tokenizer,
-// with the CJK case handled honestly: ASCII bytes at 4 per token, CJK runes at
-// 1.5 each, everything else at one token per rune conservatively.
-//
-// It exists for the offline case: tiktoken downloads its BPE file on first use,
-// and on a machine without internet it fails forever, silently degrading every
-// context decision. See CountMessagesTokens for the warning.
 func EstimateTextFallback(s string) int {
 	if s == "" {
 		return 0
@@ -171,24 +143,22 @@ func EstimateTextFallback(s string) int {
 		}
 	}
 	tokens := float64(ascii)/asciiBytesPerToken + float64(cjk)*cjkTokensPerRune + float64(other)
-	return int(tokens + 0.999) // round up: never under-count
+	return int(tokens + 0.999)
 }
 
-// isCJK reports whether r is in the ranges that tokenize as Chinese/Japanese/
-// Korean text (the case the old byte-based fallback got most wrong).
 func isCJK(r rune) bool {
 	switch {
-	case r >= 0x4E00 && r <= 0x9FFF: // CJK unified ideographs
+	case r >= 0x4E00 && r <= 0x9FFF:
 		return true
-	case r >= 0x3400 && r <= 0x4DBF: // extension A
+	case r >= 0x3400 && r <= 0x4DBF:
 		return true
-	case r >= 0x3000 && r <= 0x303F: // CJK punctuation
+	case r >= 0x3000 && r <= 0x303F:
 		return true
-	case r >= 0xFF00 && r <= 0xFFEF: // full-width forms
+	case r >= 0xFF00 && r <= 0xFFEF:
 		return true
-	case r >= 0x3040 && r <= 0x30FF: // hiragana / katakana
+	case r >= 0x3040 && r <= 0x30FF:
 		return true
-	case r >= 0xAC00 && r <= 0xD7AF: // hangul
+	case r >= 0xAC00 && r <= 0xD7AF:
 		return true
 	}
 	return false

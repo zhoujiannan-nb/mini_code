@@ -1,12 +1,3 @@
-// fsindex.go — in-memory directory index backing the web UI's "@" folder
-// picker (GET /api/fs/search).
-//
-// The index is a flat list of directory paths built by walking every fixed
-// drive (Windows) or a few common roots (other OSes), pruning dependency
-// caches and OS internals. It is rebuilt periodically in the background, so
-// searches are a pure in-memory scan over a few hundred thousand short
-// strings (a few milliseconds, no disk I/O on the hot path).
-
 package web
 
 import (
@@ -22,13 +13,11 @@ import (
 )
 
 const (
-	fsIndexMaxDirs = 250000       // hard cap on indexed directories
+	fsIndexMaxDirs = 250000
 	fsIndexRefresh = 15 * time.Minute
-	fsSearchWait   = 8 * time.Second // how long a search waits for the first build
+	fsSearchWait   = 8 * time.Second
 )
 
-// skipDirNames are pruned during the walk: dependency caches, VCS metadata
-// and OS internals that are huge and almost never referenced in a prompt.
 var skipDirNames = map[string]struct{}{
 	"node_modules": {}, ".git": {}, ".svn": {}, ".hg": {},
 	"__pycache__": {}, ".tox": {}, ".mypy_cache": {}, ".pytest_cache": {},
@@ -39,22 +28,19 @@ var skipDirNames = map[string]struct{}{
 	"library": {},
 }
 
-// DirIndex is a snapshot of the machine's directory tree for fast search.
 type DirIndex struct {
 	mu      sync.RWMutex
 	dirs    []string
 	roots   map[string]struct{}
 	ready   bool
 	builtAt time.Time
-	first   chan struct{} // closed when the first build finishes
+	first   chan struct{}
 }
 
-// NewDirIndex creates an empty index. Call Run to build it.
 func NewDirIndex() *DirIndex {
 	return &DirIndex{first: make(chan struct{})}
 }
 
-// Run builds the index and refreshes it every fsIndexRefresh until ctx ends.
 func (ix *DirIndex) Run(ctx context.Context) {
 	ix.build()
 	ticker := time.NewTicker(fsIndexRefresh)
@@ -75,7 +61,6 @@ func (ix *DirIndex) build() {
 	for _, r := range roots {
 		rootSet[r] = struct{}{}
 	}
-	// Walk each root in parallel (drives are independent).
 	var wg sync.WaitGroup
 	parts := make([][]string, len(roots))
 	for i, root := range roots {
@@ -111,7 +96,7 @@ func walkDirs(root string) []string {
 	dirs := make([]string, 0, 32768)
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || !d.IsDir() {
-			return nil // unreadable entry: skip
+			return nil
 		}
 		if len(dirs) >= fsIndexMaxDirs {
 			return filepath.SkipAll
@@ -127,8 +112,6 @@ func walkDirs(root string) []string {
 	return dirs
 }
 
-// driveRoots returns the top-level roots to index: every fixed drive on
-// Windows, a few common roots elsewhere.
 func driveRoots() []string {
 	var roots []string
 	if runtime.GOOS == "windows" {
@@ -152,17 +135,12 @@ func driveRoots() []string {
 	return roots
 }
 
-// DirHit is one folder match for the "@" picker.
 type DirHit struct {
 	Path   string `json:"path"`
 	Name   string `json:"name"`
 	Parent string `json:"parent"`
 }
 
-// Search matches q (case-insensitive) against the indexed directories.
-// An empty q returns the top-level folders of every drive root. The second
-// return value is true while the first build is still running (results may
-// then be partial).
 func (ix *DirIndex) Search(q string, limit int) (hits []DirHit, indexing bool) {
 	dirs, roots, ready := ix.snapshot()
 	if !ready {
@@ -202,7 +180,6 @@ func (ix *DirIndex) Search(q string, limit int) (hits []DirHit, indexing bool) {
 			default:
 				continue
 			}
-			// Slightly demote deeper (longer) paths within a match class.
 			out = append(out, scored{makeHit(d), score - len(d)})
 		}
 	}

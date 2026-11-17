@@ -1,12 +1,3 @@
-// 输入区(v3 样图版):一张安静的圆角卡,打字在上,工具条在下。
-//   左:＋(加图)、「选择模式」(完整/谨慎,原顶栏的模式按钮搬进来);
-//   右:模型下拉(单击)、思考模式胶囊(开强度滑条浮层)、发送/停止。
-//   v3.4:「N tok」胶囊(点胶囊开上下文抽屉,点 ⓘ 弹会话统计)也挪到输入卡
-//   下方一行(#token-usage):胶囊 + 占用 X% + 细进度条 + 速度图标 tok/s,整体居中。
-// 「选择文件」按钮退役:路径插入仍然直接敲 @(FsPicker 照常弹)。
-//
-// 和旧实现最大的不同:输入框内容、待发图片、下拉开合都是组件 state,
-// 不再有 $("#input").value / innerHTML 这类跨模块的命令式补丁。
 import { h } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import htm from "htm";
@@ -59,7 +50,6 @@ export function Composer() {
   const valueRef = useRef("");
   valueRef.current = value;
 
-  // 输入框自增高(最多 160px),旧 autoGrow 的行为。
   useEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
@@ -67,8 +57,6 @@ export function Composer() {
     ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
   }, [value]);
 
-  // 「造一个插件」/欢迎页示例卡把提示词塞进输入框:由 store 的 composerSeed
-  // 驱动,不直接改 DOM。
   useEffect(() => {
     if (!seed || !taRef.current) return;
     setValue(seed.text || "");
@@ -77,12 +65,9 @@ export function Composer() {
     taRef.current.setSelectionRange(n, n);
   }, [seed]);
 
-  // 点模型按钮/菜单之外时收起下拉、思考浮层与模式下拉
   useEffect(() => {
     const onDoc = (e) => {
-      // 排除名单少了 #think-pill 的话:胶囊的 onClick 先开,document 冒泡的
-      // 这个再关 —— 浮层永远闪一下就没了。
-      if (e.target.closest && (e.target.closest(".model-menu-wrap") || e.target.closest("#think-pill"))) { /* keep */ }
+      if (e.target.closest && (e.target.closest(".model-menu-wrap") || e.target.closest("#think-pill"))) {  }
       else { setModelMenu(false); setThinkPop(false); }
       if (!(e.target.closest && e.target.closest(".mode-menu-wrap"))) setModeMenu(false);
     };
@@ -90,14 +75,12 @@ export function Composer() {
     return () => document.removeEventListener("click", onDoc);
   }, []);
 
-  /* ---------------- 发送 / 插话 ---------------- */
   const hasDraft = value.trim() !== "" || images.length > 0;
   const doSend = async () => {
     const text = value.trim();
     const imgs = images.slice();
     if (!text && imgs.length === 0) return;
     if (running) {
-      // 插话:运行中只注入纯文本。图要等任务结束走普通发送。
       if (!text) return;
       if (imgs.length) { toast("插话不能带图片,请等任务结束后再发", "err"); return; }
       setValue("");
@@ -105,7 +88,6 @@ export function Composer() {
       await sendSteer(text);
       return;
     }
-    // 先清输入框(旧行为):发送失败时错误会以消息卡出现,不会把同一段话留在框里。
     setValue("");
     setImages([]);
     closeFs();
@@ -120,17 +102,15 @@ export function Composer() {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         if (fs.hits.length) fsInsert(fs.sel);
-        else { closeFs(); doSend(); } // 无命中:直接按原逻辑发送
+        else { closeFs(); doSend(); } 
         return;
       }
     }
-    // 发送键随回车模式(点底部提示切换):默认 Enter 发送;反向模式 Shift+Enter 发送。
     const wantSend = sendMode === "shift" ? (e.key === "Enter" && e.shiftKey)
       : (e.key === "Enter" && !e.shiftKey);
     if (wantSend) { e.preventDefault(); doSend(); }
   };
 
-  /* ---------------- 截图 ---------------- */
   const addImageFiles = async (files) => {
     const next = images.slice();
     for (const f of files) {
@@ -158,7 +138,6 @@ export function Composer() {
     if (files.length) { e.preventDefault(); addImageFiles(files); }
   };
 
-  /* ---------------- @ 文件夹选择器 ---------------- */
   const openFs = (query) => {
     setFs((s) => ({ ...s, open: true, sel: 0, q: query, err: "" }));
     clearTimeout(fsTimer.current);
@@ -188,13 +167,11 @@ export function Composer() {
     if (seq !== fsSeq.current) return;
     let hits = data.dirs || [];
     if (query === "") {
-      // 最近使用过的路径置顶
       const rec = fsRecent().filter((p) => !hits.some((h) => h.path === p));
       hits = rec.map((p) => ({ path: p, name: p.split(/[\\/]/).filter(Boolean).pop() || p, parent: "" })).concat(hits);
     }
     setFs((s) => ({ ...s, open: true, hits, sel: 0, indexing: !!data.indexing, err: "" }));
     if (data.indexing) {
-      // 目录索引还没建完:1.5s 后自动重查一次
       fsTimer.current = setTimeout(() => { if (fsSeq.current === seq) fsDoFetch(query); }, 1500);
     }
   };
@@ -205,7 +182,6 @@ export function Composer() {
       return { ...s, sel };
     });
   };
-  // 把命中的完整路径替换掉输入框里的 "@查询词"
   const fsInsert = (i) => {
     const h = fs.hits[i];
     const ta = taRef.current;
@@ -228,30 +204,20 @@ export function Composer() {
     closeFs();
   };
 
-  /* ---------------- 模型 / 思考 ---------------- */
   const modelName = (models.find((m) => m.name === model) || {}).name || model || "默认";
   const cap = ctxWindow || 0;
-  // v3.3 分工:胶囊只报体量「N tok」,占用% 与输出速度都挪到输入卡下方一行
-  // (用户圈图:「占用百分比和速度统计都挪动输入框下面」),口径仍是同一个仪表。
   const ctxPct = cap > 0 ? Math.min(999, Math.round((tokens || 0) * 100 / cap)) : 0;
   const tokenWarn = cap > 0 && (tokens || 0) / cap >= 0.8;
   const meterTitle = "上下文占用:" + (tokens ? fmtK2(tokens) : "0") + (cap ? " / " + fmtK2(cap) : "")
     + "(" + ctxPct + "%),接近上限时自动压缩";
-  // 输出速度:格式化成一行短文案(≥100 取整,否则留一位小数)。
   const speedShort = speed > 0 ? (speed >= 100 ? Math.round(speed) : Math.round(speed * 10) / 10) + " tok/s" : "";
-  // v3.12:胶囊显示**本会话累计消耗**(usage_total:每轮 prompt+completion 全程
-  // 累加),用户口径「一共用了多少 token」;当刻上下文占用与上限在 tooltip、
-  // 占用小环和 ⓘ 浮层里。
   const tokenPillText = fmtTok(usageTokens) || "0 tok";
 
-  // 双击模型按钮打开思考强度浮层(单击延迟 230ms 才切换模型下拉)。
   const openThinkingPop = () => {
     setThinkPop(true);
     setModelMenu(false);
   };
 
-  // 底栏芯片要显示累计用量:每轮任务结束(running true→false)刷新一次快照,
-  // 抽屉开没开都刷 —— 芯片数字要跟得上。
   const ctxInfo = useStore((s) => s.ctxInfo);
   const prevRun = useRef(false);
   useEffect(() => {
@@ -266,7 +232,6 @@ export function Composer() {
   const roundsN = ((ctxInfo && ctxInfo.rounds) || []).length;
   const stepsN = (ctxInfo && ctxInfo.steps) || 0;
 
-  // 「会话统计」浮层(点 token 胶囊右侧的 ⓘ):轮次/步/模型用时/工具调用用时/TTFT/输出速度。
   const [sessPop, setSessPop] = useState(false);
   useEffect(() => {
     if (!sessPop) return undefined;

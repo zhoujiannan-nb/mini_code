@@ -11,7 +11,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// ---- ageOutCallArgs ----
 
 func TestAgeOutCallArgsOnlyBigWriteEdit(t *testing.T) {
 	big := strings.Repeat("x", 3000)
@@ -37,7 +36,6 @@ func TestAgeOutCallArgsOnlyBigWriteEdit(t *testing.T) {
 	if v["file_path"] != "dir/a.txt" || !strings.Contains(v["content"].(string), "aged out") {
 		t.Fatalf("summary lost the anchor: %s", out)
 	}
-	// Idempotent: the summary sits far below the threshold.
 	if _, ok := ageOutCallArgs("write_file", out); ok {
 		t.Fatal("aged args must not re-age")
 	}
@@ -45,7 +43,6 @@ func TestAgeOutCallArgsOnlyBigWriteEdit(t *testing.T) {
 	if !ok || !strings.Contains(outE, "replaced 2500 chars") {
 		t.Fatalf("edit summary wrong: %q", outE)
 	}
-	// The dsh names and argument keys age the same way.
 	if _, ok := ageOutCallArgs("write", `{"file_path":"a.txt","content":"`+big+`"}`); !ok {
 		t.Fatal("big dsh-name write must age")
 	}
@@ -55,7 +52,6 @@ func TestAgeOutCallArgsOnlyBigWriteEdit(t *testing.T) {
 	}
 }
 
-// ---- ageCallArgs ----
 
 func TestAgeCallArgsWalksTrailingBlock(t *testing.T) {
 	big := strings.Repeat("y", 3000)
@@ -78,8 +74,6 @@ func TestAgeCallArgsWalksTrailingBlock(t *testing.T) {
 	if ageCallArgs(msgs, "nope", "x") {
 		t.Fatal("unknown call id reported aged")
 	}
-	// A call sitting before an older user boundary is out of the trailing
-	// block: aging only ever touches the batch that just completed.
 	msgs2 := []provider.Message{
 		{Role: "assistant", ToolCalls: []provider.ToolCall{
 			{ID: "c1", Function: provider.FuncCall{Name: "write_file", Arguments: `{"path":"a","content":"` + big + `"}`}},
@@ -92,7 +86,6 @@ func TestAgeCallArgsWalksTrailingBlock(t *testing.T) {
 	}
 }
 
-// ---- loop-level aging ----
 
 type bigWriteTool struct{ fail bool }
 
@@ -109,9 +102,6 @@ func (t bigWriteTool) Execute(ctx context.Context, params map[string]interface{}
 	return tools.NewTextResult("Successfully wrote 3000 bytes to a.txt"), nil
 }
 
-// TestLoopAgesSuccessfulBigWrite asserts the next model request carries the
-// summary instead of the payload, and the ledger keeps the full arguments plus
-// a compaction/argage shadow event.
 func TestLoopAgesSuccessfulBigWrite(t *testing.T) {
 	var requests int
 	var secondBody string
@@ -173,8 +163,6 @@ func TestLoopAgesSuccessfulBigWrite(t *testing.T) {
 	}
 }
 
-// TestLoopKeepsFailedWriteArgs pins the safety rail: an errored call keeps its
-// full arguments so the retry has something to work with.
 func TestLoopKeepsFailedWriteArgs(t *testing.T) {
 	var requests int
 	var secondBody string

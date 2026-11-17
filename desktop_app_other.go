@@ -1,8 +1,5 @@
 //go:build !windows && (!darwin || !desktop_darwin)
 
-// Desktop shell is not available here (Linux, or macOS without the
-// -tags desktop_darwin build); "mini_code desktop" reports an error and the
-// web UI is consumed in a browser as before.
 
 package main
 

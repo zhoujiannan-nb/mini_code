@@ -20,15 +20,10 @@ import (
 	"github.com/user/mini_code/session"
 )
 
-// fakeBackend wires the real hub + session manager (against a mock model
-// server) into the HTTP handler, so the full path
-// POST /api/messages -> hub -> agent loop -> model request is exercised.
 type fakeBackend struct {
 	hub *channels.Hub
 	mgr *session.SessionManager
 	ap  *approval.Service
-	// cfg overrides GetConfig for tests that care about the live config
-	// (nil = the canned test config below).
 	cfg *config.AppConfig
 }
 
@@ -46,13 +41,7 @@ func (f *fakeBackend) SaveConfig(cfg *config.AppConfig) (*SaveResult, error) {
 	return &SaveResult{}, nil
 }
 
-// TestSendMessageWithImagesE2E verifies the full multimodal path: a web
-// message carrying image data URLs reaches the model as multimodal user
-// content parts and is persisted into the session record.
 func TestSendMessageWithImagesE2E(t *testing.T) {
-	// 1) mock model server: capture the chat request, answer with SSE "ok".
-	// A trailing time snapshot is a user-role message too, so capture the
-	// content of EVERY user message, not just the last one.
 	var mu sync.Mutex
 	var userContents []interface{}
 	modelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +91,6 @@ func TestSendMessageWithImagesE2E(t *testing.T) {
 	api := httptest.NewServer(NewServer(&fakeBackend{hub: hub, mgr: mgr, ap: approval.NewService(hub, mgr)}))
 	defer api.Close()
 
-	// 2) POST a web message with one image (like the UI paste flow).
 	body, _ := json.Marshal(map[string]interface{}{
 		"content": "look at this",
 		"images":  []string{"data:image/png;base64,QUJD"},
@@ -117,7 +105,6 @@ func TestSendMessageWithImagesE2E(t *testing.T) {
 		t.Fatalf("expected 202, got %d: %s", resp.StatusCode, b)
 	}
 
-	// 3) wait for the model request to arrive with multimodal user content.
 	hasMultimodal := func(contents []interface{}) bool {
 		for _, content := range contents {
 			parts, ok := content.([]interface{})
@@ -146,7 +133,6 @@ func TestSendMessageWithImagesE2E(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// 4) the image must be persisted in the session record (history reload).
 	deadline = time.Now().Add(15 * time.Second)
 	for {
 		recs, err := mgr.GetStore().ListSessionSummaries(10, 0)
@@ -165,7 +151,7 @@ func TestSendMessageWithImagesE2E(t *testing.T) {
 				}
 				for _, p := range m.ContentParts {
 					if p.Type == "image_url" && p.ImageURL != nil && p.ImageURL.URL == "data:image/png;base64,QUJD" {
-						return // persisted — test passes
+						return
 					}
 				}
 			}
@@ -177,8 +163,6 @@ func TestSendMessageWithImagesE2E(t *testing.T) {
 	}
 }
 
-// TestSendMessageRejectsBadImages verifies the API-level validation of the
-// images field (no model call involved).
 func TestSendMessageRejectsBadImages(t *testing.T) {
 	api := httptest.NewServer(NewServer(&fakeBackend{}))
 	defer api.Close()

@@ -1,13 +1,3 @@
-// 侧栏(v3 样图版):品牌 + 主题切换、新建会话(⌘K)、历史会话(ⓘ + 搜索 +
-// 按工作区分流,顺序由聊天头「排序」按钮轮转)、设置入口(列底)。
-//
-// 按样图取舍:不放「工作台 / 插件市场」导航、底部宣传卡与在线状态 —— 这些是
-// 用户明确划掉的东西。worker(工作区)不再占用一条常显的切换条,而是收进
-// 「历史会话」行尾的漏斗弹层里:列表按当前工作区过滤,入口只有一个。
-// 主题切换按钮从顶栏搬进品牌行右侧(样图那颗太阳)。
-//
-// 列表的三种状态(加载骨架 / 拉取失败 / 空)都画出来 —— 静默空白会让人以为
-// "会话没了"。空态配了一张文件夹 + 挂钟的插画。
 import { h } from "preact";
 import { useRef, useState } from "preact/hooks";
 import htm from "htm";
@@ -24,7 +14,6 @@ import {
 
 const html = htm.bind(h);
 
-// 拉列表中的占位:三行会话形状的骨架,真行落下来时面板不会跳。
 export function sessSkeleton() {
   return html`<div class="sess-list-skeleton">
     ${[0, 1, 2].map((i) => html`<div class="sess-item sess-skeleton" aria-hidden="true" key=${i}>
@@ -33,8 +22,6 @@ export function sessSkeleton() {
   </div>`;
 }
 
-// 目录尾段:取工作目录最后两级,用来区分名字相同的实例
-// (每个 mc 实例一个 worker 时,标题雷同,目录尾两级才是身份)。
 function tailPath(p) {
   if (!p) return "";
   const segs = p.replace(/\\/g, "/").split("/").filter(Boolean);
@@ -43,9 +30,6 @@ function tailPath(p) {
 
 function SessionItem({ s }) {
   const current = useStore((x) => x.current);
-  // 执行中只看服务端的实时标志:持久化的 status 在进程崩溃/重启后可能停留在
-  // "running",不可信。后台子 agent 在跑也算执行中;会话自己的后台命令还活着时
-  // 按"后台运行中"显示(agent 空闲等通知,但活确实还在干)。
   const busy = s.active || !!s.children_active || (s.jobs_running > 0);
   const dotClass = busy ? "running" : (["completed", "failed", "interrupted"].includes(s.status) ? s.status : "idle");
   const statusText = s.active ? "执行中" : (s.children_active ? "子任务中"
@@ -73,11 +57,6 @@ function SessionItem({ s }) {
   </div>`;
 }
 
-// 品牌徽标:与 .ico 完全同款的 E7「卫星穿环」—— 墨块 + 斜体 M + 前后穿环 +
-// 卫星点。512 坐标空间的 mini 版(块 64..448 rx88 / 环 rx236 ry104 stroke18 /
-// 卫星 r40@342,358):30px 下粗描边才看得见。环在块两侧出界,viewBox 横向
-// 留了余量(-26 起宽 564),元素本身 44×30。配色走 --ink/--ink-fg,与欢迎页
-// Hero 同一张脸,暗色主题自动翻。渐变 id 用 bm-* 前缀,别和 Hero 的 hl-* 撞。
 function BrandMark() {
   return html`<span class="brand-mark" aria-hidden="true">
     <svg viewBox="-26 64 564 384" fill="none">
@@ -105,11 +84,9 @@ function BrandMark() {
     </svg></span>`;
 }
 
-// 快捷键角标:样图是 mac 的 ⌘K,Windows/Linux 显示 Ctrl K。
 const IS_MAC = typeof navigator !== "undefined"
   && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
 
-// 空态插画:文件夹 + 挂钟(样图左侧那张灰调小画)。纯描边,跟着主题灰阶走。
 function EmptyHistory({ sub }) {
   return html`<div class="sess-empty-state">
     <svg class="ses-art" viewBox="0 0 96 72" fill="none" aria-hidden="true">
@@ -145,7 +122,6 @@ export function Sidebar() {
   };
   const tmode = themeMode || "system";
 
-  // 漏斗 = 按工作区分流(打开 worker 弹层);行尾的放大镜 = 标题搜索。
   const openFilter = (e) => {
     e.stopPropagation();
     const el = pickRef.current;
@@ -162,13 +138,10 @@ export function Sidebar() {
   };
 
   const q = query.trim().toLowerCase();
-  // 分区标题显示当前工作区名(用户要求「历史会话」改成工作区名);
-  // 「其他」桶没有具体工作区可报,退回「历史会话」。
   const wid = workerBucketId();
   const wkRec = (getState().workers || []).find((x) => x.worker_id === wid);
   const wkName = wid === WK_OTHER || !wkRec ? "历史会话" : wkRec.name;
   let shown = q ? (sessions || []).filter((s) => String(s.title || "").toLowerCase().includes(q)) : (sessions || []).slice();
-  // 「排序」按钮的三种顺序:最近活跃 = 服务端原序(updated_at 倒序),不动它。
   if (sessSort === "oldest") shown.reverse();
   else if (sessSort === "title") shown.sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "zh"));
 
@@ -179,7 +152,6 @@ export function Sidebar() {
   } else if (!shown.length) {
     if (q) list = html`<div class="empty-hint">没有标题含「${query.trim()}」的会话</div>`;
     else {
-      // 默认桶(其他)按样图给两句人话;具体 worker 桶保留"先切到它再新建"的指路。
       const hint = workerEmptyHint();
       const sub = workerBucketId() === WK_OTHER ? "开始一个新的对话吧" : (hint.split("\n")[1] || "");
       list = html`<${EmptyHistory} sub=${sub} />`;

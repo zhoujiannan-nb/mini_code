@@ -2,25 +2,8 @@ package provider
 
 import "testing"
 
-// TestSGLangConfigureRequest pins SGLang's request construction:
-// thinking / reasoning_effort passthrough (only when set), the
-// chat_template_kwargs.enable_thinking switch (what actually flips thinking
-// off on Qwen3-style deployments), the official Qwen3.8 sampling parameters
-// per thinking state, and stream_options.include_usage.
-//
-// Sampling (official Qwen3.8 recommendation; Qwen3-style models think by
-// default, so an unset switch means thinking ON). Precedence: explicit per-call
-// temperature > configured temperature / top_p (0 = not set) > these fallbacks:
-//
-//	thinking ON:  temperature=1.0, top_p=0.95
-//	thinking OFF: temperature=0.7, top_p=0.80, presence_penalty=1.5
-//
-// An explicit per-call temperature (temperatureExplicit, e.g. the 0.3
-// compaction summary) wins over the default.
 func TestSGLangConfigureRequest(t *testing.T) {
 	base := func(thinking, effort string) *SGLangProvider {
-		// temperature / top_p left unset (0): this exercises the per-thinking-state
-		// fallbacks. A configured value is covered by its own subtest below.
 		return NewSGLangProvider("http://proxy/proxy/model/x", "k", "Qwen3.8-27B-FP8", 31072, 200000, 0, 0, thinking, effort)
 	}
 	newReq := func() *chatRequest {
@@ -32,14 +15,12 @@ func TestSGLangConfigureRequest(t *testing.T) {
 		name         string
 		thinking     string
 		effort       string
-		wantThinking string // "" = field omitted
+		wantThinking string
 		wantEffort   string
-		// wantEnableThinking: "" = no chat_template_kwargs at all;
-		// "true"/"false" = the enable_thinking kwarg value.
 		wantEnableThinking string
 		wantTemp           float64
 		wantTopP           float64
-		wantPresence       *float64 // nil = field omitted
+		wantPresence       *float64
 	}{
 		{"unset -> thinking ON defaults", "", "", "", "", "", 1.0, 0.95, nil},
 		{"thinking enabled only", "enabled", "", "enabled", "", "true", 1.0, 0.95, nil},
@@ -63,8 +44,6 @@ func TestSGLangConfigureRequest(t *testing.T) {
 			if req.ReasoningEffort != c.wantEffort {
 				t.Errorf("reasoning_effort = %q, want %q", req.ReasoningEffort, c.wantEffort)
 			}
-			// enable_thinking kwarg: present exactly when the thinking
-			// switch is set, with the mapped boolean value.
 			gotKwarg, hasKwarg := req.ChatTemplateKwargs["enable_thinking"]
 			if c.wantEnableThinking == "" {
 				if hasKwarg {
@@ -76,7 +55,6 @@ func TestSGLangConfigureRequest(t *testing.T) {
 					t.Errorf("chat_template_kwargs.enable_thinking = %v (present=%v), want %v", gotKwarg, hasKwarg, want)
 				}
 			}
-			// Official sampling parameters per thinking state.
 			if req.Temperature == nil || *req.Temperature != c.wantTemp {
 				t.Errorf("temperature = %v, want %v", req.Temperature, c.wantTemp)
 			}
@@ -103,7 +81,6 @@ func TestSGLangConfigureRequest(t *testing.T) {
 		if req.Temperature == nil || *req.Temperature != 0.3 {
 			t.Errorf("explicit temperature = %v, want 0.3", req.Temperature)
 		}
-		// top_p / presence_penalty still follow the thinking state.
 		if req.TopP != 0.80 {
 			t.Errorf("top_p = %v, want 0.80", req.TopP)
 		}
@@ -122,11 +99,9 @@ func TestSGLangConfigureRequest(t *testing.T) {
 		if req.TopP != 0.7 {
 			t.Errorf("configured top_p ignored: %v", req.TopP)
 		}
-		// The thinking-state presence penalty still applies.
 		if req.PresencePenalty == nil || *req.PresencePenalty != 1.5 {
 			t.Errorf("presence_penalty = %v, want 1.5", req.PresencePenalty)
 		}
-		// An unset top_k (0 in the config) is never sent.
 		if req.TopK != nil {
 			t.Errorf("top_k = %d, want omitted", *req.TopK)
 		}

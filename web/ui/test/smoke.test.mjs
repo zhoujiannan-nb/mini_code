@@ -1,8 +1,3 @@
-// Smoke test for the zero-build Preact stack: import a real component file that
-// uses bare specifiers ("preact", "preact/hooks", "htm"), render it into jsdom,
-// and prove that a hook state update re-renders the DOM.
-//
-// The DOM helper must be imported first (side-effect: installs jsdom globals).
 import test from "node:test";
 import assert from "node:assert/strict";
 

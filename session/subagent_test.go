@@ -9,9 +9,6 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// TestClassifyDestructive verifies the cautious-mode classification of tool
-// calls: delete_file always asks; exec commands are hard-blocked when
-// catastrophic, ask when merely destructive, and pass otherwise.
 func TestClassifyDestructive(t *testing.T) {
 	cases := []struct {
 		tool   string
@@ -29,7 +26,7 @@ func TestClassifyDestructive(t *testing.T) {
 		{"exec", map[string]interface{}{"command": "Remove-Item C:\\x"}, "ask"},
 		{"exec", map[string]interface{}{"command": "dir"}, ""},
 		{"exec", map[string]interface{}{"command": "go build ./..."}, ""},
-		{"exec", map[string]interface{}{"command": "type del.txt"}, ""}, // file name, not the command
+		{"exec", map[string]interface{}{"command": "type del.txt"}, ""},
 		{"exec", map[string]interface{}{"command": ""}, ""},
 		{"write_file", map[string]interface{}{"path": "C:/x.txt"}, ""},
 		{"read_file", map[string]interface{}{"path": "C:/x.txt"}, ""},
@@ -42,8 +39,6 @@ func TestClassifyDestructive(t *testing.T) {
 	}
 }
 
-// newTestManager builds a SessionManager over a temp DB with a nil model
-// client (tests inject PromptFunc, so no model calls are made).
 func newTestManager(t *testing.T) *SessionManager {
 	t.Helper()
 	mgr, err := NewSessionManager(nil, t.TempDir()+"/agent.db")
@@ -54,10 +49,6 @@ func newTestManager(t *testing.T) *SessionManager {
 	return mgr
 }
 
-// TestSubagentDispatchSyncFork verifies a foreground dispatch: the child
-// session is created under the parent, the parent's cautious mode is
-// snapshotted into the child, and fork=true copies the parent's conversation
-// (minus its system message) as the child's starting context.
 func TestSubagentDispatchSyncFork(t *testing.T) {
 	mgr := newTestManager(t)
 	parent, err := mgr.CreateSessionRecord("parent", "build", t.TempDir(), nil)
@@ -98,21 +89,16 @@ func TestSubagentDispatchSyncFork(t *testing.T) {
 	if got := mgr.ModeOf(child.ID()); got != ModeCautious {
 		t.Fatalf("child mode = %q, want cautious (snapshot of parent)", got)
 	}
-	// fork: parent history minus the system message
 	msgs := child.Record().Messages
 	if len(msgs) != 2 || msgs[0].Role != "user" || msgs[0].GetText() != "hello" || msgs[1].Role != "assistant" {
 		t.Fatalf("forked history mismatch: %+v", msgs)
 	}
-	// the job is recorded as completed
 	info, ok := svc.Status(childID)
 	if !ok || info.Status != "completed" || info.Result != "child result" {
 		t.Fatalf("job status = %+v (ok=%v), want completed with result", info, ok)
 	}
 }
 
-// TestSubagentDispatchBgSettle verifies a background dispatch: it returns
-// immediately, the job settles asynchronously, and a settlement notice is
-// injected into the parent's conversation.
 func TestSubagentDispatchBgSettle(t *testing.T) {
 	mgr := newTestManager(t)
 	parent, err := mgr.CreateSessionRecord("parent", "build", t.TempDir(), nil)
@@ -130,12 +116,10 @@ func TestSubagentDispatchBgSettle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DispatchBg: %v", err)
 	}
-	// returns immediately: the job is still running right after dispatch
 	if info, ok := svc.Status(jobID); !ok || info.Status != "running" {
 		t.Fatalf("expected running right after dispatch, got %+v", info)
 	}
 
-	// wait for the job to settle
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		info, _ := svc.Status(jobID)
@@ -151,7 +135,6 @@ func TestSubagentDispatchBgSettle(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	// the settlement notice landed in the parent's conversation
 	found := false
 	for _, m := range parent.Record().Messages {
 		if m.Role == "user" && strings.Contains(m.GetText(), "<agent ") && strings.Contains(m.GetText(), "bg result") {
@@ -164,9 +147,6 @@ func TestSubagentDispatchBgSettle(t *testing.T) {
 	}
 }
 
-// TestSubagentCancel verifies that Cancel stops a running background job and
-// the job settles as canceled (the child's interrupt status is what the
-// real Prompt path produces on context cancellation).
 func TestSubagentCancel(t *testing.T) {
 	mgr := newTestManager(t)
 	parent, err := mgr.CreateSessionRecord("parent", "build", t.TempDir(), nil)
@@ -177,7 +157,7 @@ func TestSubagentCancel(t *testing.T) {
 	svc := NewSubagentService(mgr)
 	svc.PromptFunc = func(ctx context.Context, s *Session, goal string) (string, string, error) {
 		<-ctx.Done()
-		s.updateStatus("interrupted") // what Session.Prompt does on cancel
+		s.updateStatus("interrupted")
 		return "", "", nil
 	}
 
@@ -202,14 +182,11 @@ func TestSubagentCancel(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	// a second cancel finds nothing running
 	if svc.Cancel(jobID) {
 		t.Fatal("second Cancel should report no running job")
 	}
 }
 
-// TestSubagentConcurrencyLimit verifies the per-parent cap on concurrent
-// background jobs.
 func TestSubagentConcurrencyLimit(t *testing.T) {
 	mgr := newTestManager(t)
 	parent, err := mgr.CreateSessionRecord("parent", "build", t.TempDir(), nil)
@@ -240,11 +217,10 @@ func TestSubagentConcurrencyLimit(t *testing.T) {
 	if _, err := svc.DispatchBg(parent.ID(), "work", "job", false); err == nil {
 		t.Fatal("expected the concurrency cap to reject the fifth job")
 	}
-	// canceling one frees a slot
 	if !svc.Cancel(ids[0]) {
 		t.Fatal("Cancel failed")
 	}
-	time.Sleep(50 * time.Millisecond) // let the canceled job settle
+	time.Sleep(50 * time.Millisecond)
 	if _, err := svc.DispatchBg(parent.ID(), "work", "job", false); err != nil {
 		t.Fatalf("expected a free slot after cancel: %v", err)
 	}

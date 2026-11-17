@@ -19,9 +19,6 @@ func TestDecodeToUTF8Passthrough(t *testing.T) {
 	}
 }
 
-// TestDecodeToUTF8GBK round-trips a typical cmd.exe error message: encode
-// the Chinese text as GBK (what cmd.exe on a Chinese system actually
-// emits), then DecodeToUTF8 must recover the exact original.
 func TestDecodeToUTF8GBK(t *testing.T) {
 	cases := []string{
 		"'tail' 不是内部或外部命令，也不是可运行的程序或批处理文件。",
@@ -41,8 +38,6 @@ func TestDecodeToUTF8GBK(t *testing.T) {
 	}
 }
 
-// TestDecodeToUTF8InvalidFallback must never panic or lose the prefix when
-// the input is neither valid UTF-8 nor fully valid GBK.
 func TestDecodeToUTF8InvalidFallback(t *testing.T) {
 	in := []byte{0xFF, 0xFE, 0x41, 0x42, 0x43, 0x80, 0x81}
 	got := DecodeToUTF8(in)

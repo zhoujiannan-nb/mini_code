@@ -1,7 +1,4 @@
-/* Super-Agent(Router)六页签面板。颜色全部走 base.css 的变量,深浅色自动适配。
-   布局挂在 .chat 区内:页签栏一行 + .sup-scroll 承担原本 .messages 的滚动职责。 */
 
-/* ---- worker 会话侧抽屉(面板内预览,不离开 super 页签) ---- */
 .sup-drawer-mask { position: fixed; inset: 0; background: rgba(10, 12, 20, .28); z-index: 60; }
 .sup-drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 92vw); z-index: 61;
@@ -30,7 +27,6 @@
 .sd-assistant .sd-role { text-align: right; }
 .sd-assistant .sd-text { background: var(--accent-l); border-color: var(--accent-b); }
 
-/* ---- 调度中心 banner(super 会话的聊天头替代) ---- */
 .sup-banner {
   display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
   padding: 7px 16px; font-size: 12.5px;
@@ -45,7 +41,6 @@
 }
 .sb-stats { color: var(--ghost-fg); font-size: 11.5px; }
 
-/* ---- 页签栏 ---- */
 .sup-tabs {
   display: flex; align-items: center; gap: 2px; flex: 0 0 auto;
   padding: 6px 14px 0; border-bottom: 1px solid var(--edge);
@@ -67,7 +62,6 @@
 .sup-tabs-flex { flex: 1; }
 .sup-hint { font-size: 11px; color: var(--ghost-fg); opacity: .8; padding-right: 6px; }
 
-/* ---- 面板滚动区(顶替 .messages 的滚动) ---- */
 .sup-scroll {
   flex: 1 1 auto; min-height: 0; overflow: auto;
   padding: 14px 18px 40px; background: var(--bg);
@@ -79,7 +73,6 @@
   background: var(--ghost-bg); padding: 1px 5px; border-radius: 4px;
 }
 
-/* ---- 边界配置条 ---- */
 .sup-cfg { border: 1px solid var(--edge); border-radius: 10px; margin-bottom: 12px; background: var(--surface); overflow: hidden; }
 .sup-cfg-head {
   width: 100%; display: flex; align-items: center; gap: 10px; cursor: pointer;
@@ -105,7 +98,6 @@
 .sup-cfg-body input:focus { outline: none; border-color: var(--accent-b); }
 .sup-cfg-body .btn { align-self: end; }
 
-/* ---- Workers 卡网格 ---- */
 .sup-wgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; align-items: start; }
 .sup-wcard { border: 1px solid var(--edge); border-radius: 10px; background: var(--surface); padding: 10px 12px; }
 .sup-wcard.live { border-color: var(--accent-b); }
@@ -150,7 +142,6 @@
 .sup-wrow .sup-label { margin: 0 0 4px; }
 .sup-wrow input { flex: 1; }
 
-/* ---- 表格 ---- */
 .sup-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .sup-table th {
   text-align: left; font-weight: 600; font-size: 11px; color: var(--ghost-fg);
@@ -169,7 +160,6 @@
 .sup-hist .t { color: var(--ghost-fg); white-space: nowrap; }
 .sup-hist pre { margin: 0; flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-all; font-size: 11px; color: var(--ghost-fg); }
 
-/* 启停开关 */
 .sup-sw {
   width: 30px; height: 17px; border-radius: 9px; border: 0; cursor: pointer; padding: 2px;
   background: var(--track); transition: background .15s;
@@ -183,7 +173,6 @@
 }
 .sup-linkbtn:hover { text-decoration: underline; }
 
-/* ---- 消息通道 ---- */
 .sup-chandash { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
 .sup-kpi {
   border: 1px solid var(--edge); border-radius: 10px; background: var(--surface);
@@ -208,7 +197,6 @@
 .sup-msg-t { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
 .sup-msg-c { flex: 0 0 auto; font-size: 10.5px; color: var(--ghost-fg); }
 
-/* ---- 审计过滤 ---- */
 .sup-filter { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
 .sup-chipbtn {
   border: 1px solid var(--edge); background: var(--surface); border-radius: 14px; cursor: pointer;
@@ -221,7 +209,6 @@
 }
 .sup-count { font-size: 11px; color: var(--ghost-fg); }
 
-/* ---- 侧栏入口:样式对齐 .nav-btn(但不带它的 margin-top:auto,要紧跟新建按钮) ---- */
 .super-entry {
   margin: 10px var(--side-inset, 12px) 0; height: 34px; padding: 0 11px;
   display: flex; align-items: center; gap: 9px;

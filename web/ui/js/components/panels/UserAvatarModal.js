@@ -1,4 +1,3 @@
-// 用户头像弹窗:上传(jpg/png/webp,≤4MB)→ canvas 居中裁 256×256 JPEG → 存服务端配置。
 import { h } from "preact";
 import { useRef } from "preact/hooks";
 import htm from "htm";

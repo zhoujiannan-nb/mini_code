@@ -17,82 +17,40 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// Process plugins (kind 1: "程序") are long-lived companion programs that
-// mini_code starts, keeps alive and talks to — a python service, a local
-// model server, a browser driver daemon. They are NOT tools: they contribute no
-// schema to the prompt. They differ from a tool plugin (kind 2, "工具") in
-// exactly that way, and the distinction matters for the prefix cache:
-//
-//	tool plugin   — appends a schema to the prompt prefix (cache-affecting)
-//	process plugin — contributes NO prompt text at all (cache-invisible)
-//
-// A process plugin declares itself in plugin.json under "process":
-//
-//	"process": {
-//	  "command": "python",
-//	  "args": ["server.py"],
-//	  "autostart": true,
-//	  "restart": "on-failure",
-//	  "health_check": {"type": "http", "url": "http://127.0.0.1:8080/healthz"},
-//	  "ready_timeout_seconds": 30,
-//	  "expose": {
-//	    "tool": true,          // give the model a plugin_proc__<id> control tool
-//	    "endpoint": "http://127.0.0.1:8080"
-//	  }
-//	}
-//
-// "Expose" is what the user meant by "可以被查到": the model can list running
-// plugins, read their status and their declared endpoint. The control tool is
-// appended AFTER the core tools like any plugin tool, so an installed process
-// plugin never shifts the cached core segment.
 type ProcessSpec struct {
 	Command   string   `json:"command"`
 	Args      []string `json:"args,omitempty"`
 	Env       []string `json:"env,omitempty"`
 	Autostart bool     `json:"autostart,omitempty"`
-	// Restart is "always", "on-failure" (default) or "never".
 	Restart string `json:"restart,omitempty"`
-	// ReadyTimeoutSeconds bounds how long WaitReady waits (default 20).
 	ReadyTimeoutSeconds int `json:"ready_timeout_seconds,omitempty"`
-	// HealthCheck is optional; without it "ready" means "still running".
 	HealthCheck *HealthCheck `json:"health_check,omitempty"`
 	Expose      *ProcessExpose `json:"expose,omitempty"`
-	// Description is what the model sees in the control tool's output.
 	Description string `json:"description,omitempty"`
 }
 
-// HealthCheck polls one of three trivial probes until the plugin answers.
 type HealthCheck struct {
-	// Type is "http" (GET the URL expecting 2xx), "tcp" (dial the URL's host)
-	// or "process" (just "still alive").
 	Type string `json:"type,omitempty"`
 	URL  string `json:"url,omitempty"`
 }
 
-// ProcessExpose declares what the plugin tells mini_code about itself.
 type ProcessExpose struct {
-	// Tool registers a plugin_proc__<id> control tool the model may call.
 	Tool bool `json:"tool,omitempty"`
-	// Endpoint is an http(s) URL the model is told about (documentation only:
-	// mini_code never proxies it, so no credential crosses the boundary).
 	Endpoint string `json:"endpoint,omitempty"`
 }
 
-// ProcState is the observable state of one process plugin.
 type ProcState struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Dir         string `json:"dir"`
-	State       string `json:"state"` // stopped | starting | running | failed
+	State       string `json:"state"`
 	PID         int    `json:"pid,omitempty"`
 	StartedAt   int64  `json:"started_at,omitempty"`
 	LastError   string `json:"last_error,omitempty"`
 	Restarts    int    `json:"restarts,omitempty"`
 	Endpoint    string `json:"endpoint,omitempty"`
 	Description string `json:"description,omitempty"`
-	// Command is shown so the user can see exactly what would be run.
 	Command string `json:"command"`
-	// UptimeSeconds is computed at read time (0 when not running).
 	UptimeSeconds int64 `json:"uptime_seconds,omitempty"`
 }
 
@@ -104,16 +62,11 @@ const (
 
 	procDefaultReadyTimeout = 20 * time.Second
 	procMaxReadyTimeout     = 300 * time.Second
-	// procMaxLogLines bounds the in-memory tail kept per plugin.
 	procMaxLogLines = 200
-	// procRestartBackoff is the wait before a restart attempt; it doubles up to
-	// procRestartBackoffMax so a plugin that crashes on startup cannot spin the
-	// CPU.
 	procRestartBackoff    = 1 * time.Second
 	procRestartBackoffMax = 30 * time.Second
 )
 
-// runningProc is the supervisor entry for one started plugin.
 type runningProc struct {
 	spec   ProcessSpec
 	dir    string
@@ -122,16 +75,11 @@ type runningProc struct {
 	pid    int
 	start  time.Time
 	errMsg string
-	// restarts counts automatic restarts (not manual starts).
 	restarts int
-	// stop is closed to tell the supervisor loop not to restart.
 	stop chan struct{}
-	// logtail holds the last procMaxLogLines lines of stdout+stderr.
 	logtail []string
 }
 
-// ProcManager supervises every process plugin. There is one per process; the
-// web server owns it.
 type ProcManager struct {
 	mu      sync.Mutex
 	procs   map[string]*runningProc
@@ -139,9 +87,6 @@ type ProcManager struct {
 	started bool
 }
 
-// NewProcManager builds a manager. loadFn is called to re-read the plugin
-// directory (a fresh read means a hot-added plugin is startable without a
-// restart of mini_code).
 func NewProcManager(loadFn func() []Plugin) *ProcManager {
 	if loadFn == nil {
 		loadFn = Load
@@ -149,7 +94,6 @@ func NewProcManager(loadFn func() []Plugin) *ProcManager {
 	return &ProcManager{procs: make(map[string]*runningProc), loadFn: loadFn}
 }
 
-// processPlugins filters the enabled plugins that declare a process spec.
 func processPlugins(all []Plugin) []Plugin {
 	out := make([]Plugin, 0, len(all))
 	for _, p := range all {
@@ -160,9 +104,6 @@ func processPlugins(all []Plugin) []Plugin {
 	return out
 }
 
-// StartAutostart launches every process plugin with autostart: true. It is
-// called once when the server starts; a failure in one plugin is logged and
-// does not stop the others (or the server).
 func (m *ProcManager) StartAutostart() {
 	m.mu.Lock()
 	if m.started {
@@ -182,8 +123,6 @@ func (m *ProcManager) StartAutostart() {
 	}
 }
 
-// Start launches one process plugin by id. Starting an already running plugin
-// is a no-op.
 func (m *ProcManager) Start(id string) error {
 	p, ok := m.find(id)
 	if !ok {
@@ -192,7 +131,6 @@ func (m *ProcManager) Start(id string) error {
 	return m.startPlugin(p, false)
 }
 
-// startPlugin is the shared path for a manual start and an automatic restart.
 func (m *ProcManager) startPlugin(p Plugin, isRestart bool) error {
 	if p.Process == nil {
 		return fmt.Errorf("插件 %q 没有 process 配置", p.ID)
@@ -205,7 +143,7 @@ func (m *ProcManager) startPlugin(p Plugin, isRestart bool) error {
 	m.mu.Lock()
 	if cur, ok := m.procs[p.ID]; ok && (cur.state == procStateRunning || cur.state == procStateStarting) {
 		m.mu.Unlock()
-		return nil // already up
+		return nil
 	}
 	rp := &runningProc{
 		spec:  spec,
@@ -227,15 +165,11 @@ func (m *ProcManager) startPlugin(p Plugin, isRestart bool) error {
 	cmd := exec.Command(spec.Command, spec.Args...)
 	cmd.Dir = p.Dir
 	hideWindow(cmd)
-	// Same UTF-8 child environment a plugin tool gets: a python helper that
-	// prints non-ASCII must not die on a GBK console code page.
 	cmd.Env = append(os.Environ(), append([]string{
 		"PYTHONIOENCODING=utf-8",
 		"PYTHONUTF8=1",
 		"LANG=en_US.UTF-8",
 		"LC_ALL=en_US.UTF-8",
-		// The child learns where it lives and which plugin it is, so a reusable
-		// script can be dropped into several plugins unmodified.
 		"MINICODE_PLUGIN_ID=" + p.ID,
 		"MINICODE_PLUGIN_DIR=" + p.Dir,
 	}, spec.Env...)...)
@@ -262,22 +196,16 @@ func (m *ProcManager) startPlugin(p Plugin, isRestart bool) error {
 	rp.errMsg = ""
 	m.mu.Unlock()
 
-	// Drain both pipes; without a reader a chatty plugin fills the pipe buffer
-	// and blocks forever on write.
 	go m.drain(p.ID, "out", stdout)
 	go m.drain(p.ID, "err", stderr)
 
 	slog.Info("plugin process started", "id", p.ID, "pid", cmd.Process.Pid, "cmd", spec.Command)
 
-	// WaitReady runs in the background so Start() never blocks the caller (an
-	// autostart loop or an HTTP handler). The state moves running → running or
-	// running → failed inside.
 	go m.waitExit(p.ID, cmd)
 	go m.waitReady(p.ID)
 	return nil
 }
 
-// waitExit reaps the child and decides whether to restart.
 func (m *ProcManager) waitExit(id string, cmd *exec.Cmd) {
 	err := cmd.Wait()
 
@@ -289,7 +217,6 @@ func (m *ProcManager) waitExit(id string, cmd *exec.Cmd) {
 	}
 	select {
 	case <-rp.stop:
-		// A deliberate stop: the caller already set the state.
 		m.mu.Unlock()
 		return
 	default:
@@ -348,8 +275,6 @@ func (m *ProcManager) waitExit(id string, cmd *exec.Cmd) {
 	}()
 }
 
-// waitReady polls the health check (or just checks liveness) and records the
-// outcome in the state.
 func (m *ProcManager) waitReady(id string) {
 	m.mu.Lock()
 	rp, ok := m.procs[id]
@@ -368,7 +293,7 @@ func (m *ProcManager) waitReady(id string) {
 		timeout = procMaxReadyTimeout
 	}
 	if spec.HealthCheck == nil || strings.EqualFold(spec.HealthCheck.Type, "process") || spec.HealthCheck.URL == "" {
-		return // "running" is all we can say
+		return
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -393,7 +318,6 @@ func (m *ProcManager) waitReady(id string) {
 	slog.Warn("plugin process health check timed out", "id", id, "url", spec.HealthCheck.URL)
 }
 
-// Stop terminates one plugin process (and suppresses its restart).
 func (m *ProcManager) Stop(id string) error {
 	m.mu.Lock()
 	rp, ok := m.procs[id]
@@ -422,7 +346,6 @@ func (m *ProcManager) Stop(id string) error {
 	return nil
 }
 
-// StopAll terminates every managed process (server shutdown).
 func (m *ProcManager) StopAll() {
 	m.mu.Lock()
 	ids := make([]string, 0, len(m.procs))
@@ -439,9 +362,6 @@ func (m *ProcManager) StopAll() {
 	}
 }
 
-// States returns the state of every installed, enabled process plugin — the
-// ones that are running as well as the ones that are not. That is what the
-// settings page and the model's control tool read.
 func (m *ProcManager) States() []ProcState {
 	var out []ProcState
 	for _, p := range processPlugins(m.loadFn()) {
@@ -453,7 +373,6 @@ func (m *ProcManager) States() []ProcState {
 	return out
 }
 
-// StateOf reports one plugin, whether or not it was ever started.
 func (m *ProcManager) StateOf(p Plugin) ProcState {
 	st := ProcState{
 		ID:      p.ID,
@@ -485,8 +404,6 @@ func (m *ProcManager) StateOf(p Plugin) ProcState {
 	return st
 }
 
-// LogTail returns the last lines the plugin printed (stdout+stderr, interleaved
-// by arrival). Handy for diagnosing a plugin that fails its health check.
 func (m *ProcManager) LogTail(id string) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -499,7 +416,6 @@ func (m *ProcManager) LogTail(id string) []string {
 	return out
 }
 
-// find looks the plugin up in the directory listing.
 func (m *ProcManager) find(id string) (Plugin, bool) {
 	for _, p := range m.loadFn() {
 		if p.ID == id {
@@ -509,7 +425,6 @@ func (m *ProcManager) find(id string) (Plugin, bool) {
 	return Plugin{}, false
 }
 
-// fail records a start failure.
 func (m *ProcManager) fail(id, msg string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -522,12 +437,9 @@ func (m *ProcManager) fail(id, msg string) {
 	rp.pid = 0
 }
 
-// drain reads one pipe and appends to the plugin's log tail.
 func (m *ProcManager) drain(id, which string, r io.ReadCloser) {
 	defer r.Close()
 	sc := bufio.NewScanner(r)
-	// A plugin may print a long line (a JSON dump); the default 64KB token
-	// limit would stop the reader and block the child on a full pipe.
 	sc.Buffer(make([]byte, 0, 8*1024), 256*1024)
 	for sc.Scan() {
 		line := sanitizeUTF8(sc.Text())
@@ -542,7 +454,6 @@ func (m *ProcManager) drain(id, which string, r io.ReadCloser) {
 	}
 }
 
-// probeHealth runs one health check, returning true when the plugin answered.
 func probeHealth(hc *HealthCheck) bool {
 	if hc == nil || hc.URL == "" {
 		return true
@@ -559,11 +470,6 @@ func probeHealth(hc *HealthCheck) bool {
 	}
 }
 
-// ProcTool is the control tool a process plugin exposes to the model when
-// expose.tool is true. It answers three questions — is it up, what is it, how
-// do I restart it — without ever proxying the plugin's own protocol: mini_code
-// has no idea what a given plugin speaks, and inventing a proxy would be the
-// "everything is a plugin" trap.
 type ProcTool struct {
 	pluginID    string
 	name        string
@@ -574,7 +480,6 @@ type ProcTool struct {
 	endpoint    string
 }
 
-// NewProcTool builds the control tool for one process plugin.
 func NewProcTool(p Plugin, m *ProcManager) *ProcTool {
 	name := "plugin_proc__" + strings.ReplaceAll(p.ID, "-", "_")
 	desc := "Report the status of the mini_code process plugin " + p.ID
@@ -666,7 +571,6 @@ func (t *ProcTool) Execute(_ context.Context, params map[string]interface{}) (*t
 	return tools.NewTextResult(string(b)), nil
 }
 
-// toInt accepts the several shapes a JSON number arrives in.
 func toInt(v interface{}) (int, bool) {
 	switch n := v.(type) {
 	case int:
@@ -687,6 +591,4 @@ func toInt(v interface{}) (int, bool) {
 	return 0, false
 }
 
-// ensure filepath is referenced (used by the dir computation above and kept
-// here so the import stays honest if the supervisor is trimmed).
 var _ = filepath.Join

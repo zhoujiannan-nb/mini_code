@@ -1,4 +1,3 @@
-// 审批弹窗(谨慎模式)。只是"视图":关掉它不会撤掉待审批请求,徽标上的数字还在。
 import { h } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import htm from "htm";

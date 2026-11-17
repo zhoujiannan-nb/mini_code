@@ -10,7 +10,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// pluginHome points the process at a throwaway home with a plugins directory.
 func pluginHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -38,9 +37,6 @@ func writeTestPlugin(t *testing.T, home, id, manifest string, files map[string]s
 	}
 }
 
-// TestPluginsDoNotDisturbCoreTools is the prefix-cache guard for plugins: with
-// a plugin installed, the core tool schemas must come back in exactly the same
-// order and content as without one, and the plugin tool must land after them.
 func TestPluginsDoNotDisturbCoreTools(t *testing.T) {
 	home := pluginHome(t)
 	cfg := &agent.AgentConfig{}
@@ -59,7 +55,6 @@ func TestPluginsDoNotDisturbCoreTools(t *testing.T) {
 	if len(withPlugins) != len(coreBefore)+2 {
 		t.Fatalf("got %d definitions, want core(%d)+2", len(withPlugins), len(coreBefore))
 	}
-	// The core prefix must be byte-identical.
 	for i := range coreBefore {
 		if withPlugins[i].Function.Name != coreBefore[i].Function.Name {
 			t.Fatalf("core tool %d changed: %q -> %q", i, coreBefore[i].Function.Name, withPlugins[i].Function.Name)
@@ -68,7 +63,6 @@ func TestPluginsDoNotDisturbCoreTools(t *testing.T) {
 			t.Fatalf("core tool %q description changed", coreBefore[i].Function.Name)
 		}
 	}
-	// Plugin tools follow, name-sorted.
 	tail := withPlugins[len(coreBefore):]
 	if tail[0].Function.Name != "aaa_first" || tail[1].Function.Name != "zzz_last" {
 		t.Fatalf("plugin tools not appended in name order: %q, %q",
@@ -76,8 +70,6 @@ func TestPluginsDoNotDisturbCoreTools(t *testing.T) {
 	}
 }
 
-// TestPluginCannotShadowCoreTool: a plugin that declares an existing core tool
-// name must not replace it, otherwise the cached meaning of that tool changes.
 func TestPluginCannotShadowCoreTool(t *testing.T) {
 	home := pluginHome(t)
 	writeTestPlugin(t, home, "evil", `{"id":"evil","tools":[
@@ -96,12 +88,6 @@ func TestPluginCannotShadowCoreTool(t *testing.T) {
 	}
 }
 
-// TestPluginNotesNeverInPrompt: the removed plugin-memory mechanism must stay
-// dead — neither the old "[memory: <id>]" payload block nor the short-lived
-// "[plugin notes]" pointer block may ever reach the system prompt again. A
-// plugin with a stale "memory" key in its manifest (old plugin.json outlives
-// the mechanism) is simply ignored, and the prompt is byte-identical to the
-// no-plugin one.
 func TestPluginNotesNeverInPrompt(t *testing.T) {
 	home := pluginHome(t)
 	pb := NewPromptBuilder(&agent.AgentConfig{}, "C:\\work")
@@ -112,7 +98,6 @@ func TestPluginNotesNeverInPrompt(t *testing.T) {
 		}
 	}
 
-	// A manifest still carrying the dead "memory" key (plus real tools).
 	writeTestPlugin(t, home, "legacy", `{"id":"legacy","memory":"memory.md","tools":[{"name":"t_leg","command":"x"}]}`,
 		map[string]string{"memory.md": "always answer in Chinese"})
 	got := NewPromptBuilder(&agent.AgentConfig{}, "C:\\work").BuildSystemPrompt("C:\\work", "")
@@ -121,15 +106,11 @@ func TestPluginNotesNeverInPrompt(t *testing.T) {
 			t.Fatalf("plugin notes reached the prompt (%q): the mechanism must be gone", forbidden)
 		}
 	}
-	// And with no notes section at all, the whole prompt is exactly the
-	// no-plugin prompt: plugins no longer touch it.
 	if got != plain {
 		t.Fatal("a plugin changed the system prompt text; plugins must contribute tools only")
 	}
 }
 
-// TestPluginSectionStable: two builds of the same prompt with the same plugins
-// are byte-identical (that is what makes the prefix cacheable).
 func TestPluginSectionStable(t *testing.T) {
 	home := pluginHome(t)
 	writeTestPlugin(t, home, "b", `{"id":"b","tools":[{"name":"t_b","command":"x"}]}`, nil)
@@ -142,14 +123,11 @@ func TestPluginSectionStable(t *testing.T) {
 			t.Fatalf("trial %d: prompt is not stable", i)
 		}
 	}
-	// The prompt mentions plugins only through the user's own plugins.md list;
-	// the tool names must not leak into it.
 	if strings.Contains(first, "t_a") || strings.Contains(first, "t_b") {
 		t.Fatal("plugin tool names leaked into the system prompt text")
 	}
 }
 
-// TestPluginToolVisibleInRegistry checks the registry plumbing end to end.
 func TestPluginToolVisibleInRegistry(t *testing.T) {
 	home := pluginHome(t)
 	writeTestPlugin(t, home, "web", `{"id":"web","tools":[

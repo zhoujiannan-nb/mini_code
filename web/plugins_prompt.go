@@ -1,11 +1,3 @@
-// The "make me a plugin" prompts.
-//
-// The plugin centre has a 造插件 button. It does not open a form: it starts a
-// chat and hands the model a prompt that contains everything the plugin contract
-// requires, so the agent can write a working plugin without the user reading any
-// documentation. The prompt is built here (not in the UI) so it can quote the
-// real slot list, the real file paths and the real validation rules — a prompt
-// that drifts from the loader is worse than no prompt at all.
 package web
 
 import (
@@ -15,11 +7,6 @@ import (
 	"github.com/user/mini_code/plugin"
 )
 
-// handlePluginMakePrompt: GET /api/plugins/prompt?kind=process|tool|appearance
-//
-// Returns the prompt text for a new session. The UI puts it in the composer and
-// the user presses send, which keeps the user in control of what the model is
-// asked to do (and lets them add "and make it pink" before sending).
 func (s *server) handlePluginMakePrompt(w http.ResponseWriter, r *http.Request) {
 	kind := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("kind")))
 	if kind == "" {
@@ -39,7 +26,6 @@ func (s *server) handlePluginMakePrompt(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// pluginMakePrompt builds the instruction text for one category.
 func pluginMakePrompt(kind, dir string) string {
 	var b strings.Builder
 	b.WriteString("帮我做一个 mini_code 插件。\n\n")

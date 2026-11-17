@@ -23,8 +23,6 @@ func namesOf(defs []provider.ToolSchema) []string {
 	return out
 }
 
-// TestParseDisabledTools: the ablation env value is a loose comma list — spaces
-// and empty entries are tolerated, nothing else is interpreted.
 func TestParseDisabledTools(t *testing.T) {
 	cases := map[string]int{"": 0, "copy_file": 1, " a , b ,,c ": 3, "exec,exec": 1}
 	for v, want := range cases {
@@ -34,9 +32,6 @@ func TestParseDisabledTools(t *testing.T) {
 	}
 }
 
-// TestFilterOutTools: ablation only removes the named schemas and keeps the
-// original order — the remaining list must stay a byte-identical prefix, since the
-// schema array is part of the provider's cached prompt prefix.
 func TestFilterOutTools(t *testing.T) {
 	defs := schemas("read_file", "copy_file", "web_search", "task")
 
@@ -48,7 +43,6 @@ func TestFilterOutTools(t *testing.T) {
 	if b, _ := json.Marshal(namesOf(got)); string(b) != `["read_file","task"]` {
 		t.Fatalf("after ablation = %v, want %v", b, want)
 	}
-	// Ablating everything leaves an empty list rather than a mangled one.
 	if got := filterOutTools(defs, parseDisabledTools("read_file,copy_file,web_search,task")); len(got) != 0 {
 		t.Fatalf("ablating every tool should empty the list, got %v", namesOf(got))
 	}

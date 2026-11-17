@@ -1,5 +1,3 @@
-// 插件中心:两个页签(已安装 / 插件市场),左边列表或网格,选中才展开详情。
-// 数据全部现读后端(/api/plugins 每次现扫目录),前端不缓存"装了什么"。
 import { h } from "preact";
 import { useEffect } from "preact/hooks";
 import htm from "htm";
@@ -55,7 +53,6 @@ function MakeBox() {
 }
 
 function Tile({ p }) {
-  // 无条件订阅(不能写在 `p.boot &&` 后面,那会让 hook 调用顺序随插件类型变化)。
   const picked = useStore((s) => s.boot.picked);
   const isCur = !!p.boot && picked === p.id;
   const cat = plCatMeta(p.category);
@@ -213,7 +210,6 @@ function MarketDetail() {
 export function PluginCentre() {
   const plugins = useStore((s) => s.plugins);
 
-  // 打开这一页时轮询进程状态(程序插件的状态会自己变),离开就停。
   useEffect(() => {
     loadPluginCentre();
     plStartPoll();

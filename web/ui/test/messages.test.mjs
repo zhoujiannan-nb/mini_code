@@ -1,6 +1,3 @@
-// 消息分组 / 步骤折叠 / notice 分类的纯函数测试。
-// 这些函数是历史和实时两条渲染路径共用的形状来源,所以它们对了,界面就不会
-// 出现"刷新之后步骤跑进别的卡片"那类错位。
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -44,8 +41,6 @@ test("messages: 多模态内容分别取文字与图片", () => {
       { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
     ],
   };
-  // contentText 是通用读取(非用户轮也会用),图片位置保留旧版的占位符;
-  // 用户轮在 historyRows 里只取 text part,所以截图不会显示成"📷 [图片]"。
   assert.equal(contentText(m), "看这张图\n还有这张\n📷 [图片]");
   assert.deepEqual(contentImages(m), ["data:image/png;base64,AAA"]);
   assert.equal(contentText({ content: "纯文本" }), "纯文本");
@@ -69,7 +64,6 @@ test("messages: 历史分组 — user 是任务边界,assistant 吸收之前的�
   const rows = historyRows(msgs);
   assert.deepEqual(rows.map((r) => r.kind), ["user", "assistant", "user", "steps"]);
 
-  // 第二条 assistant 吸收了 exec 那一步,并且 tool 轮的正文填进了同一步。
   const answer = rows[1];
   assert.equal(answer.text, "两个文件");
   assert.equal(answer.steps.length, 1);
@@ -77,7 +71,6 @@ test("messages: 历史分组 — user 是任务边界,assistant 吸收之前的�
   assert.equal(answer.steps[0].result, "a.js\nb.js");
   assert.equal(answer.steps[0].phase, "done");
 
-  // 最后只有思考、没有正文 → 独立过程条,思考作为一步。
   assert.equal(rows[3].steps.length, 1);
   assert.equal(rows[3].steps[0].kind, "think");
 });

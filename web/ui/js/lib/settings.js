@@ -1,10 +1,7 @@
-// 设置 / 插件中心 / 开机动画的后端动作。和 actions.js 分开是因为这三块
-// 只在设置弹窗打开时活跃,主聊天路径不需要 import 它们。
 import { api, ROUTES } from "./api.js";
 import { getState, setState, toast } from "./store.js";
 import { resetToNew } from "./actions.js";
 
-/* ---------------- 配置弹窗 ---------------- */
 const LS_SETTAB_KEY = "mc-settab";
 
 export function restoreSettingsPage() {
@@ -56,10 +53,6 @@ export function fetchModels(baseUrl, apiKey) {
   });
 }
 
-/* ---------------- 开机动画(设置侧数据) ---------------- */
-// 开机动画是「外观插件」多声明一个 boot 字段(见 plugin/boot.go 与 web/bootanim.go)。
-// 装、选、开、调全在插件中心那张卡的详情里,外观页只留一句状态 + 一个跳转。
-// 这里只剩三件纯数据的事:读列表、存播放设置、立刻播一遍。
 export function bootPlaySettings() {
   const p = getState().boot.play || {};
   return {
@@ -80,7 +73,6 @@ export async function bootLoadLocal(msg) {
       play: r.play || null,
       picked: getState().boot.picked || "",
     };
-    // 选中的动画被删/被停用了:回落到第一个还能播的,别留一个空选择。
     if (boot.play && boot.play.theme !== undefined) boot.picked = boot.play.theme || boot.picked;
     if (boot.picked && !boot.themes.some((t) => t.id === boot.picked && !t.error)) boot.picked = "";
     if (!boot.picked) {
@@ -95,8 +87,6 @@ export async function bootLoadLocal(msg) {
   }
 }
 
-// 播放设置走 PUT /api/bootanim 的**局部更新**,而不是 PUT /api/config ——
-// 后者要求整份配置(含模型与 API key),在插件详情里提交它既不必要也不安全。
 export async function bootSavePlay(patch, msg) {
   try {
     const r = await api(ROUTES.bootanim, {
@@ -120,7 +110,6 @@ export function bootSetEnabled(on) { return bootSavePlay({ enabled: !!on }, on ?
 export function bootSetMode(mode) { return bootSavePlay({ mode }, "播放时机已更新"); }
 export function bootSetMute(on) { return bootSavePlay({ mute: !!on }, on ? "已静音" : "已开启声音"); }
 
-// bootPlay 立刻播一遍(不做播放策略判断)。播放器是 window.__mcBoot(见 bootanim-player.js)。
 export function bootPlay(t) {
   const player = window.__mcBoot;
   if (!player || !t || t.error) return false;
@@ -140,7 +129,6 @@ export function bootPreview(id) {
   bootPlay(getState().boot.themes.find((t) => t.id === id));
 }
 
-/* ---------------- 插件中心 ---------------- */
 export const PLUGIN_CATEGORIES = [
   { key: "process", icon: "⚙️", title: "程序", hint: "mini_code 启动并保活的外部进程" },
   { key: "tool", icon: "🔧", title: "工具", hint: "追加给模型的工具" },
@@ -161,7 +149,6 @@ export async function loadPluginCentre(msg) {
   try {
     const r = await api(ROUTES.plugins);
     patchPlugins({ list: r.plugins || [], dir: r.dir || getState().plugins.dir, slots: r.slots || [] });
-    // 开机动画也现读一次:详情里的"当前/设为开机动画"要靠它。
     await bootLoadLocal();
     if (msg) toast(msg, "ok");
   } catch (e) {
@@ -252,8 +239,6 @@ export async function plUninstall(id, name) {
   }
 }
 
-// plMakePlugin 取标准提示词 → 关设置 → 新会话 → 填进输入框(由 Composer 的
-// composerSeed 状态注入,不直接改 DOM)。
 export async function plMakePlugin(kind) {
   let prompt;
   try {
@@ -269,9 +254,7 @@ export async function plMakePlugin(kind) {
   toast("提示词已填好,按发送让 agent 开始写插件", "ok");
 }
 
-/* ---------------- 轮询 ---------------- */
 let pluginPollTimer = null;
-// plStartPoll 每 3 秒刷一次插件列表,仅在有进程插件时(状态会自己变:崩溃/重启)。
 export function plStartPoll() {
   plStopPoll();
   pluginPollTimer = setInterval(() => {

@@ -14,25 +14,13 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// maxToolOutput bounds what a plugin tool may feed back to the model. The exec
-// tool uses a similar cap; without one, a chatty plugin could blow the context
-// window in a single tool result.
 const maxToolOutput = 32 * 1024
 
-// Tool adapts one ToolSpec to the tools.Tool interface, so a plugin tool is
-// indistinguishable from a built-in one to the agent loop and the registry.
-//
-// The parameter object the model produced is delivered to the child process as
-// JSON on stdin. That keeps the command line in the manifest static (no shell
-// quoting, no injection through an argument) and lets either an argv-style
-// program or a small script wrapper read the call.
 type Tool struct {
 	spec ToolSpec
-	dir  string // the plugin directory, used as the working directory
+	dir  string
 }
 
-// ToolList returns every tool contributed by the plugin. (The manifest field is
-// named Tools, so the accessor needs a different name.)
 func (p Plugin) ToolList() []tools.Tool {
 	if len(p.Tools) == 0 {
 		return nil
@@ -44,9 +32,6 @@ func (p Plugin) ToolList() []tools.Tool {
 	return out
 }
 
-// PluginTools returns the tools of every plugin, in plugin-id order followed by
-// the order inside each manifest. The caller appends them AFTER the core tools:
-// the core tool list is the head of the cached prompt prefix and must not move.
 func PluginTools(plugins []Plugin) []tools.Tool {
 	var out []tools.Tool
 	for _, p := range plugins {
@@ -68,7 +53,6 @@ func (t *Tool) Parameters() map[string]interface{} {
 
 func (t *Tool) IsHidden() bool { return false }
 
-// Execute runs the plugin command with the call's parameters on stdin.
 func (t *Tool) Execute(ctx context.Context, params map[string]interface{}) (*tools.ToolResult, error) {
 	timeout := time.Duration(t.spec.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
@@ -80,12 +64,6 @@ func (t *Tool) Execute(ctx context.Context, params map[string]interface{}) (*too
 	cmd := exec.CommandContext(runCtx, t.spec.Command, t.spec.Args...)
 	cmd.Dir = t.dir
 	hideWindow(cmd)
-	// Force a UTF-8 child environment. On Windows a Python (or Node, or Ruby)
-	// child inherits the console code page (GBK/CP936 on a Chinese system) for
-	// its stdout even though the parent streams the bytes as UTF-8 — the child
-	// then dies with "UnicodeEncodeError: 'gbk' codec can't encode". Setting the
-	// standard knobs costs nothing on other platforms (they are simply ignored
-	// by programs that do not read them, and LANG/LC_ALL are honoured on Unix).
 	cmd.Env = append(os.Environ(),
 		"PYTHONIOENCODING=utf-8",
 		"PYTHONUTF8=1",
@@ -116,8 +94,6 @@ func (t *Tool) Execute(ctx context.Context, params map[string]interface{}) (*too
 		if msg == "" {
 			msg = runErr.Error()
 		}
-		// The child's stdout often carries a structured error (the web_search
-		// driver prints {"ok":false,"error":...} and exits 1), so keep both.
 		if out != "" {
 			msg = out + "\n" + msg
 		}
@@ -130,22 +106,17 @@ func (t *Tool) Execute(ctx context.Context, params map[string]interface{}) (*too
 	return tools.NewTextResult(truncate(out, maxToolOutput)), nil
 }
 
-// truncate cuts s to at most n bytes without splitting a UTF-8 rune.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
 	cut := n
-	for cut > 0 && (s[cut]&0xC0) == 0x80 { // walk back off a continuation byte
+	for cut > 0 && (s[cut]&0xC0) == 0x80 {
 		cut--
 	}
 	return s[:cut] + "\n…(truncated)"
 }
 
-// sanitizeUTF8 replaces invalid UTF-8 bytes so a plugin's output can always be
-// put into a JSON request. A child that ignores the UTF-8 environment (or a
-// binary program writing to stdout) would otherwise make the whole request
-// marshal fail, which surfaces as an opaque "sending failed" in the UI.
 func sanitizeUTF8(s string) string {
 	if utf8.ValidString(s) {
 		return s

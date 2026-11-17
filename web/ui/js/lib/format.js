@@ -1,7 +1,4 @@
-// 纯格式化工具。原来散在 usage.js / tasks.js / jobs.js / steps.js / plugins.js 里,
-// 这里集中一份,组件只 import 需要的那几个 —— 没有 DOM、没有状态,单测友好。
 
-// fmtK:紧凑 K 单位。0 → "—"(旧行为:未上报不等于 0)。
 export function fmtK(n) {
   if (!n) return "—";
   if (n >= 1000) {
@@ -11,13 +8,11 @@ export function fmtK(n) {
   return String(n);
 }
 
-// fmtK2:统一 K 单位(最多 2 位小数,去尾零):135557 → "135.56K",260000 → "260K"
 export function fmtK2(n) {
   n = n || 0;
   return (Math.round((n / 1000) * 100) / 100) + "K";
 }
 
-// relTime:侧栏里的相对时间。解析不了就原样显示(服务端可能给空串)。
 export function relTime(s) {
   if (!s) return "";
   const d = new Date(s);
@@ -45,7 +40,6 @@ export function fmtUptime(s) {
   return Math.floor(s / 86400) + " 天";
 }
 
-// byteLenOf:字节数(和 TextEncoder 一致;浏览器没有 TextEncoder 时退回 UTF-16 长度)。
 export function byteLenOf(s) {
   const t = String(s == null ? "" : s);
   return typeof TextEncoder === "function" ? new TextEncoder().encode(t).length : t.length;
@@ -58,7 +52,6 @@ export function fmtRun(sec) {
   return s ? m + "m" + s + "s" : m + "m";
 }
 
-// fmtTok:子任务 token 合计的紧凑写法(4.4M / 128k);0 返空串。
 export function fmtTok(n) {
   if (!n || n < 1) return "";
   if (n >= 1e6) return (n / 1e6).toFixed(1) + "M tok";
@@ -66,8 +59,6 @@ export function fmtTok(n) {
   return n + " tok";
 }
 
-// fmtTaskDur:运行中 = now - 创建;已结束 = 最后更新 - 创建。
-// created_at/updated_at 是带时区的 RFC3339,Date.parse 直接可吃。
 export function fmtTaskDur(c, now) {
   const t0 = Date.parse(c.created_at);
   if (isNaN(t0)) return "";
@@ -79,16 +70,12 @@ export function fmtTaskDur(c, now) {
   return Math.floor(m / 60) + "小时" + (m % 60) + "分";
 }
 
-// 输出速度的展示文案(弹层大字用)。accurate=true 为后端实测(完成 token / 首
-// token→流结束),false 为前端实时估算(带 ≈)。v<=0 空串。
-// (旧的 paintCacheHit 已删:底栏缓存不再内联单次数字,改点击弹层看累计。)
 export function paintSpeed(v, accurate) {
   if (!v || v <= 0) return "";
   const n = v >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
   return (accurate ? "" : "≈ ") + n + " token/s";
 }
 
-// jobElapsed:运行中行用当前时刻,结束行用 ended_at;小时封顶。
 export function jobElapsed(j, now) {
   const t0 = Date.parse(j.started_at || "");
   if (isNaN(t0)) return "";
@@ -102,12 +89,8 @@ export function jobElapsed(j, now) {
   return sec + "秒";
 }
 
-// 秒数 → "12s" / "1m20s"(工具步骤计时用,和 fmtRun 同义但保留独立名字便于阅读)
 export const fmtSec = fmtRun;
 
-// fmtDurMs:毫秒 → "1.8秒"(<10s 保留一位小数)/"54分22秒"/"68分52秒"。
-// 会话统计浮层的用时列专用(模型用时/工具调用用时/TTFT)。≥1 小时不进位成
-// "小时"而保持总分秒 —— 与 dsh 的统计浮层一致(它显示 68分52秒 而非 1小时08分)。
 export function fmtDurMs(ms) {
   ms = Number(ms) || 0;
   if (ms < 10000) return (Math.round(ms / 100) / 10) + "秒";

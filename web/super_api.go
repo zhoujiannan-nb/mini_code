@@ -1,8 +1,5 @@
 package web
 
-// Super-Agent(lite) panel API. The subsystem has exactly one feature —
-// 定时任务 — so the surface is ensure / overview / schedules CRUD. Everything
-// heavier (workers, channel, sources, tickets, publish) retired with v10.
 
 import (
 	"encoding/json"
@@ -11,10 +8,8 @@ import (
 	"github.com/user/mini_code/super"
 )
 
-// superS is the one stop-shop super service wired at startup.
 var superS *super.Service
 
-// AttachSuperService wires the super service into the HTTP layer.
 func AttachSuperService(s *super.Service) { superS = s }
 
 func (s *server) registerSuperRoutes(mux *http.ServeMux) {
@@ -26,7 +21,6 @@ func (s *server) registerSuperRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/super/schedules/run", sRequireSuper(s.handleSuperScheduleRun))
 }
 
-// sRequireSuper answers 503 for every super route while the subsystem is off.
 func sRequireSuper(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if superS == nil {
@@ -37,8 +31,6 @@ func sRequireSuper(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// POST /api/super/ensure — find or create the resident super session; the
-// sidebar entry opens it like any chat (the panel renders inside it).
 func (s *server) handleSuperEnsure(w http.ResponseWriter, r *http.Request) {
 	id, err := superS.EnsureSuper()
 	if err != nil {
@@ -48,19 +40,17 @@ func (s *server) handleSuperEnsure(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"session_id": id})
 }
 
-// GET /api/super/overview — one round trip for the whole panel.
 func (s *server) handleSuperOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, superS.Overview())
 }
 
-// POST /api/super/schedules/create — 建定时任务（到点发一句话到绑定会话）。
 func (s *server) handleSuperScheduleCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name    string `json:"name"`
 		Text    string `json:"text"`
 		Session string `json:"session"`
-		Every   string `json:"every"`      // "30m"/"2h"…（与 every_sec 二选一）
-		EverySec int   `json:"every_sec"` // 面板直填秒数优先
+		Every   string `json:"every"`
+		EverySec int   `json:"every_sec"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
@@ -83,7 +73,6 @@ func (s *server) handleSuperScheduleCreate(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, sc)
 }
 
-// POST /api/super/schedules/delete
 func (s *server) handleSuperScheduleDelete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID string `json:"id"`
@@ -99,7 +88,6 @@ func (s *server) handleSuperScheduleDelete(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// POST /api/super/schedules/toggle
 func (s *server) handleSuperScheduleToggle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID string `json:"id"`
@@ -116,7 +104,6 @@ func (s *server) handleSuperScheduleToggle(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "enabled": on})
 }
 
-// POST /api/super/schedules/run — 立即投递一次。
 func (s *server) handleSuperScheduleRun(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID string `json:"id"`

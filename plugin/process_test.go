@@ -18,7 +18,7 @@ func TestCategoryExplicit(t *testing.T) {
 		"skill":      CategoryTool,
 		"appearance": CategoryAppearance,
 		"skin":       CategoryAppearance,
-		"":           "", // inferred below
+		"":           "",
 	}
 	for kind, want := range cases {
 		p := Plugin{Manifest: Manifest{Kind: kind}}
@@ -32,9 +32,6 @@ func TestCategoryExplicit(t *testing.T) {
 }
 
 func TestCategoryInferred(t *testing.T) {
-	// A manifest with no "kind" is filed by what it declares. A plugin that both
-	// runs a program and adds tools is a process plugin: that is the part the
-	// user is trusting with executing code.
 	cases := []struct {
 		name string
 		m    Manifest
@@ -85,8 +82,6 @@ func TestProcessManifestLoads(t *testing.T) {
 	if p.Category() != CategoryProcess {
 		t.Errorf("Category() = %q", p.Category())
 	}
-	// A process plugin contributes no prompt text of its own: that is the whole
-	// point of the category (it stays invisible to the prefix cache).
 	if k := strings.Join(p.Kinds(), ","); k != "process" {
 		t.Errorf("Kinds() = %q", k)
 	}
@@ -128,8 +123,6 @@ func TestProcessClampsReadyTimeout(t *testing.T) {
 	}
 }
 
-// TestProcToolReportsState drives the control tool end to end (no real process:
-// StateOf reads the manager, which has never started anything).
 func TestProcToolReportsState(t *testing.T) {
 	home := setHome(t)
 	writePlugin(t, home, "svc-a", `{"id":"svc-a","name":"Svc A",
@@ -169,8 +162,6 @@ func TestProcToolReportsState(t *testing.T) {
 	}
 }
 
-// TestProcToolsRespectsExpose checks the opt-in: without expose.tool the model
-// gains no tool, but the plugin still appears in the manager's state list.
 func TestProcToolsRespectsExpose(t *testing.T) {
 	home := setHome(t)
 	writePlugin(t, home, "quiet", `{"id":"quiet","process":{"command":"python","args":["q.py"]}}`, nil)
@@ -200,8 +191,6 @@ func TestProcManagerStartUnknownPlugin(t *testing.T) {
 	}
 }
 
-// TestProcRestartPolicy covers the pure decision function through a real child:
-// the child exits immediately with status 1 and restart:never must not restart.
 func TestProcRestartNever(t *testing.T) {
 	home := setHome(t)
 	writePlugin(t, home, "once", `{"id":"once","process":{"command":"cmd","args":["/C","exit 1"],"restart":"never"}}`, nil)
@@ -213,8 +202,6 @@ func TestProcRestartNever(t *testing.T) {
 	if err := m.Start("once"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	// The child exits on its own; the supervisor must settle on failed and stay
-	// there (never restarts because restart=never).
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		st := m.States()

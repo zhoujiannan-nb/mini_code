@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// buildGlobTree creates a small nested tree in a temp dir and returns the dir.
-// Under dsh-aligned semantics node_modules and dotfiles are IN the result
-// (rg --hidden --no-ignore); only VCS metadata dirs are pruned.
 func buildGlobTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -23,9 +20,9 @@ func buildGlobTree(t *testing.T) string {
 		"docs/readme.md",
 		"docs/api/v1.md",
 		"test_main.go",
-		"node_modules/junk.go", // included: dsh does not hide ignored files
+		"node_modules/junk.go",
 		".hidden.txt",
-		".git/config", // pruned: VCS metadata
+		".git/config",
 	}
 	for _, f := range files {
 		fp := filepath.Join(dir, filepath.FromSlash(f))
@@ -53,8 +50,6 @@ func runGlob(t *testing.T, ws, pattern string, extra map[string]interface{}) str
 	return res.Text
 }
 
-// dsh contract: a pattern with no '/' is a basename match at ANY depth, and
-// ignored/hidden files are part of the result.
 func TestGlobSingleStarMatchesAnyDepth(t *testing.T) {
 	dir := buildGlobTree(t)
 	out := runGlob(t, dir, "*.go", nil)
@@ -66,7 +61,6 @@ func TestGlobSingleStarMatchesAnyDepth(t *testing.T) {
 	if strings.Contains(out, ".git/config") {
 		t.Fatalf("VCS metadata must be pruned, got: %s", out)
 	}
-	// No count trailer in the dsh shape; the paths are the whole result.
 	if strings.Contains(out, "(10 matches)") || strings.Contains(out, "matches)") {
 		t.Fatalf("unexpected count trailer, got: %s", out)
 	}
@@ -82,7 +76,6 @@ func TestGlobDoubleStarRecurses(t *testing.T) {
 	}
 }
 
-// dsh skips ONLY VCS metadata dirs; node_modules/ignored/hidden stay.
 func TestGlobIncludesIgnoredFilesPrunesVCSOnly(t *testing.T) {
 	dir := buildGlobTree(t)
 	out := runGlob(t, dir, "*", nil)
@@ -112,23 +105,19 @@ func TestGlobScopedSubdir(t *testing.T) {
 
 func TestGlobQuestionMarkAndClass(t *testing.T) {
 	dir := buildGlobTree(t)
-	// ? matches exactly one char: "test_main.go" -> test_?ain.go
 	out := runGlob(t, dir, "test_?ain.go", nil)
 	if !strings.Contains(out, "test_main.go") {
 		t.Fatalf("expected test_main.go via ?, got: %s", out)
 	}
-	// Character class: [mn]otes.md -> notes.md
 	out2 := runGlob(t, dir, "[mn]otes.md", nil)
 	if !strings.Contains(out2, "notes.md") {
 		t.Fatalf("expected notes.md via [...], got: %s", out2)
 	}
 }
 
-// dsh contract: the glob returns files, never directories.
 func TestGlobFilesOnly(t *testing.T) {
 	dir := buildGlobTree(t)
 	out := runGlob(t, dir, "src/*", nil)
-	// src contains app.go (file) and util/ (dir) at this level — only the file.
 	if !strings.Contains(out, "src/app.go") {
 		t.Fatalf("expected src/app.go, got: %s", out)
 	}
@@ -137,8 +126,6 @@ func TestGlobFilesOnly(t *testing.T) {
 	}
 }
 
-// A pattern ending in **/* must reach arbitrarily deep files (the "**"
-// segment absorbs any number of directories).
 func TestGlobDoubleStarDeepAbsorption(t *testing.T) {
 	dir := buildGlobTree(t)
 	out := runGlob(t, dir, "src/**/*.go", nil)
@@ -173,8 +160,6 @@ func TestGlobEmptyPatternRejected(t *testing.T) {
 	}
 }
 
-// 105 matching files exercise the dsh 100-path cap: the kept block plus the
-// spill notice naming the file with the complete list.
 func TestGlobTruncatesAt100WithSpillNotice(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 105; i++ {
@@ -184,7 +169,6 @@ func TestGlobTruncatesAt100WithSpillNotice(t *testing.T) {
 		}
 	}
 	out := runGlob(t, dir, "*.txt", nil)
-	// 100 kept path lines + 1 notice line.
 	if strings.Count(out, "\n") != 100 {
 		t.Fatalf("expected 100 kept paths, got %d lines:\n%s", strings.Count(out, "\n")+1, out)
 	}

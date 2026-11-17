@@ -16,11 +16,6 @@ import (
 	"github.com/user/mini_code/session"
 )
 
-// TestSessionContextAPI covers GET /api/sessions/{id}/context — the read
-// model for the「上下文」drawer: composition sections, cumulative totals
-// summed from the assistant ledger rows, and the compact/prune/model-switch
-// event list. Also pins that the removed manual-compaction route is really
-// gone (需求⑦).
 func TestSessionContextAPI(t *testing.T) {
 	be := newTestBackend(t)
 	api := httptest.NewServer(NewServer(be))
@@ -40,10 +35,10 @@ func TestSessionContextAPI(t *testing.T) {
 		{session.EventTaskStart, map[string]any{"goal": "one", "model": "m-a"}},
 		{session.EventAssistantMessage, map[string]any{"content": "x", "usage": map[string]any{
 			"prompt_tokens": 1000, "completion_tokens": 50, "cached_tokens": 800, "cache_reported": true}}},
-		{session.EventTaskStart, map[string]any{"goal": "two", "model": "m-a"}}, // 同模型:不算切换
+		{session.EventTaskStart, map[string]any{"goal": "two", "model": "m-a"}},
 		{session.EventAssistantMessage, map[string]any{"content": "y", "usage": map[string]any{
 			"prompt_tokens": 500, "completion_tokens": 20, "cached_tokens": 0, "cache_reported": true}}},
-		{session.EventTaskStart, map[string]any{"goal": "three", "model": "m-b"}}, // 换模型:switch
+		{session.EventTaskStart, map[string]any{"goal": "three", "model": "m-b"}},
 		{session.EventCompaction, map[string]any{"before_tokens": 2000, "after_tokens": 800, "kind": "auto"}},
 		{session.EventCompactionPrune, map[string]any{"call_id": "c1", "name": "exec", "chars_before": 5000, "chars_after": 500}},
 	}
@@ -116,7 +111,6 @@ func TestSessionContextAPI(t *testing.T) {
 		}
 	}
 
-	// 无用量账本的会话:totals 必须是 null(前端显示空态而不是 0 假象)。
 	sess2, err := be.mgr.CreateSessionRecord("ctx-empty", "build", t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("CreateSessionRecord 2: %v", err)
@@ -128,8 +122,6 @@ func TestSessionContextAPI(t *testing.T) {
 	if string(raw["totals"]) != "null" {
 		t.Fatalf("empty session totals = %s, want null", string(raw["totals"]))
 	}
-	// 没跑过一步的会话:rounds 是空数组(不是 null),steps 是 0 —— 前端按
-	// 「有 rounds 数组就渲染列表」处理,null 会让它炸。
 	if string(raw["rounds"]) != "[]" {
 		t.Fatalf("empty session rounds = %s, want []", string(raw["rounds"]))
 	}
@@ -137,7 +129,6 @@ func TestSessionContextAPI(t *testing.T) {
 		t.Fatalf("empty session steps = %s, want 0", string(raw["steps"]))
 	}
 
-	// 未知会话 → 404。
 	r, err := http.Get(api.URL + "/api/sessions/nope/context")
 	if err != nil {
 		t.Fatalf("GET context 404: %v", err)
@@ -147,8 +138,6 @@ func TestSessionContextAPI(t *testing.T) {
 		t.Fatalf("unknown session status = %d, want 404", r.StatusCode)
 	}
 
-	// 手动压缩路由已删(需求⑦)。POST 落在 `GET /` 兜底上 → 405;
-	// 无论 404 还是 405,关键是从前这个 POST 不再执行压缩(不会 200)。
 	rp, err := http.Post(api.URL+"/api/sessions/"+id+"/compact", "application/json", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatalf("POST compact: %v", err)
@@ -159,12 +148,6 @@ func TestSessionContextAPI(t *testing.T) {
 	}
 }
 
-// TestSessionContextRounds covers the round/step ledger of
-// GET /api/sessions/{id}/context: one loop (one billed assistant call) is one
-// step, and the stretch between two compactions is one round. A long task that
-// compacted six times must be auditable — which round, how many loops it took,
-// how far it pushed the context, and what its compaction gave back. Also pins
-// the exact JSON tags the frontend codes against.
 func TestSessionContextRounds(t *testing.T) {
 	be := newTestBackend(t)
 	api := httptest.NewServer(NewServer(be))
@@ -177,7 +160,6 @@ func TestSessionContextRounds(t *testing.T) {
 	id := sess.ID()
 	store := be.mgr.GetStore()
 
-	// One loop = one assistant/message row carrying usage.
 	usage := func(prompt, completion, turn int) {
 		t.Helper()
 		if _, err := store.AppendEvent(id, session.EventAssistantMessage, turn, map[string]any{
@@ -191,7 +173,6 @@ func TestSessionContextRounds(t *testing.T) {
 		}
 	}
 
-	// 第 1 轮:3 步,上下文从 3000 一路顶到 8800,然后被压缩回收 7000。
 	usage(3000, 40, 1)
 	usage(6000, 55, 2)
 	usage(8800, 30, 3)
@@ -200,7 +181,6 @@ func TestSessionContextRounds(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AppendEvent compaction: %v", err)
 	}
-	// 第 2 轮(仍在进行):压缩后的修剪行 + 2 步。
 	if _, err := store.AppendEvent(id, session.EventCompactionPrune, 4, map[string]any{
 		"call_id": "c1", "name": "read", "chars_before": 4000, "chars_after": 400,
 	}); err != nil {
@@ -261,7 +241,6 @@ func TestSessionContextRounds(t *testing.T) {
 		t.Fatalf("round 2 peak_tokens = %d, want 2400(压缩后重新长到的大小)", r2.PeakTokens)
 	}
 
-	// 前端按固定 JSON tag 对接,字段名一个都不能改。
 	var raw struct {
 		Steps  json.RawMessage              `json:"steps"`
 		Rounds []map[string]json.RawMessage `json:"rounds"`
@@ -282,8 +261,6 @@ func TestSessionContextRounds(t *testing.T) {
 	}
 }
 
-// awaitConversation polls until the session's record carries at least n
-// messages — a turn is persisted only when its model request completes.
 func awaitConversation(t *testing.T, mgr *session.SessionManager, id string, n int) []provider.Message {
 	t.Helper()
 	for i := 0; i < 200; i++ {
@@ -299,9 +276,6 @@ func awaitConversation(t *testing.T, mgr *session.SessionManager, id string, n i
 	return nil
 }
 
-// ctxGet fetches a URL and returns its status code plus its JSON body as a map
-// (nil when the body is not a JSON object). Unlike getJSON it does not fail on
-// non-200, so the error cases can assert their codes.
 func ctxGet(t *testing.T, url string) (int, map[string]any) {
 	t.Helper()
 	r, err := http.Get(url)
@@ -317,13 +291,6 @@ func ctxGet(t *testing.T, url string) (int, map[string]any) {
 	return r.StatusCode, out
 }
 
-// TestSessionContextDetailAPI covers GET /api/sessions/{id}/context/detail —
-// the parts of the context the composition view can only count: the system
-// prompt text (split into the sections we wrote and the ones this machine
-// injected), the real tool schemas, the per-message breakdown, and one
-// message's full text (?part=messages&i=N). The conversation is produced by a
-// real turn (POST /api/messages → hub → loop → mock model), so what the drawer
-// reads back is what actually sits in the context.
 func TestSessionContextDetailAPI(t *testing.T) {
 	be := newTestBackend(t)
 	api := httptest.NewServer(NewServer(be))
@@ -348,7 +315,6 @@ func TestSessionContextDetailAPI(t *testing.T) {
 	msgs := awaitConversation(t, be.mgr, id, 3)
 	detail := api.URL + "/api/sessions/" + id + "/context/detail"
 
-	// part=system:会话里第一条 system 消息的全文。
 	code, sys := ctxGet(t, detail+"?part=system")
 	if code != http.StatusOK {
 		t.Fatalf("part=system status = %d, want 200: %v", code, sys)
@@ -369,8 +335,6 @@ func TestSessionContextDetailAPI(t *testing.T) {
 	if !strings.Contains(msgs[0].GetText(), sysText) {
 		t.Fatal("part=system 的文本不是上下文里的系统提示词")
 	}
-	// parts:系统提示词的来源细分。分段拼回去必须等于 text(否则抽屉显示的
-	// 是另一份提示词),并且至少有一段是本机注入的(工作目录一定在)。
 	parts, ok := sys["parts"].([]any)
 	if !ok || len(parts) == 0 {
 		t.Fatalf("part=system 应有非空 parts 数组: %v", sys)
@@ -406,7 +370,6 @@ func TestSessionContextDetailAPI(t *testing.T) {
 		t.Fatal("parts 里没有任何 injected=true 的段:工作目录/环境块至少要有一段")
 	}
 
-	// part=tools:真实的工具定义(session.ContextPlan,同一真相源)。
 	code, tools := ctxGet(t, detail+"?part=tools")
 	if code != http.StatusOK {
 		t.Fatalf("part=tools status = %d, want 200: %v", code, tools)
@@ -434,7 +397,6 @@ func TestSessionContextDetailAPI(t *testing.T) {
 		t.Fatalf("part=tools total = %v, want > 0", tools["total"])
 	}
 
-	// part=messages:逐条明细(条数 + tokens + 字符数 + 预览)。
 	code, ml := ctxGet(t, detail+"?part=messages")
 	if code != http.StatusOK {
 		t.Fatalf("part=messages status = %d, want 200: %v", code, ml)
@@ -480,7 +442,6 @@ func TestSessionContextDetailAPI(t *testing.T) {
 		t.Fatalf("短消息的 est = %v (present=%v), want false", row0["est"], ok)
 	}
 
-	// part=messages&i=0:单条全文 = 系统提示词本体。
 	code, one := ctxGet(t, detail+"?part=messages&i=0")
 	if code != http.StatusOK {
 		t.Fatalf("part=messages&i=0 status = %d, want 200: %v", code, one)
@@ -501,7 +462,6 @@ func TestSessionContextDetailAPI(t *testing.T) {
 		t.Fatalf("单条全文 tokens = %v, want > 0", one["tokens"])
 	}
 
-	// 用户那条消息:全文里能看到用户说了什么。
 	userIdx := -1
 	for i, m := range msgs {
 		if m.Role == "user" {
@@ -520,7 +480,6 @@ func TestSessionContextDetailAPI(t *testing.T) {
 		t.Fatalf("i=%d 的全文没有用户原话: %q", userIdx, text)
 	}
 
-	// 越界 → 404;不是数字 → 400;未知会话 → 404;part 非法/缺失 → 400。
 	if code, _ = ctxGet(t, detail+"?part=messages&i=99999"); code != http.StatusNotFound {
 		t.Fatalf("越界 i status = %d, want 404", code)
 	}
@@ -538,11 +497,6 @@ func TestSessionContextDetailAPI(t *testing.T) {
 	}
 }
 
-// TestSessionContextRoundMerge covers the「0 步空轮」bug: when auto compaction
-// fires twice back to back, no loop ran in between, so the second compaction
-// must NOT open a round of its own — it belongs to the round before it, and its
-// saving adds up. Those empty rows read as "第2轮 · 0步 · 顶到0K · 压缩−181.5K",
-// which looked like a broken ledger.
 func TestSessionContextRoundMerge(t *testing.T) {
 	be := newTestBackend(t)
 	api := httptest.NewServer(NewServer(be))
@@ -578,9 +532,9 @@ func TestSessionContextRoundMerge(t *testing.T) {
 
 	usage(5000, 30, 1)
 	usage(6000, 40, 2)
-	compact(5000, 4900, 2) // 回收 100
-	compact(4900, 4700, 2) // 紧接着再来一次,回收 200 —— 中间没有 loop
-	usage(4800, 20, 3)     // 这一段才是下一轮
+	compact(5000, 4900, 2)
+	compact(4900, 4700, 2)
+	usage(4800, 20, 3)
 
 	var resp struct {
 		Steps  int `json:"steps"`
@@ -613,11 +567,6 @@ func TestSessionContextRoundMerge(t *testing.T) {
 	}
 }
 
-// TestSessionContextStats covers the drawer's time account: how long the model
-// held the session, how long the tools did, and the average time to the first
-// token. Also pins that a pruned tool result (the "replaces" copy) is not timed
-// twice, and that stats is an object — never null — even for a session that has
-// never run.
 func TestSessionContextStats(t *testing.T) {
 	be := newTestBackend(t)
 	api := httptest.NewServer(NewServer(be))
@@ -643,7 +592,6 @@ func TestSessionContextStats(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AppendEvent 2: %v", err)
 	}
-	// 同一次调用的裁剪替换行:账本规则是「后一行折叠掉原行」,计时不能翻倍。
 	if _, err := store.AppendEvent(id, session.EventToolResult, 1, map[string]any{
 		"call_id": "c1", "name": "read", "ok": true, "duration_ms": 9999,
 		"result": "剪短了", "replaces": "c1",
@@ -687,7 +635,6 @@ func TestSessionContextStats(t *testing.T) {
 		t.Fatalf("ttft_avg_ms = %d, want 300(只对测到 TTFT 的那次求平均)", resp.Stats.TtftAvgMs)
 	}
 
-	// 从没跑过的会话:stats 仍是零值对象,前端不用判空。
 	fresh, err := be.mgr.CreateSessionRecord("stats-empty", "build", t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("CreateSessionRecord 2: %v", err)
@@ -701,11 +648,6 @@ func TestSessionContextStats(t *testing.T) {
 	}
 }
 
-// TestSessionContextMessagesPaging covers the paged, fast message view: a page
-// is bounded by &limit (default 50, clamped to 1..200), older pages come from
-// &before, &role filters one role, and has_more says whether an older page
-// exists. Oversized rows are estimated rather than counted rune by rune, and
-// say so with est=true.
 func TestSessionContextMessagesPaging(t *testing.T) {
 	be := newTestBackend(t)
 	api := httptest.NewServer(NewServer(be))
@@ -715,7 +657,6 @@ func TestSessionContextMessagesPaging(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSessionRecord: %v", err)
 	}
-	// 直接给会话塞历史:分页逻辑只读 SnapshotMessages,不需要真跑 60 轮。
 	rec := sess.Record()
 	msgs := make([]provider.Message, 0, 62)
 	msgs = append(msgs, provider.Message{Role: "system", Content: "系统提示词"})
@@ -729,7 +670,6 @@ func TestSessionContextMessagesPaging(t *testing.T) {
 	rec.Messages = msgs
 	d := api.URL + "/api/sessions/" + sess.ID() + "/context/detail"
 
-	// 默认页 = 最新 50 条,更前面还有。
 	_, p := ctxGet(t, d+"?part=messages")
 	if int(p["total"].(float64)) != 61 {
 		t.Fatalf("total = %v, want 61", p["total"])
@@ -751,7 +691,6 @@ func TestSessionContextMessagesPaging(t *testing.T) {
 		t.Fatalf("未过滤时 role = %q, want 空串", role)
 	}
 
-	// 更早一页:before=11 只要 index<11 的那段,扫到头 → 没有更前面了。
 	_, p = ctxGet(t, d+"?part=messages&before=11")
 	rows = p["messages"].([]any)
 	if len(rows) != 11 || p["has_more"] != false {
@@ -761,7 +700,6 @@ func TestSessionContextMessagesPaging(t *testing.T) {
 		t.Fatalf("before=11 页首条 = %v, want index 0", rows[0])
 	}
 
-	// role 过滤 + 小页:倒着扫够数就停,has_more 如实。
 	_, p = ctxGet(t, d+"?part=messages&role=user&limit=5")
 	rows = p["messages"].([]any)
 	if len(rows) != 5 || p["has_more"] != true || p["role"] != "user" {
@@ -775,7 +713,6 @@ func TestSessionContextMessagesPaging(t *testing.T) {
 		}
 	}
 
-	// limit 夹到 1..200:要得再多也只有 61 条,要 0 条也给 1 条。
 	if _, p = ctxGet(t, d+"?part=messages&limit=1000"); len(p["messages"].([]any)) != 61 {
 		t.Fatalf("limit=1000 应返回全部 61 条: %v", p["returned"])
 	}
@@ -789,7 +726,6 @@ func TestSessionContextMessagesPaging(t *testing.T) {
 		t.Fatalf("非数字 before status = %d, want 400", code)
 	}
 
-	// 超长消息:按前缀外推,est=true;普通消息 est=false。
 	big, err := be.mgr.CreateSessionRecord("est-test", "build", t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("CreateSessionRecord 2: %v", err)
@@ -797,7 +733,7 @@ func TestSessionContextMessagesPaging(t *testing.T) {
 	bigRec := big.Record()
 	bigRec.Messages = []provider.Message{
 		{Role: "system", Content: "系统提示词"},
-		{Role: "tool", Content: strings.Repeat("长输出", 12000)}, // 36000 rune,远超外推阈值
+		{Role: "tool", Content: strings.Repeat("长输出", 12000)},
 	}
 	_, bp := ctxGet(t, api.URL+"/api/sessions/"+big.ID()+"/context/detail?part=messages")
 	brows := bp["messages"].([]any)
@@ -818,7 +754,6 @@ func TestSessionContextMessagesPaging(t *testing.T) {
 	if tk := huge["tokens"].(float64); tk <= 0 {
 		t.Fatalf("超长消息 tokens = %v, want > 0", huge["tokens"])
 	}
-	// 全文视图:token 仍是精确计数(不受列表外推影响),文本按 32000 rune 截断。
 	_, one := ctxGet(t, api.URL+"/api/sessions/"+big.ID()+"/context/detail?part=messages&i=1")
 	if one["part"] != "message" {
 		t.Fatalf("超长消息全文 part = %v, want message", one["part"])
@@ -834,13 +769,6 @@ func TestSessionContextMessagesPaging(t *testing.T) {
 	}
 }
 
-// TestSessionContextCompactionNoise pins the fix for the「一轮里成对压缩事件」
-// complaint: the loop writes a phase:"start" heartbeat before doing the work
-// (no before/after keys — it rendered as a noise「auto压缩 0 → 0」row and,
-// worse, closed the round as a false boundary). The read model must drop it
-// entirely: one real compaction = one event row, and an orphan start (task
-// cancelled before done) must not split a round. A no-progress done row
-// (before==after, a REAL zero reclaim) must survive.
 func TestSessionContextCompactionNoise(t *testing.T) {
 	be := newTestBackend(t)
 	api := httptest.NewServer(NewServer(be))
@@ -861,15 +789,12 @@ func TestSessionContextCompactionNoise(t *testing.T) {
 
 	add(session.EventAssistantMessage, 1, map[string]any{"content": "x",
 		"usage": map[string]any{"prompt_tokens": 9000, "completion_tokens": 30, "cache_reported": false}})
-	// 一次真实压缩 = start 心跳 + done 真行:抽屉里只能看到一条事件,轮不能被劈开。
 	add(session.EventCompaction, 1, map[string]any{"phase": "start", "kind": "auto", "tokens": 9000})
 	add(session.EventCompaction, 1, map[string]any{"phase": "done", "kind": "auto",
-		"before_tokens": 9000, "after_tokens": 8800}) // 真回收 200(<1K,必须保留)
+		"before_tokens": 9000, "after_tokens": 8800})
 	add(session.EventAssistantMessage, 2, map[string]any{"content": "y",
 		"usage": map[string]any{"prompt_tokens": 8800, "completion_tokens": 10, "cache_reported": false}})
-	// 孤立 start(压缩前任务取消):不是事件,更不是轮边界。
 	add(session.EventCompaction, 2, map[string]any{"phase": "start", "kind": "auto", "tokens": 8800})
-	// 无进展的真 done:before==after,回收确实是 0,真事件保留。
 	add(session.EventCompaction, 2, map[string]any{"phase": "done", "kind": "auto",
 		"before_tokens": 8800, "after_tokens": 8800})
 
@@ -899,7 +824,6 @@ func TestSessionContextCompactionNoise(t *testing.T) {
 	if resp.Events[1].Round != 2 {
 		t.Fatalf("events[1].round = %d, want 2(第二条 done 属于第二轮)", resp.Events[1].Round)
 	}
-	// 两轮:第 1 轮(1步,压缩回收200)+ 第 2 轮(1步,无进展压缩收尾,回收0)。
 	if len(resp.Rounds) != 2 {
 		t.Fatalf("rounds = %+v, want 2 轮(孤立 start 不得新开一轮)", resp.Rounds)
 	}
@@ -911,11 +835,6 @@ func TestSessionContextCompactionNoise(t *testing.T) {
 	}
 }
 
-// TestSessionTrajectory covers GET /api/sessions/{id}/trajectory: the ledger
-// as a dsh-style step stream — task rows carry the user's goal, assistant
-// rows carry the model's text (or its tool-call names), one row per tool call
-// folds its result onto it (prune replacements too), compaction done rows
-// advance the round. Pages are bounded and walk toward the past via &before.
 func TestSessionTrajectory(t *testing.T) {
 	be := newTestBackend(t)
 	api := httptest.NewServer(NewServer(be))
@@ -941,7 +860,7 @@ func TestSessionTrajectory(t *testing.T) {
 	add(session.EventAssistantMessage, 1, map[string]any{"content": "",
 		"tool_calls": []any{map[string]any{"id": "c2", "name": "pwsh", "args": "{}"}},
 		"usage": map[string]any{"prompt_tokens": 500, "completion_tokens": 25, "cache_reported": false, "call_ms": 1500}})
-	add(session.EventCompaction, 1, map[string]any{"phase": "start", "kind": "auto"}) // 噪声行不得出现在轨迹里
+	add(session.EventCompaction, 1, map[string]any{"phase": "start", "kind": "auto"})
 	add(session.EventCompaction, 1, map[string]any{"phase": "done", "kind": "auto",
 		"before_tokens": 205200, "after_tokens": 13400})
 	add(session.EventTaskStart, 0, map[string]any{"goal": "第二条任务", "model": "m-a"})
@@ -962,8 +881,6 @@ func TestSessionTrajectory(t *testing.T) {
 	if resp["steps"] != float64(2) || resp["rounds"] != float64(2) {
 		t.Fatalf("steps/rounds = %v/%v, want 2/2", resp["steps"], resp["rounds"])
 	}
-	// 期望:task, tool(c1 折叠 result+replacement), assistant([工具调用] pwsh),
-	// compact, task, assistant(文本首行)。start 噪声与重复 result 都被吃掉。
 	if len(rows) != 6 {
 		t.Fatalf("rows = %d 行, want 6: %+v", len(rows), rows)
 	}
@@ -1011,7 +928,6 @@ func TestSessionTrajectory(t *testing.T) {
 		}
 	}
 
-	// 分页:limit=2 → 最新两行 + has_more;before=<最早拿到的 seq> 走回头页。
 	_, p := ctxGet(t, api.URL+"/api/sessions/"+id+"/trajectory?limit=2")
 	prows := p["rows"].([]any)
 	if len(prows) != 2 || p["has_more"] != true {
@@ -1027,7 +943,6 @@ func TestSessionTrajectory(t *testing.T) {
 		t.Fatal("回头页的 seq 必须严格早于 before")
 	}
 
-	// 参数错误与未知会话。
 	if code, _ = ctxGet(t, api.URL+"/api/sessions/"+id+"/trajectory?limit=abc"); code != http.StatusBadRequest {
 		t.Fatalf("非数字 limit status = %d, want 400", code)
 	}

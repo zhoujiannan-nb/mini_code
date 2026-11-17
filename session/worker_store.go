@@ -1,16 +1,5 @@
 package session
 
-// Worker (工作大类) persistence.
-//
-// A worker is a named line of work with one shared directory and one shared
-// convention file. Root sessions are attached to at most one worker through
-// sessions.worker_id; attaching a session moves it into the worker's directory
-// and snapshots the convention file into the session (see worker.go for the
-// snapshot rules and the prefix-cache reasoning).
-//
-// The rows live in the SAME SQLite file/connection as the sessions: deleting a
-// worker has to delete its sessions, and keeping both in one connection is what
-// makes that cascade free of cross-connection races.
 
 import (
 	"fmt"
@@ -21,68 +10,35 @@ import (
 	"github.com/user/mini_code/util"
 )
 
-// WorkerUnassignedID is the virtual bucket of sessions that belong to no worker
-// (sessions.worker_id = ""). It is never a real row.
 const WorkerUnassignedID = ""
 
-// WorkerAllID is the virtual "everything" bucket of the UI switcher: every
-// session, assigned or not — except the built-in buckets (see
-// WorkerArchivedID), which stay reachable only through their own entry.
 const WorkerAllID = "*"
 
-// WorkerArchivedID is the built-in bucket that replaced the old "archived"
-// metadata flag. Sessions move into it on the first start after the upgrade, so
-// nothing that was hidden before suddenly shows up in the list, and nothing is
-// unreachable either. Builtin workers are never offered to the model (the
-// workers tool hides them) and carry no directory.
 const WorkerArchivedID = "w-archived"
 
-// WorkerArchivedName is the display name of the built-in archived bucket.
 const WorkerArchivedName = "已归档"
 
-// WorkerOtherID / WorkerOtherName are the fixed catch-all worker. Unlike the
-// built-in buckets above it is a normal, joinable worker (sessions land there
-// when they belong to no line of work in particular) — it just cannot be
-// deleted or renamed, so "there is always somewhere to put this" holds even
-// when the worker cap is reached. Its id is a constant, so migrations and the
-// UI can point at it without a lookup.
 const (
 	WorkerOtherID   = "w-other"
 	WorkerOtherName = "其他"
 )
 
-// IsReservedWorker reports the worker no delete may remove.
 func IsReservedWorker(workerID string) bool { return workerID == WorkerOtherID }
 
-// WorkerRecord is one worker: what it is about, where its shared workspace
-// lives, and its convention text (stored in this row, versioned).
 type WorkerRecord struct {
 	WorkerID string `json:"worker_id"`
 	Name     string `json:"name"`
-	// Summary is the short "what this worker is for" blurb the model reads when
-	// it decides which worker to join. Kept short on purpose (see the tool).
 	Summary string `json:"summary"`
 	WorkDir string `json:"work_dir"`
-	// Note is the 公约 itself, and NoteVer its version. Both live in the row:
-	// there is no convention file on disk. Every write bumps NoteVer, and a
-	// session whose conversation carries an older version gets one update
-	// message on its next task (see Session.WorkerNotice).
 	Note    string `json:"note"`
 	NoteVer int    `json:"note_ver"`
 	Builtin bool   `json:"builtin"`
-	// NotePath is legacy: the worker.md every worker used to own. Kept only so
-	// migrateWorkerNote can import its content; nothing else reads it.
 	NotePath  string `json:"-"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
-	// Sessions is the number of root sessions in this bucket; filled by the
-	// list queries only (never persisted).
 	Sessions int `json:"sessions"`
 }
 
-// initWorkers creates the workers table, adds sessions.worker_id, imports the
-// legacy worker.md into the row and moves the legacy archived flag into the
-// built-in bucket. Called from SessionStore.initDB.
 func (s *SessionStore) initWorkers() {
 	s.db.InitTable(`CREATE TABLE IF NOT EXISTS workers (
 		worker_id TEXT PRIMARY KEY,
@@ -103,12 +59,6 @@ func (s *SessionStore) initWorkers() {
 	s.db.InitIndex(`CREATE INDEX IF NOT EXISTS idx_sessions_worker ON sessions(worker_id)`)
 }
 
-// refileRootlessSessions re-files legacy root sessions with an empty worker_id
-// under 其他. Since the join reminder was retired — every root session is now
-// filed at creation, by the hub's catch-all — "no worker" is no longer a state
-// a root session may be in, and leaving such rows behind would hide them from
-// every bucket view. Sub-agents keep an empty membership on purpose: they hang
-// under their parent, not in a worker bucket.
 func (s *SessionStore) refileRootlessSessions() {
 	res, err := s.db.Execute(
 		"UPDATE sessions SET worker_id = ? WHERE COALESCE(worker_id, '') = '' AND COALESCE(parent_id, '') = ''",
@@ -121,11 +71,6 @@ func (s *SessionStore) refileRootlessSessions() {
 	}
 }
 
-// ensureOtherWorker creates the fixed 其他 worker. It is seeded on every start
-// (id is a constant, so the check is one row) because it is what makes the
-// worker cap survivable: with at most MaxWorkers lines of work there always has
-// to be one bucket you cannot run out of. It carries no directory on purpose —
-// a session filed under 其他 keeps its own working folder.
 func (s *SessionStore) ensureOtherWorker() {
 	if existing, _ := s.db.FetchOne("SELECT worker_id FROM workers WHERE worker_id = ?", WorkerOtherID); existing != nil {
 		return
@@ -138,8 +83,6 @@ func (s *SessionStore) ensureOtherWorker() {
 	}
 }
 
-// countWorkers counts the real lines of work (built-in buckets like 已归档 are
-// not lines of work and never count). WorkerService.Create uses it for the cap.
 func (s *SessionStore) countWorkers() (int, error) {
 	row, err := s.db.FetchOne("SELECT COUNT(*) AS n FROM workers WHERE COALESCE(builtin, 0) = 0")
 	if err != nil {
@@ -151,13 +94,8 @@ func (s *SessionStore) countWorkers() (int, error) {
 	return asInt(row["n"]), nil
 }
 
-// workerCols is the column list every worker SELECT shares. note_path stays in
-// it only for the migration below; it is empty for every worker created now.
 const workerCols = "worker_id, name, summary, work_dir, note, note_ver, builtin, created_at, updated_at"
 
-// migrateWorkerNote adds workers.note/note_ver and imports the content of the
-// worker.md each row used to point at, once, as version 1. Without the import a
-// database from before the change would silently lose every 公约.
 func (s *SessionStore) migrateWorkerNote() {
 	rows, err := s.db.FetchAll("PRAGMA table_info(workers)")
 	if err != nil {
@@ -174,7 +112,7 @@ func (s *SessionStore) migrateWorkerNote() {
 		s.db.Execute("ALTER TABLE workers ADD COLUMN note_ver INTEGER NOT NULL DEFAULT 0")
 	}
 	if !have["note_path"] {
-		return // a database that never had a convention file
+		return
 	}
 	legacy, err := s.db.FetchAll("SELECT worker_id, note, note_path FROM workers WHERE COALESCE(note_path, '') <> '' AND COALESCE(note, '') = ''")
 	if err != nil {
@@ -189,8 +127,6 @@ func (s *SessionStore) migrateWorkerNote() {
 	}
 }
 
-// migrateWorkerID adds sessions.worker_id to databases created before the
-// column existed (same PRAGMA dance as migrateMode).
 func (s *SessionStore) migrateWorkerID() {
 	rows, err := s.db.FetchAll("PRAGMA table_info(sessions)")
 	if err != nil {
@@ -204,10 +140,6 @@ func (s *SessionStore) migrateWorkerID() {
 	s.db.Execute("ALTER TABLE sessions ADD COLUMN worker_id TEXT DEFAULT ''")
 }
 
-// migrateArchivedToWorker replaces the old metadata.archived flag with the
-// built-in 已归档 bucket, once. Idempotent: after the move the sessions carry a
-// worker_id, so the WHERE clause stops matching them (and un-archiving a session
-// afterwards never re-moves it).
 func (s *SessionStore) migrateArchivedToWorker() {
 	where := "COALESCE(json_extract(metadata, '$.archived'), 0) = 1 AND COALESCE(worker_id, '') = ''"
 	row, err := s.db.FetchOne("SELECT COUNT(*) AS n FROM sessions WHERE " + where)
@@ -226,9 +158,6 @@ func (s *SessionStore) migrateArchivedToWorker() {
 	s.db.Execute("UPDATE sessions SET worker_id = ? WHERE "+where, WorkerArchivedID)
 }
 
-// ensureArchivedBucket creates the built-in 已归档 row when it is needed but
-// does not exist yet — the case for a database that never had an archived
-// session and now receives the legacy "archive" API call. Idempotent.
 func (s *SessionStore) ensureArchivedBucket() error {
 	if existing, _ := s.db.FetchOne("SELECT worker_id FROM workers WHERE worker_id = ?", WorkerArchivedID); existing != nil {
 		return nil
@@ -240,7 +169,6 @@ func (s *SessionStore) ensureArchivedBucket() error {
 	return err
 }
 
-// --- worker CRUD ---
 
 func (s *SessionStore) CreateWorker(rec *WorkerRecord) error {
 	if rec.WorkerID == "" {
@@ -263,9 +191,6 @@ func (s *SessionStore) GetWorker(workerID string) (*WorkerRecord, error) {
 	return workerFromRow(row), nil
 }
 
-// workerSessionCounts returns bucket -> number of root sessions. The list
-// queries use it so the UI can show a per-worker session badge in one round
-// trip (the buckets themselves are tiny, so one GROUP BY is enough).
 func (s *SessionStore) workerSessionCounts() map[string]int {
 	rows, err := s.db.FetchAll(
 		`SELECT COALESCE(worker_id, '') AS wid, COUNT(*) AS n FROM sessions
@@ -281,8 +206,6 @@ func (s *SessionStore) workerSessionCounts() map[string]int {
 	return out
 }
 
-// ListWorkers returns every worker (built-in buckets included) with its session
-// count, most recently updated first.
 func (s *SessionStore) ListWorkers() ([]WorkerRecord, error) {
 	rows, err := s.db.FetchAll("SELECT " + workerCols + " FROM workers ORDER BY updated_at DESC")
 	if err != nil {
@@ -298,7 +221,6 @@ func (s *SessionStore) ListWorkers() ([]WorkerRecord, error) {
 	return out, nil
 }
 
-// GetWorkerByName looks a worker up by its (unique-by-convention) name.
 func (s *SessionStore) GetWorkerByName(name string) (*WorkerRecord, error) {
 	row, err := s.db.FetchOne("SELECT "+workerCols+" FROM workers WHERE name = ?", name)
 	if err != nil || row == nil {
@@ -307,9 +229,6 @@ func (s *SessionStore) GetWorkerByName(name string) (*WorkerRecord, error) {
 	return workerFromRow(row), nil
 }
 
-// UpdateWorker persists name/summary/work_dir of an existing worker. The
-// convention is not part of it: it has its own statement (UpdateWorkerNote) so
-// a note write can never race a rename into a half-written row.
 func (s *SessionStore) UpdateWorker(rec *WorkerRecord) error {
 	now := time.Now().Format(time.RFC3339)
 	rec.UpdatedAt = now
@@ -319,9 +238,6 @@ func (s *SessionStore) UpdateWorker(rec *WorkerRecord) error {
 	return err
 }
 
-// UpdateWorkerNote stores a new convention text and its version. Bumping
-// note_ver is what tells every session of this worker that it owes them an
-// update message (see Session.WorkerNotice).
 func (s *SessionStore) UpdateWorkerNote(workerID, note string, ver int) error {
 	now := time.Now().Format(time.RFC3339)
 	_, err := s.db.Execute("UPDATE workers SET note = ?, note_ver = ?, updated_at = ? WHERE worker_id = ?",
@@ -329,16 +245,11 @@ func (s *SessionStore) UpdateWorkerNote(workerID, note string, ver int) error {
 	return err
 }
 
-// DeleteWorker removes the worker row. Its sessions are deleted by the caller
-// (WorkerService.Delete, which also drops them from the manager so a running
-// task gets canceled the same way a manual session delete does).
 func (s *SessionStore) DeleteWorker(workerID string) error {
 	_, err := s.db.Execute("DELETE FROM workers WHERE worker_id = ?", workerID)
 	return err
 }
 
-// ListWorkerSessions returns the IDs of every session assigned to a worker
-// (root sessions and their sub-agent children alike).
 func (s *SessionStore) ListWorkerSessions(workerID string) ([]string, error) {
 	rows, err := s.db.FetchAll("SELECT session_id FROM sessions WHERE COALESCE(worker_id, '') = ?", workerID)
 	if err != nil {
@@ -351,10 +262,6 @@ func (s *SessionStore) ListWorkerSessions(workerID string) ([]string, error) {
 	return out, nil
 }
 
-// RelabelWorkerSession rewrites one stored session's worker_name metadata, for
-// the sessions of a renamed worker that nobody has loaded into memory. A session
-// of a different worker is left alone (defensive: the ids come from the worker's
-// own bucket, and a stray write would rewrite another line of work's prompt).
 func (s *SessionStore) RelabelWorkerSession(sessionID, workerID, name string) error {
 	rec, err := s.Get(sessionID)
 	if err != nil || rec == nil {

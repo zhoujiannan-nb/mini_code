@@ -15,7 +15,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// jsonFragments cuts s into fixed-size pieces that concatenate back to s.
 func jsonFragments(s string, size int) []string {
 	var out []string
 	for len(s) > 0 {
@@ -29,9 +28,6 @@ func jsonFragments(s string, size int) []string {
 	return out
 }
 
-// argsSSEServer answers the first turn with a write_file call whose arguments
-// arrive in many small deltas (that is what a long payload looks like on the
-// wire), then a final reply on the second turn.
 func argsSSEServer(t *testing.T, frags []string) *httptest.Server {
 	t.Helper()
 	var requests int64
@@ -54,7 +50,6 @@ func argsSSEServer(t *testing.T, frags []string) *httptest.Server {
 	return srv
 }
 
-// jsonString quotes a string for embedding in a JSON payload.
 func jsonString(s string) string {
 	b, err := json.Marshal(s)
 	if err != nil {
@@ -78,13 +73,8 @@ func newArgsLoop(t *testing.T, srvURL string, reg *tools.ToolRegistry) *AgentLoo
 	return loop
 }
 
-// TestArgsStreamedWhileModelIsTyping is the feature test: a long tool-call
-// payload must reach the UI BEFORE tool_start, as a growing prefix of the final
-// arguments. Everything the feed emits has to be a prefix of the complete value,
-// in increasing length order, and the tail may be left to tool_start (which
-// carries the whole arguments string) - that is the documented contract.
 func TestArgsStreamedWhileModelIsTyping(t *testing.T) {
-	full := `{"content":"` + strings.Repeat("abcdefghij", 300) + `"}` // ~3 KB
+	full := `{"content":"` + strings.Repeat("abcdefghij", 300) + `"}`
 	frags := jsonFragments(full, 400)
 	if len(frags) < 6 {
 		t.Fatalf("test setup: expected many argument deltas, got %d", len(frags))
@@ -135,15 +125,12 @@ func TestArgsStreamedWhileModelIsTyping(t *testing.T) {
 		}
 		prev = len(args)
 	}
-	// The model's own view is untouched: it still gets one complete tool call.
 	plain, streamed := probe.counts()
 	if plain+streamed != 1 {
 		t.Fatalf("expected the tool to run exactly once, got plain=%d streamed=%d", plain, streamed)
 	}
 }
 
-// TestArgsStreamInertWithoutListener: nothing is computed or emitted when nobody
-// wired the feed, and the run is unaffected.
 func TestArgsStreamInertWithoutListener(t *testing.T) {
 	body := strings.Repeat("abcdefghij", 300)
 	frags := jsonFragments(`{"content":"`+body+`"}`, 400)
@@ -151,7 +138,7 @@ func TestArgsStreamInertWithoutListener(t *testing.T) {
 	reg := tools.NewToolRegistry()
 	probe := &probeTool{}
 	reg.Register(probe)
-	loop := newArgsLoop(t, srv.URL, reg) // no SetOnToolArgs
+	loop := newArgsLoop(t, srv.URL, reg)
 
 	res, err := loop.Run(context.Background(), "sys", "write it", nil)
 	if err != nil {
@@ -166,10 +153,6 @@ func TestArgsStreamInertWithoutListener(t *testing.T) {
 	}
 }
 
-// TestArgsStreamerThrottle pins the feed's own rules: report at the start,
-// coalesce small growth, always report a restart (a retry re-sends the arguments
-// from empty, and the UI must stop showing the abandoned draft), and never
-// re-report something the UI already has.
 func TestArgsStreamerThrottle(t *testing.T) {
 	var mu sync.Mutex
 	var got []string
@@ -186,32 +169,26 @@ func TestArgsStreamerThrottle(t *testing.T) {
 		t.Fatalf("first snapshot should report at once, got %d", count())
 	}
 
-	// 10 bytes more, right away: too small and too soon, must be held back.
 	a.push([]provider.StreamToolCallProgress{{Index: 0, Name: "write_file", Args: long + "0123456789"}})
 	if count() != 1 {
 		t.Fatalf("small growth inside the window should be coalesced, got %d", count())
 	}
 
-	// A retry restarted the arguments: shorter AND different, so report at once.
 	a.push([]provider.StreamToolCallProgress{{Index: 0, Name: "write_file", Args: `{"content":"`}})
 	if count() != 2 {
 		t.Fatalf("a restart must be reported at once, got %d", count())
 	}
 
-	// The very same snapshot again: nothing to say.
 	a.push([]provider.StreamToolCallProgress{{Index: 0, Name: "write_file", Args: `{"content":"`}})
 	if count() != 2 {
 		t.Fatalf("an unchanged snapshot must not be re-emitted, got %d", count())
 	}
 
-	// Growth past the byte threshold reports without waiting for the window.
 	a.push([]provider.StreamToolCallProgress{{Index: 0, Name: "write_file", Args: `{"content":"` + strings.Repeat("y", argsFeedBytes) + `"}`}})
 	if count() != 3 {
 		t.Fatalf("growth past %d bytes should report at once, got %d", argsFeedBytes, count())
 	}
 
-	// Parallel calls keep separate feeds: index 1 starting must not be swallowed
-	// by whatever index 0 has already reported.
 	a.push([]provider.StreamToolCallProgress{
 		{Index: 0, Name: "write_file", Args: `{"content":"` + strings.Repeat("y", argsFeedBytes) + `"}`},
 		{Index: 1, Name: "exec", Args: `{"command":"dir"}`},
@@ -225,7 +202,6 @@ func TestArgsStreamerThrottle(t *testing.T) {
 		t.Fatalf("event 3 = %q, want the exec call", got[3])
 	}
 
-	// No listener at all: the nil streamer must swallow everything.
 	var nilStreamer *argsStreamer
 	nilStreamer.push([]provider.StreamToolCallProgress{{Index: 0, Name: "x", Args: "abc"}})
 }

@@ -14,9 +14,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// probeTool is a fake tool that can also stream. It records which entry point
-// the agent loop chose, so the test can tell the streamed path apart from the
-// plain registry path.
 type probeTool struct {
 	mu         sync.Mutex
 	chunks     []string
@@ -53,8 +50,6 @@ func (p *probeTool) counts() (int, int) {
 	return p.plainCalls, p.streamCall
 }
 
-// probeServer answers the first turn with a tool call and the second with a
-// final reply, so one Run exercises a full tool round.
 func probeServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	var requests int64
@@ -77,8 +72,8 @@ type probeRig struct {
 	loop     *AgentLoop
 	probe    *probeTool
 	mu       sync.Mutex
-	ended    []string // tool result texts, in completion order
-	observed []string // "name|chunk" from the live feed, in arrival order
+	ended    []string
+	observed []string
 }
 
 func (r *probeRig) feed(name, chunk string) {
@@ -136,9 +131,6 @@ func runProbe(t *testing.T, wireFeed bool) *probeRig {
 	return rig
 }
 
-// TestStreamedToolFeedsOutputToLoop verifies that when a live-output listener is
-// wired, the loop calls ExecuteStreamed and forwards every chunk tagged with
-// the tool's name.
 func TestStreamedToolFeedsOutputToLoop(t *testing.T) {
 	rig := runProbe(t, true)
 
@@ -153,16 +145,11 @@ func TestStreamedToolFeedsOutputToLoop(t *testing.T) {
 		t.Fatalf("live feed mismatch:\n got %v\nwant %v", feed, want)
 	}
 
-	// The model's view must not depend on the live feed: the tool result is the
-	// same text the plain path would have returned.
 	if len(ended) != 1 || ended[0] != "probetool|probe final" {
 		t.Fatalf("expected one tool_end with the plain result, got %v", ended)
 	}
 }
 
-// TestStreamedToolWithoutListenerUsesRegistry verifies the other side of the
-// switch: with nobody listening the loop must not hand the tool a sink, so
-// behaviour for every existing channel stays exactly as before.
 func TestStreamedToolWithoutListenerUsesRegistry(t *testing.T) {
 	rig := runProbe(t, false)
 

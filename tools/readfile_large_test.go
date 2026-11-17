@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// makeLargeFile writes a file with nLines lines (each "line-%06d" plus a
-// padding run to push the total size above largeFileThreshold, which is
-// dsh's readStreamMinSize: 10 MiB) and returns the workspace dir and file
-// name. 150000 lines × ~71 bytes ≈ 10.4 MB.
 func makeLargeFile(t *testing.T, nLines int, crlf bool) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -45,8 +41,6 @@ func TestReadFileTailSmallFile(t *testing.T) {
 	if strings.Contains(out, "7: l7") {
 		t.Fatalf("line 7 must not be in a tail=3 window: %s", out)
 	}
-	// The tail window ends at EOF, so the dsh end-of-file footer is the
-	// truthful one; the numbering shows where the window starts.
 	if !strings.Contains(out, "(End of file - total 10 lines)") {
 		t.Fatalf("expected end-of-file footer, got: %s", out)
 	}
@@ -63,25 +57,20 @@ func TestReadFileTailBiggerThanFile(t *testing.T) {
 	}
 }
 
-// A default head read on a large file hits the 51200-byte cap long before
-// 2000 lines: dsh ends the window with the capped footer and an exact total.
 func TestReadFileLargeHeadHitsByteCap(t *testing.T) {
 	dir, name := makeLargeFile(t, 150000, false)
-	out := runRead(t, dir, name, nil) // default offset=1 limit=2000
+	out := runRead(t, dir, name, nil)
 	if !strings.Contains(out, "1: line-000001") {
 		t.Fatalf("expected line 1, got: %s", out[:200])
 	}
 	if !strings.Contains(out, "(Output capped. Showing lines 1-") || !strings.Contains(out, "Use offset=") {
 		t.Fatalf("expected byte-cap footer, got: %s", out[len(out)-300:])
 	}
-	// The cap keeps the body under readMaxBytes.
-	if len(out) > readMaxBytes+4096 { // +footer+envelope headroom
+	if len(out) > readMaxBytes+4096 {
 		t.Fatalf("capped read still produced %d bytes", len(out))
 	}
 }
 
-// A line-count-bounded window (limit small enough to fit the byte cap) must
-// show exactly those lines with a continuation footer.
 func TestReadFileLargeOffsetWindow(t *testing.T) {
 	dir, name := makeLargeFile(t, 150000, false)
 	out := runRead(t, dir, name, map[string]interface{}{"offset": float64(5000), "limit": float64(5)})
@@ -130,15 +119,13 @@ func TestReadFileLargeCRLF(t *testing.T) {
 }
 
 func TestReadFileLargeNoTrailingNewline(t *testing.T) {
-	// File just above the threshold whose last line has no trailing newline:
-	// the line count must not gain a phantom empty line.
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "nl.log")
 	var b strings.Builder
 	for i := 1; i <= 150000; i++ {
 		b.WriteString(fmt.Sprintf("line-%06d %s\n", i, strings.Repeat("y", 70)))
 	}
-	b.WriteString("final-line") // no trailing newline
+	b.WriteString("final-line")
 	if err := os.WriteFile(fp, []byte(b.String()), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -154,8 +141,8 @@ func TestReadFileLargeNoTrailingNewline(t *testing.T) {
 func TestReadFileLargeBinaryGuard(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "bin.dat")
-	buf := make([]byte, 11<<20) // 11MB, above the 10MiB streaming threshold
-	buf[100] = 0                // NUL in the first 8KB
+	buf := make([]byte, 11<<20)
+	buf[100] = 0
 	if err := os.WriteFile(fp, buf, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -165,9 +152,6 @@ func TestReadFileLargeBinaryGuard(t *testing.T) {
 	}
 }
 
-// The caps dsh declares and mc now enforces, pinned directly:
-// long lines truncate with the dsh suffix; an explicit limit above the
-// maximum is an argument error; the success envelope is the dsh one.
 func TestReadCapsAndEnvelope(t *testing.T) {
 	dir := t.TempDir()
 	long := strings.Repeat("z", readMaxLineChars+500)
@@ -196,8 +180,6 @@ func TestReadCapsAndEnvelope(t *testing.T) {
 	}
 }
 
-// A truly empty file is not special-cased: it renders the zero-line footer
-// inside the envelope (dsh's contract).
 func TestReadEmptyFileFooter(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "empty.txt")

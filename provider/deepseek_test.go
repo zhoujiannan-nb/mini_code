@@ -2,9 +2,6 @@ package provider
 
 import "testing"
 
-// TestDeepSeekConfigureRequest pins the thinking-mode request construction:
-// the resolved thinking switch, reasoning_effort passthrough, temperature
-// omission while thinking is on, and the top_p 0.95 floor.
 func TestDeepSeekConfigureRequest(t *testing.T) {
 	base := func(thinking, effort string) *DeepSeekProvider {
 		return NewDeepSeekProvider("https://api.deepseek.com", "k", "deepseek-v4-pro", 8192, 1000000, 0.7, 0.9, thinking, effort)
@@ -18,7 +15,7 @@ func TestDeepSeekConfigureRequest(t *testing.T) {
 		name          string
 		thinking      string
 		effort        string
-		wantThinking  string // "" = field omitted
+		wantThinking  string
 		wantEffort    string
 		wantTempNil   bool
 		wantTopP      float64
@@ -58,9 +55,6 @@ func TestDeepSeekConfigureRequest(t *testing.T) {
 	}
 }
 
-// TestUsageCachedTokens pins the cache-hit field resolution: the OpenAI/SGLang
-// prompt_tokens_details.cached_tokens wins, falling back to DeepSeek's
-// prompt_cache_hit_tokens, and nil/absent yields 0.
 func TestUsageCachedTokens(t *testing.T) {
 	if (&Usage{}).CachedTokens() != 0 {
 		t.Errorf("empty usage should report 0 cached")

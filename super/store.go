@@ -1,8 +1,3 @@
-// Package super implements the Super-Agent (lite) subsystem: the resident
-// entry keeps exactly one feature — 定时任务. A schedule is "到点把一句写好的
-// 话投递给绑定的会话", nothing else. The v8/v9 machinery (workers, message
-// channel, queue, sources, bindings, tickets, script runner) has been retired
-// wholesale; its tables are dropped on startup.
 package super
 
 import (
@@ -11,7 +6,6 @@ import (
 	"github.com/user/mini_code/util"
 )
 
-// Store holds the lite super_* tables on the shared SQLite connection.
 type Store struct {
 	db *util.Database
 }
@@ -22,7 +16,6 @@ func NewStore(db *util.Database) *Store {
 	return s
 }
 
-// legacyTables are the retired subsystems; their rows are worthless now.
 var legacyTables = []string{
 	"super_worker", "super_worker_session", "super_message", "super_queue",
 	"super_process", "super_source", "super_ticket", "super_binding",
@@ -32,8 +25,6 @@ func (s *Store) init() {
 	for _, t := range legacyTables {
 		_, _ = s.db.Execute("DROP TABLE IF EXISTS " + t)
 	}
-	// The old schedule table keyed on script file names — new shape is
-	// id-keyed with a bound session; recreate from scratch (data retired).
 	_, _ = s.db.Execute("DROP TABLE IF EXISTS super_schedule")
 	s.db.InitTable(`CREATE TABLE IF NOT EXISTS super_schedule (
 		id TEXT PRIMARY KEY,            -- sch-xxxx
@@ -62,7 +53,6 @@ func (s *Store) init() {
 	)`)
 }
 
-// --- schedule ---
 
 type Schedule struct {
 	ID        string `json:"id"`
@@ -138,8 +128,6 @@ func (s *Store) DeleteSchedule(id string) error {
 	return err
 }
 
-// Due reports whether an enabled schedule's period has elapsed. A schedule
-// that never fired is due immediately (first tick after boot delivers it).
 func (sc *Schedule) Due(now time.Time) bool {
 	if !sc.Enabled {
 		return false
@@ -154,7 +142,6 @@ func (sc *Schedule) Due(now time.Time) bool {
 	return now.Sub(last) >= time.Duration(sc.EverySec)*time.Second
 }
 
-// --- state ---
 
 func (s *Store) StateGet(key string) string {
 	row, err := s.db.FetchOne("SELECT value FROM super_state WHERE key = ?", key)
@@ -171,7 +158,6 @@ func (s *Store) StateSet(key, value string) error {
 	return err
 }
 
-// --- audit ---
 
 type AuditRow struct {
 	ID     int64  `json:"id"`
@@ -207,7 +193,6 @@ func (s *Store) AuditRecent(n int) ([]*AuditRow, error) {
 	return out, nil
 }
 
-// --- session picker (shared sessions table, read-only) ---
 
 type SessPick struct {
 	ID     string `json:"id"`
@@ -215,9 +200,6 @@ type SessPick struct {
 	Status string `json:"status"`
 }
 
-// ListBindableSessions lists ordinary top-level sessions for the 定时任务
-// binding dropdown. The super family itself is excluded; the rows belong to
-// the session store and are never written from here.
 func (s *Store) ListBindableSessions() ([]*SessPick, error) {
 	rows, err := s.db.FetchAll(
 		`SELECT session_id, COALESCE(title,'') AS title, COALESCE(status,'') AS status
@@ -234,7 +216,6 @@ func (s *Store) ListBindableSessions() ([]*SessPick, error) {
 	return out, nil
 }
 
-// --- small helpers ---
 
 func boolInt(b bool) int {
 	if b {

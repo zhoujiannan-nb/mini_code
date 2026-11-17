@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// nilRequiredTool simulates a tool whose Parameters map carries a nil
-// required slice — the case that used to reach the model API as
-// "required": null and be rejected with a 400.
 type nilRequiredTool struct{}
 
 func (nilRequiredTool) Name() string { return "fake" }

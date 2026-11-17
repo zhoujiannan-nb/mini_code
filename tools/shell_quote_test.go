@@ -11,20 +11,12 @@ import (
 	"testing"
 )
 
-// TestExecPreservesQuotes is the regression test for the quote-mangling bug:
-// Go's per-argument escaping plus the shell's quote-stripping rules used to
-// break every command containing double quotes. The commands are written in
-// the PowerShell dialect the pwsh tool now speaks: a quoted string must reach
-// the child program with its quotes honoured, not backslash-escaped, and a
-// quoted path containing a space must open the file.
 func TestExecPreservesQuotes(t *testing.T) {
-	t.Setenv("MC_EXEC_GATE", "0") // Get-Content here is the fixture, not model behaviour
+	t.Setenv("MC_EXEC_GATE", "0")
 	dir := t.TempDir()
 	tool := NewExecTool(30, dir)
 	t.Cleanup(func() { _ = tool.Close() })
 
-	// 1. echo a string that contains literal double quotes: the output must
-	//    contain exactly "hello world" (with quotes) and no stray backslashes.
 	res, err := tool.Execute(context.Background(), map[string]interface{}{"command": `echo '"hello world"'`})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -36,9 +28,6 @@ func TestExecPreservesQuotes(t *testing.T) {
 		t.Errorf("echo with quotes: output contains escaped quotes: %q", res.Text)
 	}
 
-	// 2. A quoted path containing a space must be usable by a program:
-	//    create a file whose name has a space and read it back through a
-	//    quoted path. The old behavior failed with "syntax is incorrect".
 	spaced := filepath.Join(dir, "my file.txt")
 	if err := os.WriteFile(spaced, []byte("spaced-ok"), 0644); err != nil {
 		t.Fatal(err)
@@ -56,8 +45,6 @@ func TestExecPreservesQuotes(t *testing.T) {
 		t.Errorf("quoted spaced path: expected a clean exit (no marker): %q", res.Text)
 	}
 
-	// 3. python -c with a quoted program text: python must receive the code
-	//    without surrounding literal quotes and actually execute it.
 	if _, lerr := exec.LookPath("python"); lerr != nil {
 		t.Skip("python not on PATH")
 	}

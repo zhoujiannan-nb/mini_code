@@ -16,9 +16,6 @@ func gbk(t *testing.T, s string) []byte {
 	return b
 }
 
-// TestTextFormatDetectsGBK pins the detection rule: bytes that are not valid
-// UTF-8 but decode as GBK are GBK, and everything else stays UTF-8 (so
-// undecodable bytes pass through instead of becoming U+FFFD).
 func TestTextFormatDetectsGBK(t *testing.T) {
 	cases := []struct {
 		name string
@@ -39,9 +36,6 @@ func TestTextFormatDetectsGBK(t *testing.T) {
 	}
 }
 
-// TestDecodeTextRoundTripsGBK is the property that matters for editing a GBK
-// file: the text handed to the model, encoded back into the detected format,
-// must be the original bytes. If it is not, every edit rewrites the file.
 func TestDecodeTextRoundTripsGBK(t *testing.T) {
 	src := "第一行 comment\n第二行 中文\n"
 	raw := gbk(t, src)
@@ -62,8 +56,6 @@ func TestDecodeTextRoundTripsGBK(t *testing.T) {
 	}
 }
 
-// TestBOMRoundTrip: the BOM is not part of the text, but it is part of the
-// file. A read-modify-write must keep it.
 func TestBOMRoundTrip(t *testing.T) {
 	raw := append([]byte{0xEF, 0xBB, 0xBF}, []byte("package main\n")...)
 	text, format := DecodeText(raw)
@@ -79,9 +71,6 @@ func TestBOMRoundTrip(t *testing.T) {
 	}
 }
 
-// TestEncodeRejectsUnrepresentable: an emoji cannot live in GBK. Encode must
-// say so rather than writing '?' bytes, so the caller can deliberately choose
-// UTF-8 and tell the model.
 func TestEncodeRejectsUnrepresentable(t *testing.T) {
 	f := TextFormat{Encoding: EncGBK}
 	if _, ok := f.Encode("表情 🙂"); ok {

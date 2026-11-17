@@ -14,10 +14,6 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// TestReasoningOverrideReachesRequest verifies the end-to-end per-session
-// thinking override: a value set via SetReasoning ends up in the provider
-// request body (thinking switch + reasoning_effort), and clearing it falls
-// back to the model's configured default.
 func TestReasoningOverrideReachesRequest(t *testing.T) {
 	type capturedBody struct {
 		Thinking *struct {
@@ -77,8 +73,6 @@ func TestReasoningOverrideReachesRequest(t *testing.T) {
 		t.Fatalf("reasoning_effort = %q, want max", first.ReasoningEffort)
 	}
 
-	// Clearing the override falls back to DeepSeek's default: thinking on,
-	// no explicit reasoning_effort.
 	if err := mgr.SetReasoning(sess.ID(), "", ""); err != nil {
 		t.Fatalf("clear SetReasoning: %v", err)
 	}

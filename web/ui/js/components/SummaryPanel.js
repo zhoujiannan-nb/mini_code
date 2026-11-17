@@ -1,9 +1,3 @@
-// 「执行摘要」抽屉:与「上下文」抽屉同一位置滑出(互斥),运行中点聊天头
-// 「摘要」即可查看 agent 的目标跟你想的是不是一样。
-//
-// 只画有真实数据支撑的东西 —— 状态/耗时、最近一份待办清单、本轮动过的文件、
-// 性能指标。没有数据的小节直接不画,不编数字。数据全部来自 store(历史步骤 +
-// 实时步骤)+ ctxInfo 快照,本组件不打后端接口(点文件除外:走 openFilePath)。
 import { h } from "preact";
 import htm from "htm";
 
@@ -15,15 +9,10 @@ import { openFilePath } from "../lib/markdown.js";
 
 const html = htm.bind(h);
 
-// 哪些工具算"动过文件":dsh 名 + 历史名。read 也计入 —— "读了哪些文件"同样是线索。
 const FILE_TOOLS = new Set(["read", "write", "edit", "read_image",
   "read_file", "write_file", "edit_file"]);
 const FILE_KEYS = ["file_path", "path", "file", "target", "dest"];
 
-// collectRun(rows, liveSteps):把历史轮 + 当前轮的过程步骤汇成一份摘要输入。
-// 两遍扫:文件/步数是"从最新往回"收(截 12 条要留最近的),待办却是"从最旧往下"
-// 收 —— 同一轮里 todo_write 会被反复改写法重发(状态从 pending 走到 completed),
-// 先到先得等于永远显示刚列出来的那一份,用户看到的"待办不跟着动"就是这么来的。
 export function summarize(rows, liveSteps) {
   let todos = null;
   const files = [];
@@ -42,12 +31,10 @@ export function summarize(rows, liveSteps) {
           seen.add(v);
           files.push(v.trim());
         }
-        break; // 一个调用只认第一个路径键
+        break; 
       }
     }
   };
-  // 待办:正着走,后写的赢。liveSteps(当前轮)排在所有历史行之后,天然就是最新一份;
-  // 参数还在流式生成的 prep 步读不出清单(todoItemsOf 给 null),不会抢跑。
   const scanTodos = (list) => {
     for (const s of list || []) {
       if (s.kind === "think") continue;
@@ -66,7 +53,6 @@ export function summarize(rows, liveSteps) {
   return { todos, files, steps };
 }
 
-// 状态文案与色档:与会话列表同一套语义。
 function statusOf(s, running) {
   if (!s) return { key: "new", text: "等待第一条消息" };
   if (running || s.active) return { key: "running", text: "任务执行中" };
@@ -104,7 +90,6 @@ export function SummaryPanel() {
   const speedText = paintSpeed(speed, speedAccurate);
   const ctxPct = ctxWindow > 0 ? Math.min(100, Math.round((tokens || 0) * 100 / ctxWindow)) : 0;
   const totals = ctxInfo && ctxInfo.totals;
-  // 命中率优先说本会话累计;供应商不报缓存就明说,不拿 0% 冒充。
   let hitText = "—";
   if (totals && totals.reported) hitText = totals.input > 0 ? Math.round(totals.cached * 100 / totals.input) + "%" : "—";
   else if (totals) hitText = "未上报";

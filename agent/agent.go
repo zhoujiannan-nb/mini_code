@@ -13,24 +13,12 @@ type AgentConfig struct {
 	Name        string
 	Description string
 	Prompt      string
-	Mode        string // "primary" | "subagent"
+	Mode        string
 	Permissions PermissionConfig
-	// DenyPluginTools flips the plugin-tool exemption (session/gate.go): a role
-	// with this set is denied every tool absent from its compiled table that
-	// belongs to an installed plugin, instead of the default "absent plugin
-	// tool is not a deny". The Router persona must not reach sessions_read /
-	// web_search: its surface is exactly the super_* trio, so plugins get
-	// closed by construction rather than by omission.
 	DenyPluginTools bool
 }
 
-// basePermissions is the role's compiled-in allow list. GetFilteredDefinitions
-// drops any registered tool whose name is neither listed here nor flagged as an
-// appended (plugin) tool, so every name the session registers must appear —
-// this is the dsh surface (core + root extras) plus the historical mc names,
-// which stay allowed so nothing that is still registered somewhere disappears.
 var basePermissions = map[string]interface{}{
-	// dsh core surface
 	"read":              "allow",
 	"write":             "allow",
 	"edit":              "allow",
@@ -45,7 +33,6 @@ var basePermissions = map[string]interface{}{
 	"todo_write":        "allow",
 	"working_directory": "allow",
 	"web_fetch":         "allow",
-	// dsh root extras
 	"subagent":      "allow",
 	"subagent_fork": "allow",
 	"send_message":  "allow",
@@ -54,12 +41,7 @@ var basePermissions = map[string]interface{}{
 	"create_goal":   "allow",
 	"get_goal":      "allow",
 	"update_goal":   "allow",
-	// workflow stays allowed in the role table (dsh's preset has it) even
-	// though MiniCode does not register it — the surface decision lives in
-	// session/prompt.go EnableAgentTools; one-line re-registration must not
-	// need a permission change here.
 	"workflow": "allow",
-	// historical mc names (not registered by default anymore, allowed if wired)
 	"read_file":       "allow",
 	"write_file":      "allow",
 	"edit_file":       "allow",
@@ -73,7 +55,7 @@ var basePermissions = map[string]interface{}{
 	"cancel_agent":    "allow",
 	"context_usage":   "allow",
 	"compact_context": "allow",
-	"workers":         "allow", // 工作大类: discover/create/join + the shared 公约 (only registered for root sessions)
+	"workers":         "allow",
 }
 
 func mergePermissions(overrides ...map[string]interface{}) PermissionConfig {
@@ -99,18 +81,10 @@ func BuildAgentConfig() *AgentConfig {
 		Permissions: mergePermissions(map[string]interface{}{
 			"write": "allow",
 			"edit":  "allow",
-			// move_file / copy_file dropped from the default toolset (see
-			// session.registerDefaultTools) — no permission entry to grant.
-			// Agent orchestration (one level deep: only root sessions get
-			// these) is granted by basePermissions; dsh's root surface.
 		}),
 	}
 }
 
-// WorkAgentConfig is the full-permission worker sub-agent. It inherits the
-// parent agent's toolset (everything except the agent tools, so sub-agents can
-// never dispatch further sub-agents) and, at dispatch time, the parent
-// session's permission mode (full / cautious — see session package).
 func WorkAgentConfig() *AgentConfig {
 	prompt := LoadPrompt("worker.txt")
 	return &AgentConfig{
@@ -121,15 +95,10 @@ func WorkAgentConfig() *AgentConfig {
 		Permissions: mergePermissions(map[string]interface{}{
 			"write": "allow",
 			"edit":  "allow",
-			// move_file / copy_file dropped from the default toolset (see
-			// session.registerDefaultTools).
 		}),
 	}
 }
 
-// SuperAgentConfig is the lite Super entry: its whole job is 定时任务 — the
-// runner delivers one pre-written sentence to a bound session on schedule.
-// The tool surface is exactly one tool plus a hard deny of everything else.
 func SuperAgentConfig() *AgentConfig {
 	prompt := LoadPrompt("super.txt")
 	return &AgentConfig{
@@ -139,9 +108,7 @@ func SuperAgentConfig() *AgentConfig {
 		Mode:            "primary",
 		DenyPluginTools: true,
 		Permissions: mergePermissions(map[string]interface{}{
-			// the one and only orchestration tool (registered per-task)
 			"super_schedule": "allow",
-			// everything else — inspection included — is denied
 			"super_workers":     "deny",
 			"super_send":        "deny",
 			"super_ticket":      "deny",
@@ -242,7 +209,7 @@ func GetAgentConfig(role string) (*AgentConfig, error) {
 		for k := range custom {
 			available = append(available, k)
 		}
-		sort.Strings(available) // stable order: map iteration is randomized
+		sort.Strings(available)
 		return nil, fmt.Errorf("unknown agent role: %s, available: %v", role, available)
 	}
 	return factory(), nil

@@ -8,7 +8,6 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// msgCount returns how many rows the conversation has in the append-only table.
 func msgCount(t *testing.T, mgr *SessionManager, sessionID string) int {
 	t.Helper()
 	row, err := mgr.GetStore().db.FetchOne(
@@ -19,9 +18,6 @@ func msgCount(t *testing.T, mgr *SessionManager, sessionID string) int {
 	return asInt(row["n"])
 }
 
-// TestMessageRowsAppendAndReload covers F2's two promises: a turn that only
-// appends writes one row per new message (not the whole conversation), and a
-// reload returns exactly what was written.
 func TestMessageRowsAppendAndReload(t *testing.T) {
 	mgr := newTestManager(t)
 	s := mustSession(t, mgr, "rows")
@@ -29,7 +25,6 @@ func TestMessageRowsAppendAndReload(t *testing.T) {
 		t.Fatalf("new session has %d message rows, want 0", got)
 	}
 
-	// Turn 1: user + assistant.
 	s.mu.Lock()
 	s.record.Messages = append(s.record.Messages,
 		providerMessage("user", "hello"),
@@ -40,7 +35,6 @@ func TestMessageRowsAppendAndReload(t *testing.T) {
 		t.Fatalf("after turn 1: %d rows, want 2", got)
 	}
 
-	// Turn 2: appends two more; the first two are not rewritten.
 	s.mu.Lock()
 	s.record.Messages = append(s.record.Messages,
 		providerMessage("user", "again"),
@@ -51,7 +45,6 @@ func TestMessageRowsAppendAndReload(t *testing.T) {
 		t.Fatalf("after turn 2: %d rows, want 4", got)
 	}
 
-	// Reload from a fresh manager (new process): the rows are the truth.
 	mgr2, err := NewSessionManager(nil, mgr.GetStore().db.Path())
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
@@ -69,9 +62,6 @@ func TestMessageRowsAppendAndReload(t *testing.T) {
 	}
 }
 
-// TestMessageRowsFullRewriteWhenPrefixChanges: compaction replaces the
-// conversation with a shorter one, which must rewrite the rows instead of
-// appending to a prefix that no longer matches.
 func TestMessageRowsFullRewriteWhenPrefixChanges(t *testing.T) {
 	mgr := newTestManager(t)
 	s := mustSession(t, mgr, "rewrite")
@@ -85,7 +75,6 @@ func TestMessageRowsFullRewriteWhenPrefixChanges(t *testing.T) {
 		t.Fatalf("setup: %d rows", got)
 	}
 
-	// A compaction-style rewrite: one summary message instead of two.
 	s.mu.Lock()
 	s.record.Messages = []provider.Message{providerMessage("assistant", "[summary of the past]")}
 	s.persistTurnLocked()
@@ -103,9 +92,6 @@ func TestMessageRowsFullRewriteWhenPrefixChanges(t *testing.T) {
 	}
 }
 
-// TestEventSeqIsReturnedExactly covers F3: the seq handed back to the caller is
-// the seq of the row that was written (the old code ran a separate MAX(seq) and
-// could return another writer's row).
 func TestEventSeqIsReturnedExactly(t *testing.T) {
 	mgr := newTestManager(t)
 	s := mustSession(t, mgr, "seq")
@@ -125,7 +111,6 @@ func TestEventSeqIsReturnedExactly(t *testing.T) {
 		}
 	}
 
-	// The returned seq must address exactly that row.
 	row, err := store.db.FetchOne(
 		"SELECT payload FROM session_event WHERE session_id = ? AND seq = ?", s.ID(), seqs[2])
 	if err != nil || row == nil {
@@ -136,12 +121,6 @@ func TestEventSeqIsReturnedExactly(t *testing.T) {
 	}
 }
 
-// TestDeleteRemovesChildrenAndLedgerAtomically covers F5's transaction: after a
-// delete, neither the child session rows nor any ledger or message row of
-// either session survive. (Message rows must be written here, not assumed: an
-// earlier version of this test passed vacuously with zero rows and missed the
-// session_message cascade never being wired up — the source of the orphan rows
-// the janitor's PruneOrphans now sweeps.)
 func TestDeleteRemovesChildrenAndLedgerAtomically(t *testing.T) {
 	mgr := newTestManager(t)
 	parent := mustSession(t, mgr, "parent")
@@ -188,9 +167,6 @@ func TestDeleteRemovesChildrenAndLedgerAtomically(t *testing.T) {
 	}
 }
 
-// TestOrphanSweepRemovesRowsOfDeletedSessions covers the janitor's cleanup of
-// rows an older delete path left behind: rows whose session is gone and past
-// the grace window go; live sessions' rows stay, even backdated.
 func TestOrphanSweepRemovesRowsOfDeletedSessions(t *testing.T) {
 	mgr := newTestManager(t)
 	s := mustSession(t, mgr, "orphaned")
@@ -201,11 +177,9 @@ func TestOrphanSweepRemovesRowsOfDeletedSessions(t *testing.T) {
 	if err := store.AppendMessages(s.ID(), []provider.Message{providerMessage("user", "gone")}, 1); err != nil {
 		t.Fatal(err)
 	}
-	// Simulate the old delete path: the sessions row goes, the rows stay.
 	if _, err := store.db.Execute("DELETE FROM sessions WHERE session_id = ?", s.ID()); err != nil {
 		t.Fatal(err)
 	}
-	// Backdate so the sweep's grace window has passed.
 	old := time.Now().Add(-orphanGrace - time.Hour).Format(time.RFC3339Nano)
 	for _, q := range []string{"UPDATE session_event SET created_at = ? WHERE session_id = ?",
 		"UPDATE session_message SET created_at = ? WHERE session_id = ?"} {
@@ -213,7 +187,6 @@ func TestOrphanSweepRemovesRowsOfDeletedSessions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// A live session with fresh rows must not be touched.
 	live := mustSession(t, mgr, "live")
 	if _, err := store.AppendEvent(live.ID(), EventTaskStart, 1, nil); err != nil {
 		t.Fatal(err)
@@ -234,8 +207,6 @@ func TestOrphanSweepRemovesRowsOfDeletedSessions(t *testing.T) {
 		t.Fatalf("live session lost rows to the sweep: %+v", row)
 	}
 
-	// Backdating the live session's rows must still spare them: the sessions
-	// row exists, so they are not orphans.
 	if _, err := store.db.Execute("UPDATE session_event SET created_at = ? WHERE session_id = ?", old, live.ID()); err != nil {
 		t.Fatal(err)
 	}
@@ -244,14 +215,9 @@ func TestOrphanSweepRemovesRowsOfDeletedSessions(t *testing.T) {
 	}
 }
 
-// TestPersistFailureIsRecordedAndReported covers F1: a write that fails is
-// counted, surfaced to the caller, and reported to the model exactly once per
-// task instead of being swallowed.
 func TestPersistFailureIsRecordedAndReported(t *testing.T) {
 	mgr := newTestManager(t)
 	s := mustSession(t, mgr, "failing")
-	// Break the database underneath the session: every write now fails the same
-	// way a full disk or a locked database would.
 	if err := mgr.GetStore().db.Close(); err != nil {
 		t.Fatalf("close db: %v", err)
 	}
@@ -269,7 +235,6 @@ func TestPersistFailureIsRecordedAndReported(t *testing.T) {
 		t.Fatal("the failure has no error text")
 	}
 
-	// The model must be told once, not once per failed write.
 	s.mu.Lock()
 	s.record.Messages = append(s.record.Messages, providerMessage("assistant", "yes"))
 	s.persistTurnLocked()
@@ -295,8 +260,6 @@ func TestPersistFailureIsRecordedAndReported(t *testing.T) {
 	}
 }
 
-// TestLedgerRetentionPrunesOldRows covers F5's retention policy: rows older than
-// the cutoff go, newer rows stay.
 func TestLedgerRetentionPrunesOldRows(t *testing.T) {
 	mgr := newTestManager(t)
 	s := mustSession(t, mgr, "retention")
@@ -304,7 +267,6 @@ func TestLedgerRetentionPrunesOldRows(t *testing.T) {
 	if _, err := store.AppendEvent(s.ID(), EventTurnStart, 1, nil); err != nil {
 		t.Fatal(err)
 	}
-	// Backdate the row so it is past retention.
 	old := time.Now().Add(-eventRetention - time.Hour).Format(time.RFC3339Nano)
 	if _, err := store.db.Execute("UPDATE session_event SET created_at = ? WHERE session_id = ?", old, s.ID()); err != nil {
 		t.Fatal(err)
@@ -329,7 +291,6 @@ func TestLedgerRetentionPrunesOldRows(t *testing.T) {
 	}
 }
 
-// providerMessage is a tiny constructor so the tests above read as conversations.
 func providerMessage(role, text string) provider.Message {
 	return provider.Message{Role: role, Content: text}
 }

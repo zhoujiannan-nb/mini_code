@@ -13,14 +13,11 @@ import (
 	"github.com/user/mini_code/util"
 )
 
-// NewDefaultSessionStore creates a new session store using the default database path (~/.mini_code/agent.db)
 func NewDefaultSessionStore() (*SessionStore, error) {
 	db, err := util.NewDefaultDatabase()
 	if err != nil {
 		return nil, err
 	}
-	// Same spill layout as NewSessionStore: full tool outputs of pruned rows
-	// live in the "spill" folder next to the database file.
 	s := &SessionStore{db: db, spillDir: filepath.Join(filepath.Dir(db.Path()), "spill")}
 	s.initDB()
 	s.startJanitor()
@@ -34,14 +31,9 @@ type SessionRecord struct {
 	AgentRole  string                 `json:"agent_role"`
 	WorkDir    string                 `json:"work_dir"`
 	Status     string                 `json:"status"`
-	Mode       string                 `json:"mode,omitempty"` // "full" (default) | "cautious"
-	// ModelKey references a configured model by name; empty = the default
-	// model. Sub-agent sessions snapshot their parent's key at dispatch.
+	Mode       string                 `json:"mode,omitempty"`
 	ModelKey   string                 `json:"model_key,omitempty"`
 	ChannelKey string                 `json:"channel_key,omitempty"`
-	// WorkerID is the worker (工作大类) this session belongs to; "" = unassigned.
-	// Assigning a worker gives the session its shared workspace and injects the
-	// worker block (directory + convention file snapshot) into the system prompt.
 	WorkerID string                 `json:"worker_id,omitempty"`
 	Messages   []provider.Message     `json:"messages"`
 	Metadata   map[string]interface{} `json:"metadata"`
@@ -67,39 +59,21 @@ func NewSessionRecord(title, agentRole, workDir, parentID string) *SessionRecord
 
 type SessionStore struct {
 	db *util.Database
-	// evLocks shards ledger-append serialization by session id: appends to
-	// the SAME session stay strictly ordered (contiguous seq), while
-	// different sessions — parallel tasks, sub-agents, workers — append
-	// concurrently instead of queueing behind one global mutex. WAL mode
-	// plus busy_timeout (util.NewDatabase) arbitrates at the SQLite layer.
 	evLocks [64]sync.Mutex
-	// spillDir holds full tool outputs behind pruned ledger rows (see prune.go).
 	spillDir string
-	// janitor bookkeeping (F5): one background ticker prunes the ledger and the
-	// spill folder, instead of the old one-shot sweep at boot — a process that
-	// runs for a month never swept again.
 	janitorStop chan struct{}
 	janitorOnce sync.Once
 }
 
-// janitorInterval is how often the background retention pass runs.
 const janitorInterval = 6 * time.Hour
 
-// eventRetention is how long ledger rows (which carry whole tool results) are
-// kept. Ninety days is longer than any conversation is resumed in practice and
-// short enough that a long-lived install does not grow without bound.
 const eventRetention = 90 * 24 * time.Hour
 
-// orphanGrace is how long conversation rows may exist without a sessions row
-// before the janitor treats them as garbage. One day is far beyond the
-// create-then-append window of any healthy session (the sessions row is written
-// before the loop starts), so a sweep can never clip a live conversation.
 const orphanGrace = 24 * time.Hour
 
-// startJanitor launches the retention pass and the boot sweep.
 func (s *SessionStore) startJanitor() {
 	s.janitorStop = make(chan struct{})
-	go s.runJanitor() // boot sweep: stale spill files + anything already past retention
+	go s.runJanitor()
 	go func() {
 		t := time.NewTicker(janitorInterval)
 		defer t.Stop()
@@ -114,8 +88,6 @@ func (s *SessionStore) startJanitor() {
 	}()
 }
 
-// runJanitor prunes the ledger past retention, sweeps the spill folder, and
-// removes rows orphaned by deletes from older binaries.
 func (s *SessionStore) runJanitor() {
 	if n, err := s.PruneEvents(time.Now().Add(-eventRetention)); err != nil {
 		slog.Warn("ledger retention pass failed", "err", err)
@@ -127,10 +99,6 @@ func (s *SessionStore) runJanitor() {
 		slog.Warn("orphan sweep failed", "err", err)
 	} else if ev+msg > 0 {
 		slog.Info("orphan sweep removed rows of deleted sessions", "events", ev, "messages", msg)
-		// Hand the freed pages back to the filesystem: sweeps otherwise leave
-		// the file grown to its high-water mark forever. A no-op unless the
-		// database runs with auto_vacuum=INCREMENTAL (set it once with
-		// "PRAGMA auto_vacuum=INCREMENTAL; VACUUM;" while the server is down).
 		if _, err := s.db.Execute("PRAGMA incremental_vacuum(16384)"); err != nil {
 			slog.Warn("incremental vacuum failed", "err", err)
 		}
@@ -138,7 +106,6 @@ func (s *SessionStore) runJanitor() {
 	cleanupSpillDir(s.spillDir)
 }
 
-// stopJanitor ends the retention goroutine (idempotent).
 func (s *SessionStore) stopJanitor() {
 	s.janitorOnce.Do(func() {
 		if s.janitorStop != nil {
@@ -158,8 +125,6 @@ func NewSessionStore(dbPath string) (*SessionStore, error) {
 	return s, nil
 }
 
-// evLock returns the shard guarding one session's ledger appends (FNV-1a over
-// the session id).
 func (s *SessionStore) evLock(sessionID string) *sync.Mutex {
 	var h uint32 = 2166136261
 	for i := 0; i < len(sessionID); i++ {
@@ -168,13 +133,8 @@ func (s *SessionStore) evLock(sessionID string) *sync.Mutex {
 	return &s.evLocks[h%uint32(len(s.evLocks))]
 }
 
-// SpillDir is where full tool outputs behind pruned rows are written
-// (sibling "spill" folder of the database file).
 func (s *SessionStore) SpillDir() string { return s.spillDir }
 
-// DB exposes the shared SQLite handle. The super_* tables live in the same
-// connection as sessions/workers on purpose: like the worker cascade, a
-// super worker's rows and its session rows must stay race-free together.
 func (s *SessionStore) DB() *util.Database { return s.db }
 
 func (s *SessionStore) initDB() {
@@ -206,20 +166,6 @@ func (s *SessionStore) initDB() {
 	s.initWorkers()
 }
 
-// initMessages creates the append-only message table (F2).
-//
-// Why messages moved out of the sessions row: the whole conversation used to be
-// one JSON column, re-marshaled and rewritten 3-5 times per turn (and every
-// base64 image with it). Two processes sharing the database then overwrote each
-// other's turns silently. One row per message makes the turn path an INSERT of
-// the messages that are new, keeps the write proportional to the turn, and
-// gives the conversation a stable position (seq) that a concurrent writer cannot
-// clobber.
-//
-// The sessions.messages column is kept as a legacy projection (written by Update,
-// which is the infrequent path) so an older binary still reads something, and so
-// a database written before this change keeps working: Load prefers the rows and
-// falls back to the column.
 func (s *SessionStore) initMessages() {
 	s.db.InitTable(`CREATE TABLE IF NOT EXISTS session_message (
 		session_id TEXT NOT NULL,
@@ -230,9 +176,6 @@ func (s *SessionStore) initMessages() {
 	)`)
 }
 
-// migrateMessageCount adds the cheap-count column to databases created before
-// it existed. Lists read it instead of json_array_length(messages), which meant
-// parsing the whole conversation payload on every poll.
 func (s *SessionStore) migrateMessageCount() {
 	rows, err := s.db.FetchAll("PRAGMA table_info(sessions)")
 	if err != nil {
@@ -246,9 +189,6 @@ func (s *SessionStore) migrateMessageCount() {
 	s.db.Execute("ALTER TABLE sessions ADD COLUMN message_count INTEGER DEFAULT 0")
 }
 
-// migrateChannelKey adds the channel_key column to databases created before
-// the column existed. SQLite has no "ADD COLUMN IF NOT EXISTS", so we check
-// the table schema first.
 func (s *SessionStore) migrateChannelKey() {
 	rows, err := s.db.FetchAll("PRAGMA table_info(sessions)")
 	if err != nil {
@@ -262,8 +202,6 @@ func (s *SessionStore) migrateChannelKey() {
 	s.db.Execute("ALTER TABLE sessions ADD COLUMN channel_key TEXT DEFAULT ''")
 }
 
-// migrateMode adds the mode column (permission mode: "" = full, "cautious")
-// to databases created before the column existed.
 func (s *SessionStore) migrateMode() {
 	rows, err := s.db.FetchAll("PRAGMA table_info(sessions)")
 	if err != nil {
@@ -277,8 +215,6 @@ func (s *SessionStore) migrateMode() {
 	s.db.Execute("ALTER TABLE sessions ADD COLUMN mode TEXT DEFAULT ''")
 }
 
-// migrateModelKey adds the model_key column to databases created before
-// the column existed.
 func (s *SessionStore) migrateModelKey() {
 	rows, err := s.db.FetchAll("PRAGMA table_info(sessions)")
 	if err != nil {
@@ -292,10 +228,6 @@ func (s *SessionStore) migrateModelKey() {
 	s.db.Execute("ALTER TABLE sessions ADD COLUMN model_key TEXT DEFAULT ''")
 }
 
-// SessionSummary is a lightweight session row for list views: metadata plus
-// the message count, without the (potentially large) messages payload. It
-// covers root sessions only — sub-agent sessions (parent_id set) are
-// internal and stay out of channel listings.
 type SessionSummary struct {
 	SessionID    string
 	ParentID     string
@@ -310,21 +242,10 @@ type SessionSummary struct {
 	CreatedAt    string
 	UpdatedAt    string
 	MessageCount int
-	// TotalPrompt/TotalCompletion are the session-wide token totals summed
-	// over every provider call (metadata.usage_total, written by
-	// recordLastUsage). Zero for sessions predating the counter.
 	TotalPrompt     int
 	TotalCompletion int
 }
 
-// sessionListQuery is the shared lightweight list query for root sessions.
-// bucket selects one worker's sessions: WorkerAllID is "everything visible"
-// (unassigned plus every non-builtin worker), WorkerUnassignedID ("") is the
-// un-assigned bucket, anything else is that exact worker — the built-in 已归档
-// bucket is therefore only reachable by name and never shows up in "all".
-// The message count comes from json_array_length, so conversation payloads are
-// never loaded into a list response — the endpoint stays cheap enough for
-// frequent polling.
 func sessionListQuery(bucket string) string {
 	predicate := "COALESCE(worker_id, '') NOT IN (SELECT worker_id FROM workers WHERE builtin = 1)"
 	switch bucket {
@@ -346,8 +267,6 @@ func sessionListQuery(bucket string) string {
 		` ORDER BY updated_at DESC LIMIT ? OFFSET ?`
 }
 
-// ListBucketSummaries returns one worker bucket's root sessions, most recently
-// updated first. See sessionListQuery for the bucket semantics.
 func (s *SessionStore) ListBucketSummaries(bucket string, limit, offset int) ([]SessionSummary, error) {
 	var rows []map[string]interface{}
 	var err error
@@ -367,16 +286,11 @@ func (s *SessionStore) ListBucketSummaries(bucket string, limit, offset int) ([]
 	return out, nil
 }
 
-// ListSessionSummaries returns the default conversation list: every visible
-// root session (unassigned + non-builtin workers), most recently updated first.
 func (s *SessionStore) ListSessionSummaries(limit, offset int) ([]SessionSummary, error) {
 	return s.ListBucketSummaries(WorkerAllID, limit, offset)
 }
 
 
-// ListChildren returns the sub-agent sessions (parent_id set) of one parent,
-// oldest first. Used by the UI to render background sub-agents under their
-// parent session.
 func (s *SessionStore) ListChildren(parentID string) ([]SessionSummary, error) {
 	rows, err := s.db.FetchAll(
 		`SELECT session_id, parent_id, title, agent_role, work_dir, status, mode, model_key, channel_key,
@@ -400,23 +314,16 @@ func (s *SessionStore) ListChildren(parentID string) ([]SessionSummary, error) {
 	return out, nil
 }
 
-// ChildAgentRow is one sub-agent session plus the identity the dispatcher
-// stored in its metadata. The identity lives in the session row (not in a
-// process-local table) so that after a restart the agents of a conversation are
-// still listed by name, and send_message can wake one by name.
 type ChildAgentRow struct {
 	SessionID   string
 	Name        string
 	Description string
 	Goal        string
 	Role        string
-	Status      string // the persisted status of its last run
+	Status      string
 	CreatedAt   string
 }
 
-// ListChildAgents returns the sub-agent sessions of one parent, oldest first,
-// with their agent names. Rows whose name is missing (sessions created before
-// names existed) fall back to the session id.
 func (s *SessionStore) ListChildAgents(parentID string) ([]ChildAgentRow, error) {
 	rows, err := s.db.FetchAll(
 		`SELECT session_id, title, agent_role, status, metadata, created_at
@@ -451,11 +358,6 @@ func (s *SessionStore) ListChildAgents(parentID string) ([]ChildAgentRow, error)
 	return out, nil
 }
 
-// ChildIDsByParent returns, in a single query, the sub-agent sessions of
-// every parent (parent_id -> child session IDs). The list API uses it to
-// aggregate sub-agent "running" state onto parent sessions: a sub-agent runs
-// in its own child session, so when the parent's own turn has finished but
-// background sub-agents are still alive, the parent must read as running.
 func (s *SessionStore) ChildIDsByParent() (map[string][]string, error) {
 	rows, err := s.db.FetchAll(
 		`SELECT parent_id, session_id FROM sessions
@@ -495,15 +397,11 @@ func summaryFromRow(row map[string]interface{}) SessionSummary {
 	}
 }
 
-// asString converts a SQLite scalar to string, tolerating a NULL (which the
-// driver hands back as nil).
 func asString(v interface{}) string {
 	s, _ := v.(string)
 	return s
 }
 
-// asInt converts a SQLite scalar (int64 via database/sql) to int, tolerating
-// the float64 encoding some drivers use for INTEGER columns.
 func asInt(v interface{}) int {
 	switch n := v.(type) {
 	case int64:
@@ -540,8 +438,6 @@ func (s *SessionStore) Get(sessionID string) (*SessionRecord, error) {
 	if err != nil || rec == nil {
 		return rec, err
 	}
-	// Rows are the truth when they exist; the JSON column is the legacy
-	// projection kept for databases (and binaries) that predate the row table.
 	if msgs, err := s.loadMessages(sessionID); err != nil {
 		return nil, err
 	} else if len(msgs) > 0 {
@@ -550,7 +446,6 @@ func (s *SessionStore) Get(sessionID string) (*SessionRecord, error) {
 	return rec, nil
 }
 
-// loadMessages reads one conversation's rows, oldest first.
 func (s *SessionStore) loadMessages(sessionID string) ([]provider.Message, error) {
 	rows, err := s.db.FetchAll(
 		"SELECT payload FROM session_message WHERE session_id = ? ORDER BY seq ASC", sessionID)
@@ -570,8 +465,6 @@ func (s *SessionStore) loadMessages(sessionID string) ([]provider.Message, error
 	return out, nil
 }
 
-// replaceMessagesTx rewrites a conversation's rows inside an existing
-// transaction (the full-rewrite path: compaction, fork, a metadata write).
 func (s *SessionStore) replaceMessagesTx(tx *sql.Tx, sessionID string, msgs []provider.Message) error {
 	if _, err := tx.Exec("DELETE FROM session_message WHERE session_id = ?", sessionID); err != nil {
 		return err
@@ -592,11 +485,6 @@ func (s *SessionStore) replaceMessagesTx(tx *sql.Tx, sessionID string, msgs []pr
 	return err
 }
 
-// AppendMessages adds the messages a turn produced. total is the conversation's
-// length after the append (the caller already holds the full slice, so it needs
-// no COUNT query).
-//
-// This is the hot path: one INSERT per new message, no conversation rewrite.
 func (s *SessionStore) AppendMessages(sessionID string, msgs []provider.Message, total int) error {
 	if len(msgs) == 0 {
 		return nil
@@ -631,9 +519,6 @@ func (s *SessionStore) AppendMessages(sessionID string, msgs []provider.Message,
 
 func (s *SessionStore) Update(record *SessionRecord) error {
 	record.UpdatedAt = time.Now().Format(time.RFC3339)
-	// The JSON column stays as the legacy projection; the rows are what Load
-	// reads. Keeping both in one transaction means a reader never sees a
-	// conversation that exists in one and not the other.
 	msgsJSON, _ := json.Marshal(record.Messages)
 	metaJSON, _ := json.Marshal(record.Metadata)
 	return s.db.ExecTx(func(tx *sql.Tx) error {
@@ -650,8 +535,6 @@ func (s *SessionStore) Update(record *SessionRecord) error {
 	})
 }
 
-// GetByChannelKey returns the most recently updated session bound to the
-// given channel key, or nil if none is bound.
 func (s *SessionStore) GetByChannelKey(key string) (*SessionRecord, error) {
 	if key == "" {
 		return nil, nil
@@ -663,7 +546,6 @@ func (s *SessionStore) GetByChannelKey(key string) (*SessionRecord, error) {
 	return s.rowToRecord(row)
 }
 
-// SetChannelKey binds a channel key to a session.
 func (s *SessionStore) SetChannelKey(sessionID, key string) error {
 	now := time.Now().Format(time.RFC3339)
 	_, err := s.db.Execute(
@@ -673,7 +555,6 @@ func (s *SessionStore) SetChannelKey(sessionID, key string) error {
 	return err
 }
 
-// SetMode updates the permission mode of a session ("full" / "cautious").
 func (s *SessionStore) SetMode(sessionID, mode string) error {
 	now := time.Now().Format(time.RFC3339)
 	_, err := s.db.Execute(
@@ -683,11 +564,6 @@ func (s *SessionStore) SetMode(sessionID, mode string) error {
 	return err
 }
 
-// SetTitle renames a session. It is a targeted update (not the whole-row
-// Update) so a rename can neither clobber the agent loop's concurrent
-// per-turn message persistence nor be clobbered by it. It deliberately does
-// not bump updated_at: a rename is a label change, not conversation
-// activity, and the list order (updated_at DESC) should stay stable.
 func (s *SessionStore) SetTitle(sessionID, title string) error {
 	_, err := s.db.Execute(
 		"UPDATE sessions SET title=? WHERE session_id=?",
@@ -696,11 +572,6 @@ func (s *SessionStore) SetTitle(sessionID, title string) error {
 	return err
 }
 
-// SetTitleSrc records where a session's title came from (see session/title.go:
-// "" = the truncation fallback, "tried", "model", "user"). Only the metadata
-// column is written, so — like SetTitle — this can neither clobber the agent
-// loop's concurrent per-turn message persistence nor be clobbered by it, and it
-// does not bump updated_at (a title is a label, not conversation activity).
 func (s *SessionStore) SetTitleSrc(sessionID, src string) error {
 	rec, err := s.Get(sessionID)
 	if err != nil || rec == nil {
@@ -715,9 +586,6 @@ func (s *SessionStore) SetTitleSrc(sessionID, src string) error {
 	return err
 }
 
-// SetModelKey switches the session's model (config model name; empty =
-// default model). Like SetMode it is a targeted update and bumps
-// updated_at, so the session jumps to the top of the list on switch.
 func (s *SessionStore) SetModelKey(sessionID, key string) error {
 	now := time.Now().Format(time.RFC3339)
 	_, err := s.db.Execute(
@@ -728,14 +596,6 @@ func (s *SessionStore) SetModelKey(sessionID, key string) error {
 }
 
 func (s *SessionStore) Delete(sessionID string) error {
-	// 连带删掉被删会话的事件账本与消息行:append-only 的流水留着只会是永远查不到的
-	// 垃圾行(会话都删了,没人再按 id 去查它)。子会话整排删,账本和消息行也整排删。
-	// session_message 表上线(F2)时,F5 只补了 sessions/session_event 的级联,
-	// 消息行漏删,是线上孤儿行(83%)的主要来源——这里补上,并由 janitor 的
-	// PruneOrphans 清掉修复前留下的存量。
-	//
-	// 全部放进一个事务:以前是几条独立语句,中途崩溃会留下"父会话已删、子会话
-	// 或账本行还在"的孤儿数据(F5)。
 	return s.db.ExecTx(func(tx *sql.Tx) error {
 		rows, err := tx.Query("SELECT session_id FROM sessions WHERE parent_id = ?", sessionID)
 		if err != nil {

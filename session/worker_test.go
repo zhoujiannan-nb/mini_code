@@ -18,8 +18,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// newTestWorkerEnv builds a session manager with the worker service wired over
-// one temp DB (the shape main.go sets up at startup).
 func newTestWorkerEnv(t *testing.T) (*SessionManager, *WorkerService) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "agent.db")
@@ -33,9 +31,6 @@ func newTestWorkerEnv(t *testing.T) (*SessionManager, *WorkerService) {
 	return mgr, svc
 }
 
-// buildPrompt renders a session's system prompt through the same path a real
-// task uses (preparePromptTools + BuildSystemPrompt), so the prefix-cache
-// assertions below are about the bytes the provider would actually see.
 func buildPrompt(t *testing.T, s *Session) string {
 	t.Helper()
 	cfg, pb, _, err := s.preparePromptTools()
@@ -49,8 +44,6 @@ func buildPrompt(t *testing.T, s *Session) string {
 	return pb.BuildSystemPrompt(wd, "")
 }
 
-// toolJSON renders the tool schemas of a session (the other half of the request
-// prefix).
 func toolJSON(t *testing.T, s *Session) string {
 	t.Helper()
 	cfg, pb, _, err := s.preparePromptTools()
@@ -76,7 +69,6 @@ func TestWorkerCreateJoinAndCascadeDelete(t *testing.T) {
 	if fi, err := os.Stat(w.WorkDir); err != nil || !fi.IsDir() {
 		t.Fatalf("shared workspace missing: %v", err)
 	}
-	// A new worker starts with an empty, version-0 公约: nothing to broadcast yet.
 	if rec, err := svc.Get(w.WorkerID); err != nil || rec == nil || rec.Note != "" || rec.NoteVer != 0 {
 		t.Fatalf("a new worker must carry an empty v0 公约: %+v %v", rec, err)
 	}
@@ -84,7 +76,6 @@ func TestWorkerCreateJoinAndCascadeDelete(t *testing.T) {
 		t.Fatalf("the 公约 must live in the row, not in a file: %v", err)
 	}
 
-	// A duplicate name must not create a second workspace.
 	if _, err := svc.Create("gpu-bench", "", a.WorkDir(), ""); err == nil {
 		t.Fatal("Create with a duplicate name should fail")
 	}
@@ -95,7 +86,6 @@ func TestWorkerCreateJoinAndCascadeDelete(t *testing.T) {
 	if _, err := svc.Join(b.ID(), w.WorkerID); err != nil {
 		t.Fatalf("Join b: %v", err)
 	}
-	// Same worker = same working directory, for both sessions.
 	if a.WorkDir() != w.WorkDir || b.WorkDir() != w.WorkDir {
 		t.Fatalf("sessions did not share the workspace: %q %q want %q", a.WorkDir(), b.WorkDir(), w.WorkDir)
 	}
@@ -103,7 +93,6 @@ func TestWorkerCreateJoinAndCascadeDelete(t *testing.T) {
 		t.Fatalf("session A membership = %q %q %q, want %q gpu-bench %q", id, name, dir, w.WorkerID, w.WorkDir)
 	}
 
-	// Summary update is visible to other sessions through the row.
 	if err := svc.UpdateSummary(w.WorkerID, "换主题:显存带宽"); err != nil {
 		t.Fatalf("UpdateSummary: %v", err)
 	}
@@ -111,7 +100,6 @@ func TestWorkerCreateJoinAndCascadeDelete(t *testing.T) {
 		t.Fatalf("summary not persisted: %+v %v", rec, err)
 	}
 
-	// Leaving keeps the directory (files stay where they are).
 	if err := svc.Leave(b.ID()); err != nil {
 		t.Fatalf("Leave: %v", err)
 	}
@@ -122,16 +110,13 @@ func TestWorkerCreateJoinAndCascadeDelete(t *testing.T) {
 		t.Fatalf("Leave re-filed worker id %q, want %q", id, WorkerOtherID)
 	}
 
-	// Deleting the worker deletes its sessions and keeps the files.
 	n, err := svc.Delete(w.WorkerID)
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if n != 1 { // A is still in it; B left
+	if n != 1 {
 		t.Fatalf("Delete removed %d sessions, want 1", n)
 	}
-	// The store is the authority here: SessionManager.Get reports a missing row
-	// as (nil, nil), not as an error.
 	if rec, err := mgr.GetStore().Get(a.ID()); err != nil || rec != nil {
 		t.Fatalf("session A survived the worker delete: %+v %v", rec, err)
 	}
@@ -141,15 +126,11 @@ func TestWorkerCreateJoinAndCascadeDelete(t *testing.T) {
 	if _, err := os.Stat(w.WorkDir); err != nil {
 		t.Fatalf("workspace was removed (it must be kept): %v", err)
 	}
-	// The session that left is untouched.
 	if rec, err := mgr.GetStore().Get(b.ID()); err != nil || rec == nil {
 		t.Fatalf("the detached session vanished: %+v %v", rec, err)
 	}
 }
 
-// TestWorkerNoteVersionNotice pins the subscription: a session is told the 公约
-// only while the version its own conversation carries is behind, and every write —
-// human through the UI or agent through the tool — bumps that version.
 func TestWorkerNoteVersionNotice(t *testing.T) {
 	mgr, svc := newTestWorkerEnv(t)
 	s := mustSession(t, mgr, "note-version")
@@ -160,12 +141,9 @@ func TestWorkerNoteVersionNotice(t *testing.T) {
 	if _, err := svc.Join(s.ID(), w.WorkerID); err != nil {
 		t.Fatalf("Join: %v", err)
 	}
-	// v0/empty: nothing to say.
 	if n := s.WorkerNotice(nil); n.GetText() != "" {
 		t.Fatalf("an empty 公约 must not produce a notice: %q", n.GetText())
 	}
-	// The system prompt carries no worker content at all: it is frozen into the
-	// history after the first turn, so anything dynamic there would go stale.
 	if p := buildPrompt(t, s); strings.Contains(p, "worker_notice") || strings.Contains(p, "<convention>") {
 		t.Fatal("the system prompt still carries worker content")
 	}
@@ -185,12 +163,10 @@ func TestWorkerNoteVersionNotice(t *testing.T) {
 	if !strings.Contains(first.GetText(), "results/") || !strings.Contains(first.GetText(), noteMarker(w.WorkerID, 1)) {
 		t.Fatalf("the notice lacks the 公约 or its marker:\n%s", first.GetText())
 	}
-	// Carrying v1 → silent.
 	held := append(append([]provider.Message(nil), msgs...), first)
 	if n := s.WorkerNotice(held); n.GetText() != "" {
 		t.Fatalf("a session holding the current version was notified again: %q", n.GetText())
 	}
-	// A newer write → told once more, with the new text.
 	if ver, err = svc.WriteNote(w.WorkerID, "第二条:commit 前先跑 go test"); err != nil || ver != 2 {
 		t.Fatalf("WriteNote v2 = %d (%v)", ver, err)
 	}
@@ -198,8 +174,6 @@ func TestWorkerNoteVersionNotice(t *testing.T) {
 	if !strings.Contains(second.GetText(), "go test") || !strings.Contains(second.GetText(), noteMarker(w.WorkerID, 2)) {
 		t.Fatalf("the v2 notice is wrong:\n%s", second.GetText())
 	}
-	// A join result is a tool result: it carries the same marker, so joining
-	// consumes the version instead of repeating the text one task later.
 	api := svc.ToolAPIFor(s.ID())
 	joined := provider.Message{Role: "tool", Content: api.Join(w.WorkerID)}
 	if !strings.Contains(joined.GetText(), noteMarker(w.WorkerID, 2)) {
@@ -208,8 +182,6 @@ func TestWorkerNoteVersionNotice(t *testing.T) {
 	if n := s.WorkerNotice(append(append([]provider.Message(nil), msgs...), joined)); n.GetText() != "" {
 		t.Fatalf("joining should have consumed v2: %q", n.GetText())
 	}
-	// note_read reports the current version. Writing is not offered to the model
-	// at all: svc.WriteNote is the human path (the sidebar), which still bumps.
 	if got := api.NoteRead(); !strings.Contains(got, "v2") || !strings.Contains(got, "go test") {
 		t.Fatalf("note_read: %q", got)
 	}
@@ -221,9 +193,6 @@ func TestWorkerNoteVersionNotice(t *testing.T) {
 	}
 }
 
-// TestWorkerNoteWriteValidation: the 公约 is injected into every session of the
-// worker, so it is trimmed on the way in and an oversized write is refused
-// instead of silently truncated.
 func TestWorkerNoteWriteValidation(t *testing.T) {
 	mgr, svc := newTestWorkerEnv(t)
 	s := mustSession(t, mgr, "note-validation")
@@ -247,9 +216,6 @@ func TestWorkerNoteWriteValidation(t *testing.T) {
 	}
 }
 
-// TestApplyWorkerNoticeOncePerTask pins how the notice rides the conversation: the
-// loop appends it once at the start of a task, an up-to-date session gets nothing,
-// and the bytes already in the conversation never move.
 func TestApplyWorkerNoticeOncePerTask(t *testing.T) {
 	mgr, svc := newTestWorkerEnv(t)
 	s := mustSession(t, mgr, "notice-append")
@@ -274,14 +240,11 @@ func TestApplyWorkerNoticeOncePerTask(t *testing.T) {
 	if len(msgs) != 3 || !IsWorkerNotice(msgs[2]) {
 		t.Fatalf("notice was not appended to the tail: %+v", msgs)
 	}
-	// The next task holds this version already: zero new bytes.
 	next := append(msgs, provider.Message{Role: "assistant", Content: "ok"})
 	if got := loop.applyWorkerNotice(next); len(got) != len(next) {
 		t.Fatalf("an up-to-date session got %d extra messages", len(got)-len(next))
 	}
 
-	// A newer 公约 appends one message; everything before it stays byte-identical,
-	// so the provider's cached prefix still matches.
 	before := append([]provider.Message(nil), next...)
 	if _, err := svc.WriteNote(w.WorkerID, "新约定:dist/"); err != nil {
 		t.Fatalf("WriteNote: %v", err)
@@ -299,7 +262,6 @@ func TestApplyWorkerNoticeOncePerTask(t *testing.T) {
 		}
 	}
 
-	// A sub-agent has nothing to say.
 	child := mustSession(t, mgr, "child")
 	child.record.ParentID = "p"
 	loop.SetWorkerNotice(child.WorkerNotice)
@@ -307,8 +269,6 @@ func TestApplyWorkerNoticeOncePerTask(t *testing.T) {
 		t.Fatal("a silent session must not append a notice")
 	}
 
-	// A fresh root session is born under 其他 and gets no notice at all: the
-	// join reminder is retired, and 其他 carries no shared convention.
 	free := mustSession(t, mgr, "free")
 	if id, _, _ := free.WorkerSnapshot(); id != WorkerOtherID {
 		t.Fatalf("a fresh root session should be born under %q, got %q", WorkerOtherID, id)
@@ -319,9 +279,6 @@ func TestApplyWorkerNoticeOncePerTask(t *testing.T) {
 		t.Fatalf("a fresh session should start notice-free: %+v", task1)
 	}
 
-	// A compaction rebuild drops notices (derived data); the next task re-delivers
-	// the convention. The history rebuilt here carries none, so the owed note is
-	// re-created — the held version resets with the dropped notices.
 	loop.SetWorkerNotice(s.WorkerNotice)
 	rebuilt, ok := RebuildContext(append(after, BuildCompactRequest("")), "summary here", CompactKeepMessages, CompactKeepMaxTokens)
 	if !ok {
@@ -345,11 +302,6 @@ func countWorkerNotices(messages []provider.Message) int {
 	return n
 }
 
-// TestWorkersToolRegisteredForEveryRootSession pins the other half of the
-// prefix: a session must not gain or lose tools when it joins a worker, or the
-// join would break its cache too. The workers tool itself is no longer on the
-// exposed surface (dsh parity) — the join reminder and 公约 travel as a user
-// message, so the tool list must stay identical either way.
 func TestWorkersToolRegisteredForEveryRootSession(t *testing.T) {
 	mgr, svc := newTestWorkerEnv(t)
 	unattached := mustSession(t, mgr, "unattached")
@@ -369,7 +321,6 @@ func TestWorkersToolRegisteredForEveryRootSession(t *testing.T) {
 	if after := toolJSON(t, attached); after != defsBefore {
 		t.Fatal("joining a worker changed the tool schema (prefix cache broken)")
 	}
-	// A sub-agent gets neither the block nor the tool.
 	parentID := attached.ID()
 	child, err := mgr.CreateSessionRecord("child", "work", attached.WorkDir(), &parentID)
 	if err != nil {
@@ -380,10 +331,6 @@ func TestWorkersToolRegisteredForEveryRootSession(t *testing.T) {
 	}
 }
 
-// TestWorkerConventionReadOnlyForModel pins the removal: a session may read its
-// worker's 公约 but has no way to write one — no NoteWrite on the dispatcher, no
-// note_write in any tool schema, and no leftover approval prompt. The single
-// write path is a human editing it in the sidebar (handleWorkersNoteWrite).
 func TestWorkerConventionReadOnlyForModel(t *testing.T) {
 	mgr, svc := newTestWorkerEnv(t)
 	s := mustSession(t, mgr, "gate")
@@ -403,8 +350,6 @@ func TestWorkerConventionReadOnlyForModel(t *testing.T) {
 	if p := buildPrompt(t, s); strings.Contains(p, "note_write") {
 		t.Fatalf("the system prompt still suggests note_write:\n%s", p)
 	}
-	// Nothing about the workers tool asks the user anything any more (mode is the
-	// default full; the old always-confirm hook is gone with the write path).
 	cfg, _, _, err := s.preparePromptTools()
 	if err != nil {
 		t.Fatalf("preparePromptTools: %v", err)
@@ -420,7 +365,6 @@ func TestWorkerConventionReadOnlyForModel(t *testing.T) {
 	if ap.called != 0 {
 		t.Fatalf("workers tool triggered %d approvals, want 0", ap.called)
 	}
-	// Even if a model asks for the old action, the row is untouched.
 	tools := svc.ToolAPIFor(s.ID())
 	if !strings.Contains(tools.List(), w.WorkerID) {
 		t.Fatalf("list should include the worker: %q", tools.List())
@@ -430,10 +374,6 @@ func TestWorkerConventionReadOnlyForModel(t *testing.T) {
 	}
 }
 
-// TestWorkerBucketsAndArchiveMigration covers the switcher's data: the unassigned
-// and per-worker buckets, and that the legacy metadata.archived flag becomes the
-// built-in 已归档 bucket on the next open — without resurrecting those sessions
-// into the default list.
 func TestWorkerBucketsAndArchiveMigration(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "agent.db")
 	store, err := NewSessionStore(dbPath)
@@ -455,7 +395,6 @@ func TestWorkerBucketsAndArchiveMigration(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Reopening runs the migration.
 	reopened, err := NewSessionStore(dbPath)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
@@ -482,9 +421,6 @@ func TestWorkerBucketsAndArchiveMigration(t *testing.T) {
 	if err != nil || len(all) != 1 || all[0].SessionID != plain.SessionID {
 		t.Fatalf("default list must show only the visible session, got %+v (%v)", all, err)
 	}
-	// The plain session (empty worker_id) is re-filed under 其他 when the store
-	// reopens: "no worker" is no longer a state a root session may be in, and
-	// the unassigned bucket is gone with the join reminder.
 	other, err := reopened.ListBucketSummaries(WorkerOtherID, 10, 0)
 	if err != nil || len(other) != 1 || other[0].SessionID != plain.SessionID {
 		t.Fatalf("其他 bucket should hold the re-filed session, got %+v (%v)", other, err)
@@ -495,10 +431,6 @@ func TestWorkerBucketsAndArchiveMigration(t *testing.T) {
 	}
 }
 
-// TestWorkerMembershipOnRestart checks a reopened session still knows its worker
-// (id, name, shared directory) and that its notice behaviour follows the row's
-// version — the version lives in the conversation, so a restart neither re-reads
-// nor forgets anything.
 func TestWorkerMembershipOnRestart(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "agent.db")
 	mgr, err := NewSessionManager(nil, dbPath)
@@ -519,7 +451,6 @@ func TestWorkerMembershipOnRestart(t *testing.T) {
 	if _, err := svc.WriteNote(w.WorkerID, "第一条约定"); err != nil {
 		t.Fatalf("WriteNote: %v", err)
 	}
-	// The conversation holds v1 through the join result.
 	held := []provider.Message{
 		{Role: "user", Content: "干活"},
 		{Role: "tool", Content: svc.ToolAPIFor(s.ID()).Join(w.WorkerID)},
@@ -546,7 +477,6 @@ func TestWorkerMembershipOnRestart(t *testing.T) {
 	if id, name, dir := loaded.WorkerSnapshot(); id != w.WorkerID || name != "notes" || dir != w.WorkDir {
 		t.Fatalf("reloaded membership = %q %q %q, want %q notes %q", id, name, dir, w.WorkerID, w.WorkDir)
 	}
-	// Same version → still silent after the restart; a new write → told again.
 	if n := loaded.WorkerNotice(held); n.GetText() != "" {
 		t.Fatalf("a reloaded session re-sent a consumed 公约: %q", n.GetText())
 	}
@@ -558,11 +488,6 @@ func TestWorkerMembershipOnRestart(t *testing.T) {
 	}
 }
 
-// TestStaleSessionIDErrorsNotPanics covers the cross-window case: a session was
-// deleted in another window but the sidebar still holds its id. Get returns
-// (nil, nil) for an unknown id, so every membership entry point has to turn that
-// into an error — a nil deref would kill the whole HTTP connection (found by the
-// live smoke test on :7600).
 func TestStaleSessionIDErrorsNotPanics(t *testing.T) {
 	_, svc := newTestWorkerEnv(t)
 	w, err := svc.Create("stale", "残留 id 回归", t.TempDir(), "")
@@ -584,10 +509,6 @@ func TestStaleSessionIDErrorsNotPanics(t *testing.T) {
 	}
 }
 
-// TestWorkerNameValidation: the name reaches the sidebar, the model-facing
-// worker list and every joining session's system prompt, and the agent can mint
-// names through the workers tool — so separators and control characters must be
-// refused outright, not sanitized into the row.
 func TestWorkerNameValidation(t *testing.T) {
 	_, svc := newTestWorkerEnv(t)
 	base := t.TempDir()
@@ -603,8 +524,6 @@ func TestWorkerNameValidation(t *testing.T) {
 	}
 }
 
-// TestMigrateLegacyWorkerNoteIntoRow: a database from the worker.md era must not
-// silently lose its 公约 — the file's content becomes version 1 on the next open.
 func TestMigrateLegacyWorkerNoteIntoRow(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "agent.db")
 	store, err := NewSessionStore(dbPath)
@@ -617,7 +536,6 @@ func TestMigrateLegacyWorkerNoteIntoRow(t *testing.T) {
 	if err := os.WriteFile(notePath, []byte("# 老 worker · 工作公约\n\n产物放 dist/\n"), 0644); err != nil {
 		t.Fatalf("write legacy note: %v", err)
 	}
-	// Reshape the table into its pre-version shape: note_path, no note/note_ver.
 	for _, q := range []string{
 		`DROP TABLE workers`,
 		`CREATE TABLE workers (
@@ -652,16 +570,12 @@ func TestMigrateLegacyWorkerNoteIntoRow(t *testing.T) {
 	if rec.NoteVer != 1 {
 		t.Fatalf("imported 公约 version = %d, want 1", rec.NoteVer)
 	}
-	// Idempotent: a second pass never bumps it again.
 	store.migrateWorkerNote()
 	if rec, err := store.GetWorker("w-old"); err != nil || rec == nil || rec.NoteVer != 1 {
 		t.Fatalf("re-running the migration changed the version: %+v %v", rec, err)
 	}
 }
 
-// TestWorkerNoticeOncePerRun is the requirement itself: one task, however many
-// turns it runs, is reminded exactly once — appended before the first request, so
-// it reaches the model on turn one and never repeats inside the task.
 func TestWorkerNoticeOncePerRun(t *testing.T) {
 	mgr, svc := newTestWorkerEnv(t)
 	s := mustSession(t, mgr, "once-per-run")
@@ -680,7 +594,7 @@ func TestWorkerNoticeOncePerRun(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt64(&requests, 1)
 		rw.Header().Set("Content-Type", "text/event-stream")
-		if n <= 2 { // two tool turns: one task spans three model requests
+		if n <= 2 {
 			fmt.Fprintf(rw, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_%d\",\"type\":\"function\",\"function\":{\"name\":\"probetool\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n", n)
 		} else {
 			rw.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\n"))
@@ -714,7 +628,6 @@ func TestWorkerNoticeOncePerRun(t *testing.T) {
 	if n := countWorkerNotices(res.Messages); n != 1 {
 		t.Fatalf("a %d-request task carried %d notices, want exactly 1", calls, n)
 	}
-	// It rides right behind the user message, before any reply of this task.
 	at := -1
 	for i, m := range res.Messages {
 		if IsWorkerNotice(m) {
@@ -727,18 +640,12 @@ func TestWorkerNoticeOncePerRun(t *testing.T) {
 	}
 }
 
-// TestWorkerOtherIsFixed pins the floor and the ceiling of the worker list: a
-// fresh install already carries the fixed 其他 worker (so there is always some-
-// where to put a stray session), a session can land there WITHOUT giving up its
-// own directory, it cannot be deleted, and it holds one of the MaxWorkers slots.
 func TestWorkerOtherIsFixed(t *testing.T) {
 	mgr, svc := newTestWorkerEnv(t)
 	rec, err := svc.Get(WorkerOtherID)
 	if err != nil || rec == nil {
 		t.Fatalf("the 其他 worker is missing: %+v (%v)", rec, err)
 	}
-	// A real, joinable worker row — not a built-in bucket like 已归档 — and with
-	// no shared directory of its own.
 	if rec.Name != WorkerOtherName || rec.Builtin || rec.WorkDir != "" {
 		t.Fatalf("the 其他 row is wrong: %+v", rec)
 	}
@@ -757,7 +664,6 @@ func TestWorkerOtherIsFixed(t *testing.T) {
 	if s.WorkDir() != own {
 		t.Fatalf("a session in 其他 keeps its own dir, got %q want %q", s.WorkDir(), own)
 	}
-	// The tool text says what an empty directory means instead of printing "".
 	if out := svc.ToolAPIFor(s.ID()).Join(WorkerOtherID); !strings.Contains(out, "不设共享目录") {
 		t.Fatalf("join(其他) result: %q", out)
 	}
@@ -770,9 +676,7 @@ func TestWorkerOtherIsFixed(t *testing.T) {
 	if _, err := svc.Create(WorkerOtherName, "再来一个", own, ""); err == nil {
 		t.Fatal("a second worker named 其他 was created")
 	}
-	// The cap: 其他 plus MaxWorkers-1 created ones fills the list.
 	base := mustSession(t, mgr, "base")
-	// The quota is stated before any create fails, in the list header.
 	if out := svc.ToolAPIFor(base.ID()).List(); !strings.Contains(out, fmt.Sprintf("worker 名额 1/%d", MaxWorkers)) {
 		t.Fatalf("list with room left: %q", out)
 	}
@@ -784,7 +688,6 @@ func TestWorkerOtherIsFixed(t *testing.T) {
 	if _, err := svc.Create("one-too-many", "", base.WorkDir(), ""); err == nil {
 		t.Fatalf("worker #%d should have been refused", MaxWorkers+1)
 	}
-	// Full list → the tool text says so instead of offering create as an option.
 	if out := svc.ToolAPIFor(base.ID()).List(); !strings.Contains(out, "名额已满") ||
 		!strings.Contains(out, fmt.Sprintf("worker 名额 %d/%d", MaxWorkers, MaxWorkers)) {
 		t.Fatalf("list at the cap: %q", out)
@@ -797,10 +700,6 @@ func TestWorkerOtherIsFixed(t *testing.T) {
 	}
 }
 
-// TestWorkerRename covers the label-only rename: the row, the labels each session
-// carries (they reach the model through the notice and the tool results) and the
-// refusals. The shared directory never moves — paths in files, tool results and
-// history already point at it.
 func TestWorkerRename(t *testing.T) {
 	mgr, svc := newTestWorkerEnv(t)
 	a := mustSession(t, mgr, "会话A")
@@ -824,14 +723,10 @@ func TestWorkerRename(t *testing.T) {
 	if _, name, dir := a.WorkerSnapshot(); name != "显卡推理基准" || dir != w.WorkDir {
 		t.Fatalf("the session label was not relabeled: name=%q dir=%q", name, dir)
 	}
-	// The label reaches the model through the worker notice and the tool results
-	// (never the system prompt), so a rename costs no prefix cache — and the
-	// model-facing text must show the new name.
 	info := svc.ToolAPIFor(a.ID()).WorkerInfo()
 	if !strings.Contains(info, "本会话属于 worker「显卡推理基准」") {
 		t.Fatalf("the session still reports the old label: %q", info)
 	}
-	// A session of the same worker that nobody has loaded still gets relabeled.
 	other, err := mgr.CreateSessionRecord("会话B", "build", a.WorkDir(), nil)
 	if err != nil {
 		t.Fatalf("CreateSessionRecord: %v", err)
@@ -849,8 +744,6 @@ func TestWorkerRename(t *testing.T) {
 	if _, name, _ := sess.WorkerSnapshot(); name != "推理基准 v2" {
 		t.Fatalf("the second session kept the old label: %q", name)
 	}
-	// Refusals: empty, too long, a name that is taken, the fixed 其他, a
-	// built-in bucket, and path separators (the name also names a directory).
 	if err := svc.Rename(w.WorkerID, "  "); err == nil {
 		t.Fatal("an empty name was accepted")
 	}
@@ -872,7 +765,6 @@ func TestWorkerRename(t *testing.T) {
 	if err := svc.Rename(w.WorkerID, "a/b"); err == nil {
 		t.Fatal("a name with a path separator was accepted")
 	}
-	// Renaming to the same name is a no-op, not an error.
 	if err := svc.Rename(w.WorkerID, "推理基准 v2"); err != nil {
 		t.Fatalf("renaming to the same name should be silent: %v", err)
 	}

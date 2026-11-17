@@ -12,7 +12,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// spyTool records whether Execute ever ran; its schema requires two keys.
 type spyTool struct{ calls int64 }
 
 func (s *spyTool) Name() string        { return "edit" }
@@ -33,9 +32,6 @@ func (s *spyTool) Execute(ctx context.Context, params map[string]interface{}) (*
 	return tools.NewTextResult("executed"), nil
 }
 
-// runOneToolCall drives a loop whose first turn emits args as the given raw
-// string (SSE payloads need no further escaping: keep args JSON-quotable),
-// then returns the single tool message the model received.
 func runOneToolCall(t *testing.T, args string, tool tools.Tool) (toolMsg string, execCalls int64) {
 	t.Helper()
 	var requests int64
@@ -69,12 +65,7 @@ func runOneToolCall(t *testing.T, args string, tool tools.Tool) (toolMsg string,
 	return toolMsg, atomic.LoadInt64(&tool.(*spyTool).calls)
 }
 
-// TestDispatchRejectsMissingRequiredArg: the schema-declared required keys are
-// enforced by the dispatch layer (dsh parity). The tool must not run, and the
-// model must get the same failure text shape dsh gives it.
 func TestDispatchRejectsMissingRequiredArg(t *testing.T) {
-	// {"file_path":"a","content":"x"} — the exact t2 incident shape: the key
-	// new_string spelled "content" (JSON-escaped for the SSE payload).
 	msg, calls := runOneToolCall(t, `{\"file_path\":\"a\",\"content\":\"x\"}`, &spyTool{})
 	if calls != 0 {
 		t.Fatalf("tool Execute must not run on an invalid call, got %d calls", calls)
@@ -90,10 +81,6 @@ func TestDispatchRejectsMissingRequiredArg(t *testing.T) {
 	}
 }
 
-// TestDispatchRejectsUnparseableArgs: arguments that are not JSON at all get
-// dsh's arguments-error text instead of a silent empty-parameter call. The
-// dispatch path is called directly here: whether a malformed arguments string
-// even reaches the loop is the transport parser's business, not this gate's.
 func TestDispatchRejectsUnparseableArgs(t *testing.T) {
 	loop, client := newTestLoop(t, "http://127.0.0.1:1")
 	defer client.Close()
@@ -114,8 +101,6 @@ func TestDispatchRejectsUnparseableArgs(t *testing.T) {
 	}
 }
 
-// TestDispatchCoercesAndRuns: a schema-valid call passes through untouched and
-// a coercible scalar arrives at Execute as the declared type.
 func TestDispatchCoercesAndRuns(t *testing.T) {
 	tool := &spyTool{}
 	msg, calls := runOneToolCall(t, `{\"file_path\":\"a\",\"new_string\":\"b\"}`, tool)

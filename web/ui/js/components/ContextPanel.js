@@ -1,14 +1,3 @@
-// 会话内「上下文管理」抽屉。四段:
-//   占用 —— 当前上下文占模型窗口的百分比(与底栏仪表同源);
-//   组成 —— 系统提示词/工具定义/用户/助手/工具结果 五段堆叠条;图例行可点开,
-//          就地展开详情:系统提示词按「基础 vs 注入(记忆/插件/环境/目录…)」分段,
-//          工具逐个列定义与 token 成本,消息按角色分页加载(最新一页起,可翻更早),
-//          单条再点一次看全文 —— 方便审计上下文、保住模型注意力;
-//   累计 —— 本会话总输入(=底栏芯片那个数)/输出/缓存命中/命中率/请求数;
-//   轮次审计 —— 一次压缩之前是一轮,一次 loop 是一步:每轮几步、上下文顶到多高、
-//          压缩回收了多少;点一轮可把下面的事件过滤到这一轮。
-// 数据:GET /api/sessions/{id}/context 与 /context/detail(见 actions.loadContext)。
-// 面板是聊天列里的覆盖式抽屉:点聊天头的「上下文」滑入,再点滑出。
 import { h } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import htm from "htm";
@@ -27,7 +16,6 @@ const SEC_COLOR = {
 const KIND_META = {
   compact: ["压缩", "c"], prune: ["清理", "p"], switch: ["换模型", "s"], mode: ["模式", "m"],
 };
-// 图例行 → 详情请求:五个分段都能点开;消息三段共用 part=messages 再按 role 过滤。
 const SEC_DETAIL = {
   system: ["system", ""], tools: ["tools", ""],
   user: ["messages", "user"], assistant: ["messages", "assistant"], tool: ["messages", "tool"],
@@ -45,15 +33,10 @@ export function ContextPanel() {
   const info = useStore((s) => s.ctxInfo);
   const running = useStore((s) => s.running);
   const [loading, setLoading] = useState(false);
-  // detail: {key, part, role, data, loading, err} —— 组成段就地展开的那块详情。
   const [detail, setDetail] = useState(null);
-  // msgFull: {index, data, loading, err} —— 消息预览再点开的那一条全文。
   const [msgFull, setMsgFull] = useState(null);
-  // roundSel: 点中的轮次编号(null=不过滤)。turn 是任务内循环序号(每任务重置),
-  // 和轮次对不上号 —— 事件归属哪一轮由服务端标注(ev.round),这里直接比轮号。
   const [roundSel, setRoundSel] = useState(null);
 
-  // 打开 / 切会话时拉一次;每轮任务结束(running true→false)再刷一次。
   useEffect(() => {
     if (!open || !current) return;
     setLoading(true);
@@ -64,7 +47,6 @@ export function ContextPanel() {
     if (prevRun.current && !running && open && current) loadContext();
     prevRun.current = running;
   }, [running, open, current]);
-  // 换会话把展开态清掉,详情不跨会话残留。
   useEffect(() => { setDetail(null); setMsgFull(null); setRoundSel(null); }, [current]);
 
   const openDetail = (secKey) => {
@@ -74,7 +56,6 @@ export function ContextPanel() {
     const [part, role] = spec;
     setDetail({ key: secKey, part, role, data: null, loading: true, err: "", more: false });
     setMsgFull(null);
-    // 消息三段:服务端按 role 过滤 + 分页(默认最新一页),大历史会话首屏也有界。
     const url = part === "messages"
       ? ROUTES.contextDetail(current, part, { role })
       : ROUTES.contextDetail(current, part);
@@ -85,7 +66,6 @@ export function ContextPanel() {
     });
   };
 
-  // 「加载更早」:拿当前页最老一条之前的下一页,拼进现有列表(升序)。
   const loadMoreMsgs = () => {
     const cur = detail;
     if (!cur || !cur.data || cur.more) return;
@@ -128,11 +108,9 @@ export function ContextPanel() {
   const roundsDesc = rounds.slice().reverse();
   const selRound = roundSel == null ? null : rounds.find((r) => r.round === roundSel) || null;
   const evtsAll = ((d && d.events) || []).slice().reverse();
-  // 过滤按服务端标的轮号(ev.round);没有 round 的旧数据退回不过滤。
   const evts = !selRound ? evtsAll : evtsAll.filter((ev) =>
     !ev.round || ev.round === selRound.round);
 
-  // 服务端已按 role 过滤 + 分页;这里只把升序页翻成"最新在前"。
   const detailMsgs = detail && detail.part === "messages" && detail.data
     ? (detail.data.messages || []).slice().reverse()
     : null;

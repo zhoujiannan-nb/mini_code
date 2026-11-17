@@ -16,7 +16,6 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// ---- pruneToolText ----
 
 func TestPruneToolTextShortUntouched(t *testing.T) {
 	if _, ok := pruneToolText(strings.Repeat("x", defaultPrune.Threshold), ""); ok {
@@ -45,21 +44,17 @@ func TestPruneToolTextHeadMarkerTail(t *testing.T) {
 	if n := len([]rune(pruned)); n >= len([]rune(full)) {
 		t.Fatalf("prune did not shrink: %d >= %d", n, len([]rune(full)))
 	}
-	// Idempotent: the pruned copy is now under threshold.
 	if _, ok := pruneToolText(pruned, ""); ok {
 		t.Fatal("pruned copy must not re-prune")
 	}
 }
 
 func TestPruneToolTextRunesSafe(t *testing.T) {
-	full := strings.Repeat("中", defaultPrune.Threshold+4000) // every rune 3 bytes
+	full := strings.Repeat("中", defaultPrune.Threshold+4000)
 	pruned, ok := pruneToolText(full, "")
 	if !ok || !utf8.ValidString(pruned) || strings.Contains(pruned, "\uFFFD") {
 		t.Fatalf("rune-boundary safety broken: %q", pruned)
 	}
-	// Head+Tail leaves pruneMarkerRoom slack, so the omitted count is
-	// overage + room — derive it from the config instead of hardcoding
-	// (env-tunable-safe, same formula pruneToolText uses).
 	omitted := utf8.RuneCountInString(full) - defaultPrune.Head - defaultPrune.Tail
 	want := fmt.Sprintf("middle pruned: %d chars omitted", omitted)
 	if !strings.Contains(pruned, want) {
@@ -72,8 +67,6 @@ func TestPruneToolTextSpillPathInMarker(t *testing.T) {
 	if !ok || !strings.Contains(pruned, `full output: C:\spill\s1-c1.txt`) {
 		t.Fatalf("spill path missing: %q", pruned)
 	}
-	// The marker must also carry the recovery recipe, not just the path —
-	// a bare path pushed models into blind re-read loops.
 	if !strings.Contains(pruned, "read offset/limit") {
 		t.Fatalf("marker missing recovery hint: %q", pruned)
 	}
@@ -82,15 +75,13 @@ func TestPruneToolTextSpillPathInMarker(t *testing.T) {
 func TestPruneExemptCall(t *testing.T) {
 	spill := filepath.Join(t.TempDir(), "spill")
 	under := filepath.Join(spill, "s1-call1.txt")
-	near := spill + "_old" + string(filepath.Separator) + "x.txt" // sibling prefix, not inside
+	near := spill + "_old" + string(filepath.Separator) + "x.txt"
 
-	// Listing tools: unconditional exemption (own caps + footers).
 	for _, n := range []string{"glob", "list_dir"} {
 		if !pruneExemptCall(n, "", spill) {
 			t.Errorf("%s must be exempt", n)
 		}
 	}
-	// Read tools: exemption is the spill folder, not the name.
 	for _, n := range []string{"read", "read_file"} {
 		if !pruneExemptCall(n, under, spill) {
 			t.Errorf("%s of a spill file must be exempt (loop guard)", n)
@@ -105,13 +96,11 @@ func TestPruneExemptCall(t *testing.T) {
 			t.Errorf("%s relative path must NOT be exempt (only marker-absolute re-reads qualify)", n)
 		}
 	}
-	// Everything else never exempts.
 	for _, n := range []string{"exec", "search_files", "write_file", "web_fetch"} {
 		if pruneExemptCall(n, under, spill) {
 			t.Errorf("%s must NOT be exempt", n)
 		}
 	}
-	// Missing spill dir disables the read exemption (nothing could loop).
 	if pruneExemptCall("read", under, "") {
 		t.Error("empty spillDir must disable the read exemption")
 	}
@@ -151,7 +140,6 @@ func TestSpillToolTextWritesFile(t *testing.T) {
 	}
 }
 
-// ---- loop-level prune events ----
 
 type bigEchoTool struct{}
 
@@ -165,10 +153,6 @@ func (bigEchoTool) Execute(ctx context.Context, params map[string]interface{}) (
 	return tools.NewTextResult(strings.Repeat("A", 40000)), nil
 }
 
-// TestLoopPrunesOversizedToolResult asserts the dsh-style triple:
-// full tool/result row → compaction/prune shadow event → pruned replacement
-// row (same call_id, replaces set); the model history carries the pruned copy
-// and the full text lands in the spill file.
 func TestLoopPrunesOversizedToolResult(t *testing.T) {
 	var requests int
 	handler := func(w http.ResponseWriter, r *http.Request) {
@@ -231,7 +215,6 @@ func TestLoopPrunesOversizedToolResult(t *testing.T) {
 		t.Fatal("replacement not pruned")
 	}
 
-	// Model history: the tool message carries the pruned copy.
 	var toolMsg string
 	for _, m := range res.Messages {
 		if m.Role == "tool" {
@@ -241,7 +224,6 @@ func TestLoopPrunesOversizedToolResult(t *testing.T) {
 	if !strings.Contains(toolMsg, "middle pruned") {
 		t.Fatal("history must carry the pruned copy")
 	}
-	// Spill file holds the full text.
 	spill := filepath.Join(spillRoot, "sessP-call_p1.txt")
 	b, err := os.ReadFile(spill)
 	if err != nil || len(b) != 40000 {
@@ -249,7 +231,6 @@ func TestLoopPrunesOversizedToolResult(t *testing.T) {
 	}
 }
 
-// bigReadTool answers under the exempt name read_file.
 type bigReadTool struct{}
 
 func (bigReadTool) Name() string        { return "read_file" }
@@ -262,10 +243,6 @@ func (bigReadTool) Execute(ctx context.Context, params map[string]interface{}) (
 	return tools.NewTextResult(strings.Repeat("R", 40000)), nil
 }
 
-// TestLoopExemptsReadFile pins the spill-folder half of the read exemption:
-// a huge re-read of a spill file must reach the history intact, or the
-// model's recovery step would prune again and spawn another spill file —
-// the read→spill→read loop dsh explicitly tests against.
 func TestLoopExemptsReadFile(t *testing.T) {
 	spillRoot := t.TempDir()
 	argsEsc := escapeArgs(map[string]string{"file_path": filepath.ToSlash(filepath.Join(spillRoot, "seed.txt"))})
@@ -312,10 +289,6 @@ func TestLoopExemptsReadFile(t *testing.T) {
 	}
 }
 
-// escapeArgs renders an args map as the JSON-escaped string embedded in the
-// tool_call "arguments" field of an SSE chunk (backslashes first, then the
-// quotes — otherwise an embedded Windows path decodes to broken inner JSON
-// and the tool errors out before the prune pass ever sees it).
 func escapeArgs(m map[string]string) string {
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -325,10 +298,6 @@ func escapeArgs(m map[string]string) string {
 	return strings.ReplaceAll(s, `"`, `\"`)
 }
 
-// TestLoopPrunesWholeFileRead pins the other half: a whole-file read of an
-// ordinary (non-spill) path is ordinary inflow and pays the normal cut —
-// the hole that let five 40k-char game-source reads into a session's
-// attention untouched.
 func TestLoopPrunesWholeFileRead(t *testing.T) {
 	argsEsc := escapeArgs(map[string]string{"file_path": `D:\game\js\world.js`})
 
@@ -377,17 +346,13 @@ func TestLoopPrunesWholeFileRead(t *testing.T) {
 	if !strings.Contains(toolMsg, "middle pruned") {
 		t.Fatal("history must carry the pruned copy")
 	}
-	// Full text reachable again through the spill file.
 	b, err := os.ReadFile(filepath.Join(spillRoot, "sessW-call_w1.txt"))
 	if err != nil || len(b) != 40000 {
 		t.Fatalf("spill file for the read: err=%v len=%d", err, len(b))
 	}
 }
 
-// ---- concurrent multi-session appends (sharded ledger lock) ----
 
-// TestAppendEventsConcurrentSessions: 8 sessions × 25 events appended in
-// parallel must all succeed with contiguous per-session seq 1..25.
 func TestAppendEventsConcurrentSessions(t *testing.T) {
 	store := newEventTestStore(t)
 	const sessions, per = 8, 25

@@ -18,15 +18,12 @@ import (
 	"github.com/user/mini_code/util"
 )
 
-// Service is the lite Super-Agent: the resident entry session plus the
-// schedule runner (到点把一句话投给绑定会话). Everything heavier than that
-// has been deliberately deleted — no workers, no channel, no tickets.
 type Service struct {
 	store *Store
 	mgr   *session.SessionManager
-	hub   *channels.Hub // 保留注入位:面板显示绑定会话是否忙碌
+	hub   *channels.Hub
 
-	dir string // ~/.mini_code/super(super 会话的专属工作区在其下)
+	dir string
 
 	mu        sync.Mutex
 	superID   string
@@ -54,9 +51,7 @@ func NewService(db *util.Database, mgr *session.SessionManager, hub *channels.Hu
 	return s
 }
 
-// --- lifecycle ---
 
-// Start launches the runner tick. Safe to call once per process.
 func (s *Service) Start(ctx context.Context) {
 	s.ctx = ctx
 	s.startedAt = time.Now()
@@ -64,8 +59,6 @@ func (s *Service) Start(ctx context.Context) {
 	go s.runnerLoop(ctx)
 }
 
-// runnerLoop is the resident 15s ticker: fire every due schedule. It lives
-// with the minicode process lifetime (人类要求:minicode 生命周期常驻调度)。
 func (s *Service) runnerLoop(ctx context.Context) {
 	t := time.NewTicker(15 * time.Second)
 	defer t.Stop()
@@ -92,18 +85,13 @@ func (s *Service) runDue() {
 	}
 }
 
-// --- super session (entry) ---
 
-// SuperSessionID returns the cached id of the resident super session.
 func (s *Service) SuperSessionID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.superID
 }
 
-// RelatedSessionIDs: sessions the normal sidebar must hide — just the
-// resident super session. 普通会话绑定给定时任务后仍是普通会话(侧栏照旧
-// 可见);面板里只通过抽屉"看见"它们,不夺走人类的原入口。
 func (s *Service) RelatedSessionIDs() map[string]bool {
 	out := map[string]bool{}
 	if id := s.SuperSessionID(); id != "" {
@@ -112,8 +100,6 @@ func (s *Service) RelatedSessionIDs() map[string]bool {
 	return out
 }
 
-// EnsureSuper finds or creates the one resident super session (agent_role
-// "super") and pins its title so the automatic titler never renames it.
 func (s *Service) EnsureSuper() (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -158,7 +144,6 @@ func (s *Service) EnsureSuper() (string, error) {
 	return sess.ID(), nil
 }
 
-// inject delivers one text to the super session itself.
 func (s *Service) inject(text string) {
 	id, err := s.EnsureSuper()
 	if err != nil {
@@ -169,15 +154,12 @@ func (s *Service) inject(text string) {
 	}
 }
 
-// --- schedule service ---
 
 const (
 	minEverySec = 30
 	maxEverySec = 30 * 86400
 )
 
-// CreateSchedule registers one 定时任务: every everySec, `text` is delivered
-// verbatim to the bound session ("" = the super session itself).
 func (s *Service) CreateSchedule(name, text, sessionID string, everySec int, actor string) (*Schedule, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -230,7 +212,6 @@ func (s *Service) DeleteSchedule(id, actor string) error {
 	return nil
 }
 
-// ToggleSchedule flips one switch (audited under the caller's actor).
 func (s *Service) ToggleSchedule(id, actor string) (bool, error) {
 	sc, err := s.store.GetSchedule(id)
 	if err != nil || sc == nil {
@@ -247,7 +228,6 @@ func (s *Service) ToggleSchedule(id, actor string) (bool, error) {
 	return on, nil
 }
 
-// RunScheduleNow delivers one schedule immediately (manual trigger).
 func (s *Service) RunScheduleNow(id, actor string) error {
 	sc, err := s.store.GetSchedule(id)
 	if err != nil || sc == nil {
@@ -261,9 +241,6 @@ func (s *Service) RunScheduleNow(id, actor string) error {
 	return nil
 }
 
-// deliver is the one and only action of the whole subsystem: put the
-// sentence into the bound session. A vanished session disables the schedule
-// instead of spamming the audit every tick.
 func (s *Service) deliver(sc *Schedule, trigger string) {
 	if sc.Session == "" {
 		_ = s.store.AuditInsert("runner", "schedule.fail", sc.ID, "未绑定会话,已停用", sc.ID)
@@ -285,7 +262,6 @@ func (s *Service) deliver(sc *Schedule, trigger string) {
 		fmt.Sprintf("%s · 每 %s → %s", trigger, everyHuman(sc.EverySec), truncate(sc.Text, 100)), sc.ID+","+sc.Session)
 }
 
-// --- overview ---
 
 type Overview struct {
 	SuperSessionID  string      `json:"super_session_id"`
@@ -315,14 +291,11 @@ func (s *Service) Overview() *Overview {
 	return ov
 }
 
-// --- registration hook (implements session.SuperRegistrar) ---
 
-// RegisterTools adds the lite surface to the super session: exactly one tool.
 func (s *Service) RegisterTools(reg *tools.ToolRegistry, sessionID string) {
 	reg.Register(newScheduleTool(s))
 }
 
-// --- helpers ---
 
 func truncate(s string, n int) string {
 	r := []rune(s)
@@ -347,11 +320,8 @@ func everyHuman(sec int) string {
 
 var everyUnit = map[string]int{"s": 1, "m": 60, "h": 3600, "d": 86400}
 
-// ParseEvery is the exported wrapper for the panel API ("30m" / "2h" / …).
 func ParseEvery(v string) (int, error) { return parseEvery(v) }
 
-// parseEvery accepts "90m" / "3h" / "2h30m" / "1d" / bare seconds and
-// clamps into [30s, 30d]. Empty means the 1h default.
 func parseEvery(v string) (int, error) {
 	v = strings.ToLower(strings.TrimSpace(v))
 	if v == "" {

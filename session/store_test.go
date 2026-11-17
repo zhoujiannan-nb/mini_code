@@ -9,9 +9,6 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// TestListSessionSummaries verifies the lightweight list query: root
-// sessions only (sub-agent sessions with parent_id set stay out), message
-// counts taken from the stored payloads, and no payload in the rows.
 func TestListSessionSummaries(t *testing.T) {
 	store, err := NewSessionStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
@@ -55,7 +52,6 @@ func TestListSessionSummaries(t *testing.T) {
 		t.Errorf("root B message_count = %d, want 0", counts[rootB.SessionID])
 	}
 
-	// A deleted session (and its children) disappears from the list.
 	if err := store.Delete(rootA.SessionID); err != nil {
 		t.Fatalf("delete A: %v", err)
 	}
@@ -68,9 +64,6 @@ func TestListSessionSummaries(t *testing.T) {
 	}
 }
 
-// TestSetTitle verifies that a rename is persisted and visible through both
-// the full-row read and the lightweight list query, and that it leaves
-// updated_at (and therefore the list order) untouched.
 func TestSetTitle(t *testing.T) {
 	store, err := NewSessionStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
@@ -106,9 +99,6 @@ func TestSetTitle(t *testing.T) {
 	}
 }
 
-// TestRenameSession verifies manager-level rename: validation (blank,
-// over-long, unknown session), trimming, and in-memory sync so the cached
-// record (and any later whole-row persistence) carries the new title.
 func TestRenameSession(t *testing.T) {
 	mgr := newTestManager(t)
 	sess, err := mgr.CreateSessionRecord("old", "build", "", nil)
@@ -141,9 +131,6 @@ func TestRenameSession(t *testing.T) {
 	}
 }
 
-// TestSetModelKey verifies that the per-session model key is persisted and
-// visible through both the full-row read and the lightweight list query, and
-// that switching back to the default model clears it.
 func TestSetModelKey(t *testing.T) {
 	store, err := NewSessionStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
@@ -174,7 +161,6 @@ func TestSetModelKey(t *testing.T) {
 		t.Errorf("list model_key = %+v, want gpt-4o", sums)
 	}
 
-	// Switching back to the default model clears the key.
 	if err := store.SetModelKey(rec.SessionID, ""); err != nil {
 		t.Fatalf("clear model key: %v", err)
 	}
@@ -187,12 +173,8 @@ func TestSetModelKey(t *testing.T) {
 	}
 }
 
-// TestSetModel verifies manager-level model switching: unknown model names
-// are rejected, a valid switch is persisted and synced to the in-memory
-// record, and an empty name resets to the default model.
 func TestSetModel(t *testing.T) {
 	mgr := newTestManager(t)
-	// Install a two-model registry (stateless clients; no HTTP is made).
 	mk := func(name string) *provider.ModelClient {
 		c, err := provider.NewModelClient(config.ModelConfig{
 			Provider: "vllm", BaseURL: "http://127.0.0.1:1", APIKey: "k",
@@ -234,7 +216,6 @@ func TestSetModel(t *testing.T) {
 		t.Errorf("ContextWindowFor(b) = %d, want 4096", got)
 	}
 
-	// Empty name resets to the default model.
 	if err := mgr.SetModel(id, ""); err != nil {
 		t.Fatalf("reset model: %v", err)
 	}

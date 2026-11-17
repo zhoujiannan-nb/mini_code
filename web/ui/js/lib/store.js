@@ -1,88 +1,72 @@
-// 单一 store:state + 订阅 + dispatch。所有 SSE 事件在这里归约成 state,
-// 组件只读 state —— 没有哪段界面代码会再直接改 DOM。
-//
-// 为什么 reducer 写成纯函数(applyEvent / applyResync):流式协议最容易出错的地方是
-// "累积 delta、工具配对、断线对账",把它们从渲染里剥离出来才能用单元测试钉住
-// (见 test/store.test.mjs)。DOM 只负责把 state 画出来。
 import { useState, useEffect } from "preact/hooks";
 import { newKey } from "./keys.js";
 import { makeThinkStep, makeToolStep, findOpenStep } from "./transcript.js";
 import { toolTimeoutSec } from "./tools.js";
 
-/* ---------------- 初始 state ---------------- */
 export const initialState = {
-  // ---- 会话列表 / worker ----
   sessions: [],
   sessionsLoading: false,
   sessionsError: "",
-  sessSort: readSessSort(), // 历史会话排序:recent | oldest | title(偏好存 localStorage)
+  sessSort: readSessSort(), 
   workers: [],
-  worker: "",            // 当前分桶;"" 由 workerBucketId() 映射到固定的「其他」
+  worker: "",            
   workerMenuOpen: false,
-  workerMenuAnchor: null, // {left, bottom, width} —— 下拉按视口夹紧用
+  workerMenuAnchor: null, 
   unassigned: 0,
   unassignedActive: 0,
-  // ---- 当前会话 ----
-  current: null,         // null = 新会话草稿
-  jumpTick: 0,           // selectSession 每点一次 +1:Chat 靠它跳回最新消息(含重点击当前会话)
-  mode: "full",          // full | cautious
+  current: null,         
+  jumpTick: 0,           
+  mode: "full",          
   model: "",
   models: [],
   defaultModel: "",
   defaultCtxWindow: 0,
   ctxWindow: 0,
-  port: 0,               // /api/status 的 web_port(顶栏状态胶囊)
+  port: 0,               
   workDir: "",
   thinking: "",
   reasoningEffort: "",
-  running: false,        // 本会话自己有任务在跑(只此项上锁输入框)
-  childrenActive: false, // 后台子 agent 在跑(只画停止按钮)
-  sending: false,        // 消息已发出、task_started 还没回来
+  running: false,        
+  childrenActive: false, 
+  sending: false,        
   pendingTask: null,
   recentCreated: [],
-  // ---- 消息(渲染行) ----
   rows: [],
-  live: null,            // 正在生成的那一条 {content, reasoning, startedAt}
-  pending: null,         // 等待首 token 的转圈 {startedAt}
-  run: { steps: [] },    // 当前这一轮的过程步骤(渲染为折叠条 +「正在执行」卡)
-  tokens: 0,             // 当刻上下文占用(占用% 小环的分子)
-  usageTokens: 0,        // 本会话累计 LLM 消耗(prompt+completion 全程累加,胶囊显这个)
-  cacheHit: null,        // {prompt, cached, reported}
+  live: null,            
+  pending: null,         
+  run: { steps: [] },    
+  tokens: 0,             
+  usageTokens: 0,        
+  cacheHit: null,        
   speed: 0,
   speedAccurate: false,
-  // ---- 子任务 / 后台命令 ----
   children: [],
   tasksOpen: false,
   jobs: [],
   jobsOpen: false,
-  // ---- 审批 ----
   approvals: {},
   approvalShown: null,
-  // ---- 全局 UI ----
   userAvatar: "",
   agentAvatar: "",
   toast: null,
   themeMode: "system",
-  // 发送快捷键与输入框提示语(需求⑧:tips 行移除,改到设置里配)。
-  // 值存 localStorage(纯客户端偏好),这里只是让设置面板一改、输入框即时生效。
   sendMode: readLSText("mc-send-mode", "enter") === "shift" ? "shift" : "enter",
   inputTip: readLSText("mc-input-tip", ""),
-  ctxOpen: readCtxPref(),    // 会话内「上下文」抽屉:偏好存 localStorage,默认收起
-  ctxInfo: null,             // GET /api/sessions/{id}/context 的快照(组成/累计/事件)
-  summaryOpen: readSumPref(),// 「执行摘要」抽屉(与上下文互斥,同一位置滑出)
-  trajOpen: false,           // 「轨迹」抽屉(dsh 式事件流,与上面两个同位互斥)
+  ctxOpen: readCtxPref(),    
+  ctxInfo: null,             
+  summaryOpen: readSumPref(),
+  trajOpen: false,           
   settingsOpen: false,
   settingsPage: "page-appearance",
   avatarOpen: false,
-  composerSeed: null,    // {id, text} —— 「造一个插件」把提示词塞进输入框
-  workerNote: null,      // {id, name, ver, content} —— 公约编辑弹窗
-  pluginLogs: null,      // {id, lines} —— 程序插件日志弹窗
-  // ---- Super-Agent(Router 子系统) ----
-  currentRole: "",       // 当前会话的 agent_role("super" = 渲染 Router 面板)
-  superOwned: false,     // 当前是 super 旗下 worker 会话(侧栏 Super 入口保持高亮)
-  superTab: "sources",    // sources | tickets | chat | workers | sched | chan | proc | audit(v9 默认落采集源)
-  superOv: null,         // GET /api/super/overview 的快照(仅 super 会话打开时轮询)
-  superDrawer: null,     // {id,title,rows,loading,active,error} —— Workers 页签会话侧抽屉(不离开面板)
+  composerSeed: null,    
+  workerNote: null,      
+  pluginLogs: null,      
+  currentRole: "",       
+  superOwned: false,     
+  superTab: "sources",    
+  superOv: null,         
+  superDrawer: null,     
   boot: { dir: "", legacyDir: "", themes: [], play: null, picked: "" },
   plugins: {
     list: [], dir: "", slots: [], catalog: [], catalogMsg: "", repo: "",
@@ -90,13 +74,9 @@ export const initialState = {
   },
 };
 
-/* ---------------- 上下文抽屉开关 ---------------- */
-// 通用 localStorage 文本读取(纯客户端偏好;隐私模式失败给默认值)。
 function readLSText(key, dflt) {
   try { const v = localStorage.getItem(key); return v == null ? dflt : v; } catch (e) { return dflt; }
 }
-/* ---------------- 历史会话排序 ---------------- */
-// 聊天头「排序」按钮轮转的三种顺序;偏好存 localStorage,列表渲染前在 Sidebar 应用。
 export const SESS_SORTS = ["recent", "oldest", "title"];
 export const SESS_SORT_LABEL = { recent: "最近活跃", oldest: "最早活跃", title: "按标题" };
 const LS_SESS_SORT_KEY = "mc-sess-sort";
@@ -113,8 +93,6 @@ export function cycleSessSort() {
   setState({ sessSort: next });
   return next;
 }
-// ctxOpen 是唯一带持久化偏好的 UI 开关:开不开「上下文」抽屉由用户定,
-// 存 localStorage(隐私模式读失败就默认收起)。
 const LS_CTX_KEY = "mc-ctx-open";
 const LS_SUM_KEY = "mc-summary-open";
 function readCtxPref() {
@@ -126,7 +104,6 @@ function readSumPref() {
 function writePref(key, on) {
   try { localStorage.setItem(key, on ? "1" : "0"); } catch (e) {}
 }
-// 三个抽屉在同一位置滑出,互斥:开一个必关其余两个。
 export function toggleCtxPanel() {
   const next = !state.ctxOpen;
   writePref(LS_CTX_KEY, next);
@@ -145,9 +122,6 @@ export function toggleTrajPanel() {
   return next;
 }
 
-/* ---------------- 订阅 ---------------- */
-// `state` 以 live binding 导出:少数纯模块(markdown 的 openFilePath 要读 workDir)
-// 直接 import { state } 就能看到最新值,不必为一个字段绕一层 selector。
 export let state = initialState;
 const listeners = new Set();
 
@@ -159,16 +133,11 @@ export function subscribe(fn) {
 }
 
 function notify() {
-  // 复制一份:监听者在回调里退订是常见操作(组件卸载),直接遍历 Set 会漏项。
   for (const fn of Array.from(listeners)) {
     try { fn(state); } catch (e) { console.error("store listener failed", e); }
   }
 }
 
-// setState 两种写法都是"打补丁":对象式直接叠,函数式先算出补丁再叠。
-// 函数式早先是整份替换 —— 少写一个 `...st` 就会把整个 store 换成那三五个字段,
-// 界面接下来每一次重渲都成串地炸 undefined(新会话接管就这么翻过车)。
-// 需要整份替换的语义请走 update()。
 export function setState(patch) {
   const next = typeof patch === "function" ? patch(state) : patch;
   state = Object.assign({}, state, next);
@@ -176,7 +145,6 @@ export function setState(patch) {
   return state;
 }
 
-// update:整份替换(reducer 的写法),返回假值就当没改。
 export function update(fn) {
   const next = fn(state);
   if (next) state = next;
@@ -184,13 +152,10 @@ export function update(fn) {
   return state;
 }
 
-/* ---------------- 组件订阅 hook ---------------- */
-// selector 必须返回稳定引用(数组/对象只在真正变化时换新),否则每次 notify 都会重渲。
 export function useStore(selector) {
   const [snap, setSnap] = useState(() => selector(state));
   useEffect(() => {
     const read = () => selector(state);
-    // 订阅前先补一次:render 与 effect 之间 state 可能已经变了。
     setSnap((prev) => (Object.is(prev, read()) ? prev : read()));
     const off = subscribe(() => {
       setSnap((prev) => {
@@ -199,13 +164,10 @@ export function useStore(selector) {
       });
     });
     return off;
-    // selector 只捕获 state(约定),不随渲染变化。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return snap;
 }
 
-/* ---------------- toast(全局唯一) ---------------- */
 export function toast(msg, kind) {
   setState({ toast: { id: newKey("toast"), msg: String(msg == null ? "" : msg), kind: kind || "" } });
 }
@@ -214,7 +176,6 @@ export function dismissToast(id) {
   if (state.toast && state.toast.id === id) setState({ toast: null });
 }
 
-/* ---------------- reducer ---------------- */
 export function reduce(st, action) {
   switch (action.type) {
     case "sse":
@@ -290,7 +251,6 @@ export function dispatch(action) {
   return state;
 }
 
-/* ---------------- 步骤/行的局部更新 ---------------- */
 function runOf(st) {
   return st.run && Array.isArray(st.run.steps) ? st.run : { steps: [] };
 }
@@ -299,8 +259,6 @@ function withRun(st, steps, extra) {
   return Object.assign({}, st, { run: { steps } }, extra || {});
 }
 
-// patchStep 按 key 改一步:先找当前过程,再找已经并进消息卡片的步骤
-// (工具回执可能晚于"回复正文"到达,那一步此刻住在 assistant 行里)。
 export function patchStep(st, key, patch) {
   const run = runOf(st);
   let hit = false;
@@ -346,8 +304,6 @@ function stepsWithKey(st, key, fallbackName) {
   return null;
 }
 
-// adoptOrPushToolStep:tool_start 时优先复用"参数还在生成"的那一步,
-// 否则追加一步执行中的。同一张卡转正,界面不闪。
 function startToolStep(st, msg) {
   const name = msg.tool_name || "tool";
   const args = msg.tool_args == null ? "" : String(msg.tool_args);
@@ -368,12 +324,10 @@ function startToolStep(st, msg) {
     timeout: toolTimeoutSec(args, name),
     folded: false,
   });
-  // 新步骤一到,已经跑完的那几步立刻收进折叠条(旧 liveHoldFlush 的语义)。
   const folded = run.steps.map((s) => (s.phase === "done" ? Object.assign({}, s, { folded: true, holdUntil: 0 }) : s));
   return withRun(st, folded.concat([step]));
 }
 
-// appendToolArgs:模型还在生成参数时刷新"预备步骤"。推来的是累计快照,每次整体重算。
 function upsertPrepStep(st, msg) {
   const name = msg.tool_name || "tool";
   const raw = msg.content == null ? "" : String(msg.content);
@@ -384,9 +338,7 @@ function upsertPrepStep(st, msg) {
     if (steps[i].phase === "prep" && steps[i].name === name) { prep = steps[i]; break; }
   }
   if (!prep) {
-    // 同名的已经在跑:不另开一张"预备"卡
     if (steps.some((s) => s.kind !== "think" && s.name === name && s.phase === "run")) return st;
-    // 兜底:别攒出一堆空卡
     if (steps.filter((s) => s.phase === "prep").length >= 8) return st;
     prep = makeToolStep({ name, args: "", phase: "prep", folded: false });
     steps.push(prep);
@@ -409,8 +361,6 @@ function foldRun(st) {
   return steps;
 }
 
-// pushBatchEnd:一轮任务的收尾。步骤全部折叠;有正文的回复吸收这些步骤,
-// 没正文(纯过程)时折叠条独立成一条卡。
 function finishRun(st, opts) {
   const steps = foldRun(st);
   const rows = st.rows.slice();
@@ -432,11 +382,9 @@ function finishRun(st, opts) {
   });
 }
 
-/* ---------------- SSE 事件归约 ---------------- */
 export function applyEvent(st, m) {
   if (!m || !m.kind) return st;
 
-  // 审批事件跨会话(子代理/其他会话的危险操作也要用户拍板),先于会话过滤处理。
   if (m.kind === "approval_request") {
     let p = null;
     try { p = JSON.parse(m.content); } catch (e) { return st; }
@@ -468,8 +416,6 @@ export function applyEvent(st, m) {
     });
   }
 
-  // session_created:新会话的接管。事件可能比 POST /api/messages 的响应早到,
-  // 所以按 task_id 记进 recentCreated,响应回来时还能精确匹配。
   if (m.kind === "status" && m.status === "session_created") {
     const sessions = st.sessions.slice();
     if (!sessions.some((s) => s.session_id === m.session_id)) {
@@ -483,7 +429,6 @@ export function applyEvent(st, m) {
     if (m.task_id && st.pendingTask && m.task_id === st.pendingTask) {
       patch.current = m.session_id;
       patch.pendingTask = null;
-      // sending 不清:要等 task_started 才结束发送保护期(与旧 adoptNewSession 一致)。
       patch.tokens = 0;
       patch.usageTokens = 0;
       patch.cacheHit = null;
@@ -493,7 +438,6 @@ export function applyEvent(st, m) {
     return Object.assign({}, st, patch);
   }
 
-  // 严格按会话隔离:其他会话的事件不写入当前视图,只当作列表变化信号(由 sse 层刷新)。
   if (m.session_id && m.session_id !== st.current) return st;
 
   switch (m.kind) {
@@ -510,7 +454,6 @@ export function applyEvent(st, m) {
       });
     }
     case "tool_start": {
-      // 工具调用之前已经生成的那段正文先固化成一条回复(旧 liveCommit)。
       let s = st;
       const live = s.live;
       if (live && live.content) {
@@ -563,8 +506,6 @@ export function applyEvent(st, m) {
     case "usage": {
       const patch = {
         cacheHit: { prompt: m.prompt_tokens || 0, cached: m.cached_tokens || 0, reported: !!m.cache_reported },
-        // 实时累加本次调用消耗(与后端 addUsageTotal 同一口径);打开会话/轮次
-        // 结束时的 usage_tokens 会用持久值整体校正,事件漏一拍也不会漂。
         usageTokens: (st.usageTokens || 0) + (m.prompt_tokens || 0) + (m.completion_tokens || 0),
       };
       if (m.speed > 0) {
@@ -608,25 +549,15 @@ function tail(s) {
   return str.length > 4000 ? "…" + str.slice(-3999) : str;
 }
 
-// 兼容旧调用:有些事件不带 call_id,只能按工具名配对。
 function armKey(m) {
   return m.call_id || "";
 }
 
-/* ---------------- 断线对账(resync) ----------------
-   SSE 是发后即忘:tool_end 这类一次性事件在断流窗口里丢了就永远不回,
-   「正在执行」卡会挂在界面里继续计时。对账读的是会话事件账本(tail_run),
-   是断流窗口可能藏掉的那一段:
-   - tool/result 事件按工具名配给"待返回/运行中"的步骤(每份结果只配一次);
-   - 没有回执的调用若任务还在跑:按 tool/call 的 created_at 恢复计时起点;
-   - 配不上也认不出时刻的不动它;任务其实已结束(active=false)→ 剩余步骤停表收条。
-   只填已发生的、不发明未发生的:对账本身幂等,多跑一次只是多一次 GET。 */
 function parseEvTime(s) {
   const t = Date.parse(String(s || "").replace(/(\.\d{3})\d+/, "$1"));
   return isFinite(t) ? t : 0;
 }
 
-// 收集 state 里所有还没回执的步骤(id 级),供对账配对。
 function openStepsOf(st) {
   const out = [];
   for (const s of runOf(st).steps) if (isOpen(s)) out.push(s);
@@ -642,7 +573,6 @@ function isOpen(s) {
 }
 
 export function applyResync(st, events, active) {
-  // tool/result 修订折叠:同 call_id 后到的行覆盖先到的(全文行被修剪行取代)。
   const lastByCall = {};
   events.forEach((ev, i) => {
     if (ev.type === "tool/result" && ev.payload && ev.payload.call_id) lastByCall[ev.payload.call_id] = i;
@@ -654,7 +584,7 @@ export function applyResync(st, events, active) {
     const p = ev.payload || {};
     const nm = String(p.name || "tool");
     if (ev.type === "tool/result") {
-      if (p.call_id && lastByCall[p.call_id] !== i) return; // 已被后到修订行覆盖
+      if (p.call_id && lastByCall[p.call_id] !== i) return; 
       done.push({ name: nm, text: String(p.result != null ? p.result : (p.error || "")) });
       lastRes[nm] = i;
     } else if (ev.type === "tool/call") {
@@ -681,10 +611,8 @@ export function applyResync(st, events, active) {
       break;
     }
     if (filled || !active) continue;
-    // 结果还没回来、任务确实还在跑:把这一步恢复成"正在执行"的样子。
-    // 计时起点从事件账本的 tool/call 时刻来 —— 刷新不该把已经跑了 260s 的调用归零。
     const c = lastCall[name];
-    if (!c) continue; // 账本里压根没有这次调用:无从判断,保持原样
+    if (!c) continue; 
     const pending = lastRes[name] === undefined || c.i > lastRes[name];
     if (!pending) continue;
     if (c.t) {
@@ -706,9 +634,7 @@ export function applyResync(st, events, active) {
   return s;
 }
 
-/* ---------------- 便捷 action ---------------- */
 export function applySse(m) { return dispatch({ type: "sse", msg: m }); }
 
-// 审批弹窗只是"视图":关掉它不会撤掉待审批请求,徽标上的数字还在。
 export function showApproval(id) { setState({ approvalShown: id || null }); }
 export function hideApproval() { setState({ approvalShown: null }); }

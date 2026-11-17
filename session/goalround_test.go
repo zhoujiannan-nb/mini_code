@@ -8,12 +8,7 @@ import (
 	"github.com/user/mini_code/tools"
 )
 
-// goalround_test.go — the goal-round driver (dsh goal-round-driver port):
-// round delivery, the round cap, restart restore, and the automatic-round
-// permissions update_goal promises.
 
-// createActiveGoal drives the real create_goal tool against the session's
-// store — the same path the model takes.
 func createActiveGoal(t *testing.T, s *Session, objective string, maxRounds int) {
 	t.Helper()
 	res, err := tools.NewCreateGoalTool(s.GoalState()).Execute(context.Background(), map[string]interface{}{
@@ -52,8 +47,6 @@ func TestGoalRoundDeliveredAndCounted(t *testing.T) {
 		t.Fatalf("rounds = %d, want 1", rounds)
 	}
 
-	// The driver stops driving the moment the goal is not active: finishing
-	// the goal is the model's call, and the human's word outranks the loop.
 	res, err := tools.NewUpdateGoalTool(s.GoalState()).Execute(context.Background(), func() map[string]interface{} {
 		g, _ := s.GoalState().View()
 		return map[string]interface{}{"goal_id": g.ID, "action": "complete", "revision": float64(g.Revision)}
@@ -80,7 +73,7 @@ func TestGoalRoundCapAppendsNoticeWithoutTask(t *testing.T) {
 	if n := len(rec.forSession(s.ID())); n != 2 {
 		t.Fatalf("delivered %d, want 2 rounds", n)
 	}
-	s.driveGoalRound() // cap spent
+	s.driveGoalRound()
 	if n := len(rec.forSession(s.ID())); n != 2 {
 		t.Fatalf("cap must not start a task: %d deliveries", n)
 	}
@@ -99,8 +92,6 @@ func TestGoalRoundsSurviveRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("manager: %v", err)
 	}
-	// The round must actually be delivered to count — a session with no wake
-	// path logs the intent and keeps its counter (driveGoalRound).
 	rec := &deliveryRecorder{}
 	mgr.SetDeliverHook(rec.record)
 	s, err := mgr.CreateSessionRecord("goal restart", "build", t.TempDir(), nil)
@@ -108,7 +99,7 @@ func TestGoalRoundsSurviveRestart(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 	createActiveGoal(t, s, "long work", 8)
-	s.driveGoalRound() // round 1, delivered, persisted through the store hook
+	s.driveGoalRound()
 	if n := len(rec.forSession(s.ID())); n != 1 {
 		t.Fatalf("first round not delivered: %d", n)
 	}
@@ -141,7 +132,6 @@ func TestAutoRoundPermissionsAndOrigin(t *testing.T) {
 	gs := s.GoalState()
 	createActiveGoal(t, s, "guarded goal", 8)
 
-	// A human round may retarget the goal.
 	g, _ := gs.View()
 	res, _ := tools.NewUpdateGoalTool(gs).Execute(context.Background(), map[string]interface{}{
 		"goal_id": g.ID, "action": "edit", "objective": "retargeted", "revision": float64(g.Revision),
@@ -150,7 +140,6 @@ func TestAutoRoundPermissionsAndOrigin(t *testing.T) {
 		t.Fatalf("human edit refused: %s", res.Text)
 	}
 
-	// The round-origin marker decides what the next task may do.
 	s.markGoalRoundOrigin("继续干活")
 	s.markGoalRoundOrigin(goalRoundNotice(g.ID, "guarded goal", 2, 8))
 	g, _ = gs.View()
@@ -167,7 +156,6 @@ func TestAutoRoundPermissionsAndOrigin(t *testing.T) {
 	if !strings.Contains(res.Text, "rejected before 3 automatic rounds") {
 		t.Fatalf("early blocked must fail: %s", res.Text)
 	}
-	// Three delivered rounds unlock blocked.
 	gs.BeginRound()
 	gs.BeginRound()
 	gs.BeginRound()

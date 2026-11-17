@@ -5,40 +5,18 @@ import (
 	"fmt"
 )
 
-// WorkerDispatcher is the backend of the workers tool. It is implemented by
-// session.WorkerToolAPI — the worker service bound to one session, so every
-// action that needs "my worker" resolves from the calling session. All methods
-// return plain text shown to the model (the same convention as
-// GroupChatDispatcher: no structured payloads, no error plumbing).
 type WorkerDispatcher interface {
-	// WorkerInfo renders the calling session's own worker (or the fact that it
-	// has none yet).
 	WorkerInfo() string
-	// List renders every joinable worker with its summary, workspace and size.
 	List() string
-	// Create makes a new worker under the session's own directory and joins it.
 	Create(name, summary, copyFrom string) string
-	// Join attaches the calling session to an existing worker.
 	Join(workerID string) string
-	// Leave detaches the calling session from its worker.
 	Leave() string
-	// Update rewrites the worker's summary (its "what this is for" blurb).
 	Update(summary string) string
-	// History lists the worker's sibling sessions (title, status, size).
 	History(limit int) string
-	// Messages dumps one sibling session's conversation (truncated).
 	Messages(sessionID string, chars int) string
-	// NoteRead returns the worker's current convention (with its version). The
-	// 公约 is read-only for the model: only a human writes it, through the
-	// sidebar (POST /api/workers/{id}/note).
 	NoteRead() string
 }
 
-// WorkersTool lets a session discover, create and join workers (工作大类), and
-// read or rewrite its worker's convention file. Registered for root sessions
-// only, attached or not (the schema never differs between the two states, which
-// is what keeps the tool list — and therefore the request prefix — stable while
-// a session is deciding, joining and working).
 type WorkersTool struct {
 	api WorkerDispatcher
 }
@@ -48,9 +26,6 @@ func (t *WorkersTool) SetContext(api WorkerDispatcher) { t.api = api }
 
 func (t *WorkersTool) Name() string { return "workers" }
 
-// Description is deliberately static: no live worker names or directories in
-// it, so the tool schema is byte-identical for every session (a schema that
-// varies per session would make every session pay for its own cold prefix).
 func (t *WorkersTool) Description() string {
 	return "Worker(工作大类)管理:一个 worker = 共享工作目录 + 带版本的共享公约,同 worker 的会话共用目录并自动收到公约;" +
 		"action 与参数的语义见各字段描述,公约只能由用户在界面里改写。"

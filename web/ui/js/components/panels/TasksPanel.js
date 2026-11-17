@@ -1,4 +1,3 @@
-// 子任务(子代理)面板:当前会话派出的子 agent 列表,运行中可单独停止。
 import { h } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import htm from "htm";

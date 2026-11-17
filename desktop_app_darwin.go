@@ -1,7 +1,5 @@
 //go:build darwin && desktop_darwin
 
-// This file is compiled only into the macOS desktop build (see
-// build_darwin.sh, -tags desktop_darwin). It selects the WKWebView shell.
 
 package main
 

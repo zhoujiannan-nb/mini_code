@@ -6,15 +6,10 @@ import (
 	"testing"
 )
 
-// examplesRoot is the shipped sample plugins.
 func examplesRoot() string {
 	return filepath.Join("..", "examples", "plugins")
 }
 
-// TestShippedExamplesLoad is the guard that keeps the examples honest: every
-// directory under examples/plugins must pass the same validation a downloaded
-// plugin does. An example that cannot load is worse than no example, because it
-// teaches the wrong contract.
 func TestShippedExamplesLoad(t *testing.T) {
 	root := examplesRoot()
 	entries, err := os.ReadDir(root)
@@ -33,12 +28,9 @@ func TestShippedExamplesLoad(t *testing.T) {
 			continue
 		}
 		seen++
-		// The manifest id has to match the directory: that is what the asset
-		// route and the installer both rely on.
 		if p.ID != e.Name() {
 			t.Errorf("example %q declares id %q (must match the directory)", e.Name(), p.ID)
 		}
-		// And it must classify into exactly one of the three categories.
 		switch p.Category() {
 		case CategoryProcess, CategoryTool, CategoryAppearance:
 		default:
@@ -50,8 +42,6 @@ func TestShippedExamplesLoad(t *testing.T) {
 	}
 }
 
-// TestExamplesCoverAllThreeCategories: the whole point of the sample set is one
-// working plugin per kind, so a missing category is a real gap.
 func TestExamplesCoverAllThreeCategories(t *testing.T) {
 	entries, err := os.ReadDir(examplesRoot())
 	if err != nil {
@@ -77,9 +67,6 @@ func TestExamplesCoverAllThreeCategories(t *testing.T) {
 	}
 }
 
-// TestExampleProcessDemoIsSelfContained: the process example must not depend on
-// anything outside its own directory (no absolute path to another repo, which is
-// how the old web-search example was wired and why it could never ship).
 func TestExampleProcessDemoIsSelfContained(t *testing.T) {
 	dir := filepath.Join(examplesRoot(), "process-demo")
 	p, err := LoadDir(dir, "process-demo")
@@ -102,9 +89,6 @@ func TestExampleProcessDemoIsSelfContained(t *testing.T) {
 	}
 }
 
-// TestExampleSlotHTMLReferencesDeclaredFile: the shell fragment a skin ships has
-// to be the very file the manifest declares, because the asset route only serves
-// declared fragments.
 func TestExampleSlotHTMLReferencesDeclaredFile(t *testing.T) {
 	dir := filepath.Join(examplesRoot(), "skin-aurora")
 	p, err := LoadDir(dir, "skin-aurora")
@@ -118,7 +102,6 @@ func TestExampleSlotHTMLReferencesDeclaredFile(t *testing.T) {
 	if !p.DeclaresSlotHTML(sl.HTML) {
 		t.Errorf("DeclaresSlotHTML(%q) = false", sl.HTML)
 	}
-	// An undeclared file in the same directory is not servable.
 	if p.DeclaresSlotHTML("bar2.html") {
 		t.Error("an undeclared html file must not be servable")
 	}

@@ -5,15 +5,6 @@ import (
 	"testing"
 )
 
-// A background sub-agent runs inside its OWN child session, so while it works
-// the parent session is idle: the list and the session view must keep
-// active=false (the flag the composer locks on) and report the live work in
-// children_active instead.
-//
-// Regression: both used to travel in `active`, and the front end maps active →
-// "this session has a task" → hide the send button and refuse send(). The
-// result was that dispatching a background sub-agent locked the input box, and
-// the user could not talk to the main agent again until the child finished.
 func TestBgSubagentLeavesParentActiveFalse(t *testing.T) {
 	be, srv := newTestWorkerBackend(t)
 
@@ -29,7 +20,7 @@ func TestBgSubagentLeavesParentActiveFalse(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	be.hub.RegisterExternalTask(child.ID(), cancel) // = a running background job
+	be.hub.RegisterExternalTask(child.ID(), cancel)
 
 	var list []SessionSummary
 	workerReq(t, "GET", srv.URL+"/api/sessions", "", &list)
@@ -58,9 +49,6 @@ func TestBgSubagentLeavesParentActiveFalse(t *testing.T) {
 			detail.Session.Active, detail.Session.ChildrenActive)
 	}
 
-	// Stopping from the parent's view still reaches the child (the parent has no
-	// task of its own), and the response says so instead of claiming there was
-	// nothing to stop.
 	var cr struct {
 		Canceled         bool `json:"canceled"`
 		ChildrenCanceled int  `json:"children_canceled"`
@@ -78,7 +66,6 @@ func TestBgSubagentLeavesParentActiveFalse(t *testing.T) {
 		t.Error("the background sub-agent was not cancelled by the parent's stop")
 	}
 
-	// Once the job leaves the registry, both flags go back to false.
 	be.hub.UnregisterExternalTask(child.ID())
 	workerReq(t, "GET", srv.URL+"/api/sessions", "", &list)
 	for _, s := range list {
@@ -89,9 +76,3 @@ func TestBgSubagentLeavesParentActiveFalse(t *testing.T) {
 	}
 }
 
-// The front-end half of this rule ("a background sub-agent lights the stop
-// button but must never take the composer away") used to be asserted here by
-// grepping the old paintRunButtons/syncRunning source. The UI is a Preact app
-// now, so that assertion lives where the behaviour does:
-// web/ui/test/render.test.mjs → "background sub-agent shows stop but does not
-// lock the composer" (jsdom, real click, real fetch).

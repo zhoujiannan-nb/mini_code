@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// TestIsTokenErrorClassifies verifies that context-overflow errors are
-// recognized (fail fast) while unrelated transient errors are not (so
-// they still get retried).
 func TestIsTokenErrorClassifies(t *testing.T) {
 	mc := &ModelClient{}
 
@@ -29,13 +26,11 @@ func TestIsTokenErrorClassifies(t *testing.T) {
 		}
 	}
 
-	// These must NOT be treated as token errors, otherwise transient or
-	// unrelated failures would skip retries and kill the whole run.
 	nonTokenErrors := []string{
 		"Rate limit exceeded. Please try again later.",
 		"too many requests, slow down",
 		"payload exceeds the maximum size of 10MB",
-		"context deadline exceeded", // client-side timeout
+		"context deadline exceeded",
 		"max concurrent requests exceeded",
 		"request header size exceeds limit",
 		"connection refused",
@@ -50,14 +45,6 @@ func TestIsTokenErrorClassifies(t *testing.T) {
 	}
 }
 
-// TestNonStreamOmitsStreamOptions pins the vLLM/SGLang contract that
-// stream_options is only legal alongside stream=true. The continue guard's
-// judge call is non-streaming, and providers add stream_options unconditionally
-// in ConfigureRequest, so the field symptom was
-// "API error: 400 - Stream options can only be defined when `stream=True`"
-// on every non-streaming call — which silently disabled the guard. The server
-// below rejects the illegal combination the way vLLM does, so the regression
-// fails the test instead of degrading a feature.
 func TestNonStreamOmitsStreamOptions(t *testing.T) {
 	var (
 		sawNonStream    bool
@@ -93,8 +80,6 @@ func TestNonStreamOmitsStreamOptions(t *testing.T) {
 	if !sawNonStream {
 		t.Error("server never saw the non-streaming request")
 	}
-	// Streaming must keep include_usage: it is what puts the usage block
-	// (cached_tokens included) on the final chunk.
 	if _, err := mc.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, nil); err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}

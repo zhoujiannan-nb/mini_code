@@ -9,7 +9,6 @@ import (
 	"testing"
 )
 
-// buildDeleteTree makes dir with n files spread over 10 subdirectories.
 func buildDeleteTree(t *testing.T, dir string, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
@@ -35,10 +34,6 @@ func countFiles(t *testing.T, root string) int {
 	return n
 }
 
-// TestDeleteRecursiveHonoursCancellation: a pre-cancelled context must stop
-// the recursive delete before it removes anything, and the result must say
-// the tree is PARTIALLY deleted — os.RemoveAll could not be interrupted at
-// all, which made delete_file the one tool that ignored the stop button.
 func TestDeleteRecursiveHonoursCancellation(t *testing.T) {
 	ws := t.TempDir()
 	tree := filepath.Join(ws, "tree")
@@ -48,7 +43,7 @@ func TestDeleteRecursiveHonoursCancellation(t *testing.T) {
 	buildDeleteTree(t, tree, 200)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancelled before the first entry is touched
+	cancel()
 	tool := NewDeleteFileTool(ws)
 	res, err := tool.Execute(ctx, map[string]interface{}{"path": tree, "recursive": true})
 	if err != nil {
@@ -62,8 +57,6 @@ func TestDeleteRecursiveHonoursCancellation(t *testing.T) {
 	}
 }
 
-// TestDeleteRecursiveStillCompletes: the interruptible walk must not change
-// the success path — a full recursive delete leaves nothing behind.
 func TestDeleteRecursiveStillCompletes(t *testing.T) {
 	ws := t.TempDir()
 	tree := filepath.Join(ws, "tree")

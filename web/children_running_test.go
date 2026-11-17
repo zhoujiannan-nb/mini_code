@@ -7,8 +7,6 @@ import (
 	"github.com/user/mini_code/channels"
 )
 
-// childrenRunning must read "running" for a session that itself has no live
-// task but has one in (transitively) any of its sub-agent sessions.
 func TestChildrenRunning(t *testing.T) {
 	hub := channels.NewHub(nil, "", "", 0)
 	_, cancel := context.WithCancel(context.Background())
@@ -26,7 +24,6 @@ func TestChildrenRunning(t *testing.T) {
 		t.Fatal("root without live descendants should not read as running")
 	}
 
-	// A task removed from the registry (background job finished) must not count.
 	_, cancel2 := context.WithCancel(context.Background())
 	hub.RegisterExternalTask("done-child", cancel2)
 	if !hub.ActiveTask("done-child") {

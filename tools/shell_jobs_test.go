@@ -11,13 +11,6 @@ import (
 	"github.com/user/mini_code/job"
 )
 
-// The background-command machinery, tested through the exec tool the same way
-// the persistent shell is tested: no fake process, no fake clock, real cmd.exe.
-// These are the behaviors that make promotion worth shipping — a command that
-// outlives its wait keeps running, its output is still collectable afterwards,
-// the settlement is classified as awaited when someone was waiting for it, and
-// session shell state (cwd + environment) survives having to use a second
-// cmd.exe.
 
 func startAsync(t *testing.T, tool *ExecTool, params map[string]interface{}) *AsyncCall {
 	t.Helper()
@@ -44,8 +37,6 @@ func TestExecSettledReadsLikeSync(t *testing.T) {
 	if !call.Job.Awaited() {
 		t.Fatal("a job collected by its own call must be marked awaited (or it would also announce itself)")
 	}
-	// A Go caller writes an int where JSON would give a float64; a timeout that
-	// quietly fails to parse would silently override the caller's patience.
 	if spec, _, err := tool.execSpec(map[string]interface{}{"command": "x", "timeout": 7}); err != nil || spec == nil || spec.timeout != 7 {
 		t.Fatalf("an int timeout must be honored: %+v (err %v)", spec, err)
 	}
@@ -91,9 +82,6 @@ func TestExecRunInBackgroundIsNotAwaited(t *testing.T) {
 	if !strings.Contains(call.Note, "started background job") {
 		t.Fatalf("expected a start note, got %q", call.Note)
 	}
-	// Poll the state instead of waiting on the job: a blocked Wait is itself
-	// somebody collecting the result, which would suppress the very notice this
-	// path exists to deliver.
 	deadline := time.Now().Add(30 * time.Second)
 	for call.Job.Status() == job.StatusRunning && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)
@@ -101,16 +89,11 @@ func TestExecRunInBackgroundIsNotAwaited(t *testing.T) {
 	if s := call.Job.Status(); s != job.StatusCompleted {
 		t.Fatalf("background job did not complete: %s", s)
 	}
-	// The point of the flag: nobody was watching, so the settlement has to
-	// announce itself. Awaited() is what the session's notice hook asks.
 	if call.Job.Awaited() {
 		t.Fatal("an unwatched job must not be marked awaited, or its notice is suppressed")
 	}
 }
 
-// TestExecStateCarriesToNewShell is the pool's promise: the session's cwd and
-// environment belong to the pool, so a command that has to use a different
-// cmd.exe still finds the shell state it expects.
 func TestExecStateCarriesToNewShell(t *testing.T) {
 	dir := t.TempDir()
 	tool := newShellTool(t, dir, 30)
@@ -118,9 +101,6 @@ func TestExecStateCarriesToNewShell(t *testing.T) {
 		t.Fatalf("setup failed: %s", out)
 	}
 
-	// Park a background command on the warm shell so the next call cannot have
-	// it, and wait until the pool really has handed one out. Polling the pool is
-	// honest here: the test would otherwise pass without ever exercising replay.
 	hold := startAsync(t, tool, map[string]interface{}{
 		"command":           "ping -n 6 127.0.0.1 >nul",
 		"run_in_background": true,
@@ -203,7 +183,6 @@ func TestJobToolsReadAndKill(t *testing.T) {
 	}
 }
 
-// filepathTail keeps the assertion independent of how long the temp path is.
 func filepathTail(dir string) string {
 	d := strings.ReplaceAll(dir, "/", `\`)
 	if i := strings.LastIndexByte(d, '\\'); i >= 0 {
@@ -212,21 +191,17 @@ func filepathTail(dir string) string {
 	return d
 }
 
-// TestForegroundPatienceCap pins the one number the whole point of promotion
-// depends on: the model picks the timeout, and a picked timeout must never
-// become a long blocking wait again. What was asked for is honoured when it is
-// short; anything longer is capped.
 func TestForegroundPatienceCap(t *testing.T) {
 	for _, tc := range []struct {
 		asked int
 		want  time.Duration
 	}{
-		{5, 5 * time.Second},     // a short ask stays a short wait
-		{110, 110 * time.Second}, // exactly at the cap
-		{120, fgPatienceCap},     // the default: capped
-		{1200, fgPatienceCap},    // the shape that cost 539s before the cap
-		{0, fgPatienceCap},       // unset falls back to the cap
-		{-1, fgPatienceCap},      // nonsense likewise
+		{5, 5 * time.Second},
+		{110, 110 * time.Second},
+		{120, fgPatienceCap},
+		{1200, fgPatienceCap},
+		{0, fgPatienceCap},
+		{-1, fgPatienceCap},
 	} {
 		if got := fgPatience(tc.asked); got != tc.want {
 			t.Errorf("fgPatience(%d) = %v, want %v", tc.asked, got, tc.want)
@@ -237,17 +212,11 @@ func TestForegroundPatienceCap(t *testing.T) {
 	}
 }
 
-// TestStartAsyncRefusedIsNotACrash is the regression for a panic that only the
-// bench could surface: execSpec answers a refused call with (nil spec, refusal
-// text, nil error), and StartAsync read spec.command before looking at that
-// text. Every guarded command (del /q, rmdir /s, a destructive git checkout)
-// therefore arrived as "tool exec crashed (nil pointer dereference)" instead of
-// the refusal the model is owed — eight of them in one six-task run.
 func TestStartAsyncRefusedIsNotACrash(t *testing.T) {
 	tool := NewExecTool(30, t.TempDir())
 	cases := []struct {
 		command string
-		want    string // what the model must be told
+		want    string
 	}{
 		{"rmdir /s /q C:\\somewhere", "blocked"},
 		{"del /q keep.this", "blocked"},
@@ -264,7 +233,6 @@ func TestStartAsyncRefusedIsNotACrash(t *testing.T) {
 		if !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("StartAsync(%q) error = %q, want it to carry %q", tc.command[:30], err.Error(), tc.want)
 		}
-		// The fall-through the loop performs on an error must reach the same text.
 		res, serr := tool.Execute(context.Background(), map[string]interface{}{"command": tc.command})
 		if serr != nil || res == nil {
 			t.Fatalf("Execute(%q): err=%v res=%v", tc.command[:30], serr, res)

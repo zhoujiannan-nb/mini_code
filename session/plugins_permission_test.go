@@ -11,13 +11,9 @@ import (
 	"github.com/user/mini_code/provider"
 )
 
-// TestPluginToolReachesTheModel is the bug this test was written for: the
-// compiled role permission table only lists core tools, so a naive filter
-// dropped every plugin tool from the schema list and the model answered "I don't
-// have web_search".
 func TestPluginToolReachesTheModel(t *testing.T) {
 	home := pluginHome(t)
-	cfg := agent.BuildAgentConfig() // the real, compiled role table
+	cfg := agent.BuildAgentConfig()
 
 	before := NewPromptBuilder(cfg, "C:\\work")
 	core := names(before.GetFilteredDefinitions(cfg))
@@ -34,7 +30,6 @@ func TestPluginToolReachesTheModel(t *testing.T) {
 	if !contains(got, "web_search") {
 		t.Fatalf("web_search was filtered out of the schema list; got %v", got)
 	}
-	// The core prefix is unchanged, and the plugin tool is last.
 	if len(got) != len(core)+1 {
 		t.Fatalf("got %d definitions, want core(%d)+1: %v", len(got), len(core), got)
 	}
@@ -48,8 +43,6 @@ func TestPluginToolReachesTheModel(t *testing.T) {
 	}
 }
 
-// TestExplicitDenyStillBlocksPluginTool: a role that names the plugin tool with
-// "deny" must win over the "absent means allow" rule.
 func TestExplicitDenyStillBlocksPluginTool(t *testing.T) {
 	home := pluginHome(t)
 	writeTestPlugin(t, home, "web", `{"id":"web","tools":[
@@ -63,8 +56,6 @@ func TestExplicitDenyStillBlocksPluginTool(t *testing.T) {
 	}
 }
 
-// TestFilteredDefinitionsStillDropsUnpermittedCoreTool keeps the pre-existing
-// guarantee for core tools: the role filter is not loosened for them.
 func TestFilteredDefinitionsStillDropsUnpermittedCoreTool(t *testing.T) {
 	pluginHome(t)
 	cfg := agent.BuildAgentConfig()
@@ -75,8 +66,6 @@ func TestFilteredDefinitionsStillDropsUnpermittedCoreTool(t *testing.T) {
 	}
 }
 
-// TestGateDeniesUnpermittedCoreTool: the runtime gate still denies a core tool
-// the role does not allow.
 func TestGateDeniesUnpermittedCoreTool(t *testing.T) {
 	pluginHome(t)
 	mgr := newTestManager(t)
@@ -96,8 +85,6 @@ func TestGateDeniesUnpermittedCoreTool(t *testing.T) {
 	}
 }
 
-// TestGateAllowsPluginToolInFullMode: in full mode a plugin tool runs (the mode
-// is the only thing that can ask for approval, and full mode asks nothing).
 func TestGateAllowsPluginToolInFullMode(t *testing.T) {
 	home := pluginHome(t)
 	writeTestPlugin(t, home, "web", `{"id":"web","tools":[
@@ -114,9 +101,6 @@ func TestGateAllowsPluginToolInFullMode(t *testing.T) {
 	}
 }
 
-// TestGateAsksForPluginToolInCautiousMode: a plugin runs an external program the
-// host knows nothing about, so cautious mode must ask the user first — the
-// plugin layer only ever makes the gate stricter.
 func TestGateAsksForPluginToolInCautiousMode(t *testing.T) {
 	home := pluginHome(t)
 	writeTestPlugin(t, home, "web", `{"id":"web","tools":[
@@ -144,7 +128,6 @@ func TestGateAsksForPluginToolInCautiousMode(t *testing.T) {
 		t.Fatalf("approval carried tool %q", ap.last.ToolName)
 	}
 
-	// Denied once the approver says no.
 	ap.approved = false
 	ap.reason = "user denied"
 	allow, msg = gate(context.Background(), "web_search", map[string]interface{}{"query": "x"})
@@ -156,7 +139,6 @@ func TestGateAsksForPluginToolInCautiousMode(t *testing.T) {
 	}
 }
 
-// TestIsPluginTool verifies the helper the gate uses.
 func TestIsPluginTool(t *testing.T) {
 	home := pluginHome(t)
 	writeTestPlugin(t, home, "web", `{"id":"web","tools":[
@@ -167,7 +149,6 @@ func TestIsPluginTool(t *testing.T) {
 	if isPluginTool("exec") {
 		t.Fatal("isPluginTool(exec) = true; a core tool must never be treated as a plugin")
 	}
-	// A disabled plugin's tool is not installed.
 	dir := filepath.Join(home, ".mini_code", "plugins", "off")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

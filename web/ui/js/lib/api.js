@@ -1,8 +1,3 @@
-// 所有 HTTP 路径只在这里出现一次:组件和 actions 一律走这几个函数。
-// 路径与 web/web.go 的路由表逐条对齐(见各函数注释),改后端时只有这一个文件要跟着改。
-//
-// api():成功返回 JSON;失败抛 Error(优先用后端 {"error": ...} 的文案)。
-// 注意用 globalThis.fetch 而不是模块顶层的 fetch 引用:render 测试会替换掉它。
 export async function api(path, opts) {
   const r = await fetch(path, opts);
   if (!r.ok) {
@@ -36,33 +31,6 @@ export function del(path) {
   return api(path, { method: "DELETE" });
 }
 
-// ---- 路由清单(只读文档,供人核对) ----
-// GET    /api/status
-// GET    /api/sessions?worker=<id>          GET /api/sessions/{id}
-// DELETE /api/sessions/{id}                 GET /api/sessions/{id}/events?tail_run=1
-// POST   /api/sessions/{id}/mode|model|reasoning|rename|cancel
-// GET    /api/sessions/{id}/context         (组成/累计用量/轮次步/上下文事件)
-// GET    /api/sessions/{id}/context/detail?part=system|tools|messages[&i=N]
-// GET    /api/sessions/{id}/children        GET /api/sessions/{id}/jobs
-// GET    /api/sessions/{id}/jobs/output?job=<id>
-// POST   /api/sessions/{id}/jobs/kill|jobs/clear
-// GET    /api/workers                       POST /api/workers
-// POST   /api/workers/{id}/summary|rename   DELETE /api/workers/{id}
-// GET    /api/workers/{id}/note             POST /api/workers/{id}/note
-// POST   /api/messages                      GET  /api/events (SSE)
-// GET/PUT /api/config                       GET  /api/avatar|agent-avatar
-// POST   /api/avatar|agent-avatar
-// POST   /api/llm/models|probe
-// GET    /api/fs/search?q=&limit=           POST /api/fs/open
-// GET    /api/approvals                     POST /api/approvals/{id}/decision
-// GET    /api/plugins                       POST /api/plugins/{id}/toggle
-// DELETE /api/plugins/{id}                  POST /api/plugins/{id}/process
-// GET    /api/plugins/{id}/logs?n=          GET  /api/plugins/catalog
-// POST   /api/plugins/install               GET  /api/plugins/prompt?kind=
-// GET    /api/bootanim                      PUT  /api/bootanim
-// POST   /api/super/ensure                  GET  /api/super/overview
-// POST   /api/super/config                  POST /api/super/workers/config
-// POST   /api/super/schedules/toggle|run    POST /api/super/channel/flush
 export const ROUTES = Object.freeze({
   status: "/api/status",
   sessions: (worker) => "/api/sessions?worker=" + encodeURIComponent(worker || ""),
@@ -87,7 +55,6 @@ export const ROUTES = Object.freeze({
   model: (id) => "/api/sessions/" + encodeURIComponent(id) + "/model",
   reasoning: (id) => "/api/sessions/" + encodeURIComponent(id) + "/reasoning",
   context: (id) => "/api/sessions/" + encodeURIComponent(id) + "/context",
-  // 轨迹:?before=<seq> 翻更早一页(服务端默认给最新一页),limit 封顶 200。
   trajectory: (id, opts) => {
     let q = "/api/sessions/" + encodeURIComponent(id) + "/trajectory";
     const o = opts || {};
@@ -95,8 +62,6 @@ export const ROUTES = Object.freeze({
     if (o.limit) q += (q.includes("?") ? "&" : "?") + "limit=" + encodeURIComponent(o.limit);
     return q;
   },
-  // opts: {i, role, before, limit} —— i=单条全文;role=角色过滤;
-  // before=只取 index<before 的更早一页;limit=每页条数(后端默认 50、封顶 200)。
   contextDetail: (id, part, opts) => {
     let q = "/api/sessions/" + encodeURIComponent(id) + "/context/detail?part=" + encodeURIComponent(part);
     const o = opts || {};
@@ -121,10 +86,8 @@ export const ROUTES = Object.freeze({
   pluginInstall: "/api/plugins/install",
   pluginPrompt: (kind) => "/api/plugins/prompt?kind=" + encodeURIComponent(kind),
   bootanim: "/api/bootanim",
-  // Super-Agent(Router 子系统):overview 一次给全页签数据(v9 含采集源/工单)。
   superEnsure: "/api/super/ensure",
   superOverview: "/api/super/overview",
-  // v10 定时任务版:整个 super 只剩 schedules
   superSchedCreate: "/api/super/schedules/create",
   superSchedDelete: "/api/super/schedules/delete",
   superSchedToggle: "/api/super/schedules/toggle",

@@ -1,9 +1,3 @@
-// 顶栏 + 聊天头(v3.1:按用户反馈回摆)。
-//   顶栏(左→右):模型芯片(绿点 + 模型名 + 窗口大小徽标)、「轨迹」开关;
-//         右侧只在有审批时出现徽标。深度思考不再有顶栏入口——输入区的思考
-//         胶囊 / 双击模型按钮就是它;「改进」已按需求下线。
-//   聊天头:标题做成下划线 tab;新会话副标「发送后自动保存会话 ⓘ」;
-//         右侧四颗:子代理 / 后台 / 摘要 / 上下文。
 import { h } from "preact";
 import htm from "htm";
 
@@ -15,15 +9,11 @@ import { JobsPanel } from "./panels/JobsPanel.js";
 
 const html = htm.bind(h);
 
-// v3.8:桌面(frameless)下顶栏整条隐藏,模型芯片组并进聊天头(标题不再显示);
-// web 模式布局不变。frameless 类由 titlebar.js 在 App 渲染前加好(main.js 顺序)。
 export function isFramelessUi() {
   return typeof document !== "undefined"
     && document.documentElement.classList.contains("frameless");
 }
 
-/* ---------------- 模型芯片组:模型 + 轨迹 + 审批徽标 ----------------
-   顶栏(web)与聊天头(frameless)共用这一份,DOM id 一致。 */
 export function ModelChips() {
   const approvals = useStore((s) => s.approvals);
   const model = useStore((s) => s.model);
@@ -62,10 +52,7 @@ export function ModelChips() {
     }}>🔔 审批 <span id="approval-count">${count}</span></button>`;
 }
 
-/* ---------------- 顶栏 ---------------- */
 export function Topbar() {
-  // frameless 下整条不渲染(不是 display:none —— 顶栏和聊天头共用芯片组 DOM,
-  // 两份 id 重复会让 getElementById/querySelector 命中隐藏的那份)。
   if (isFramelessUi()) return null;
   return html`<header>
     <${ModelChips} />
@@ -73,7 +60,6 @@ export function Topbar() {
   </header>`;
 }
 
-/* ---------------- 聊天头 ---------------- */
 export function ChatHead() {
   const current = useStore((s) => s.current);
   const sessions = useStore((s) => s.sessions);

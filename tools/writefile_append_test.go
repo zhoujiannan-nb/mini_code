@@ -31,7 +31,6 @@ func readFileRaw(t *testing.T, fp string) string {
 	return string(b)
 }
 
-// TestWriteFileAppendCreates: append=true on a missing file must create it.
 func TestWriteFileAppendCreates(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "new.txt")
@@ -44,8 +43,6 @@ func TestWriteFileAppendCreates(t *testing.T) {
 	}
 }
 
-// TestWriteFileAppendAppends: append=true must add to the end, keeping the
-// existing content byte-for-byte.
 func TestWriteFileAppendAppends(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "data.txt")
@@ -61,7 +58,6 @@ func TestWriteFileAppendAppends(t *testing.T) {
 	}
 }
 
-// TestWriteFileAppendMultiple: several appends must arrive in order.
 func TestWriteFileAppendMultiple(t *testing.T) {
 	dir := t.TempDir()
 	runWrite(t, dir, "log.txt", "line1\n", map[string]interface{}{"append": true})
@@ -72,8 +68,6 @@ func TestWriteFileAppendMultiple(t *testing.T) {
 	}
 }
 
-// TestWriteFileOverwriteUnchanged: without append, a second write must still
-// fully overwrite (regression guard for the default path).
 func TestWriteFileOverwriteUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "ow.txt")
@@ -87,8 +81,6 @@ func TestWriteFileOverwriteUnchanged(t *testing.T) {
 	}
 }
 
-// TestWriteFileAppendCreatesParentDirs: append must create missing parent
-// directories, like the overwrite path does.
 func TestWriteFileAppendCreatesParentDirs(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "a", "b", "c.txt")
@@ -99,8 +91,6 @@ func TestWriteFileAppendCreatesParentDirs(t *testing.T) {
 	}
 }
 
-// TestWriteFileAppendNoTrailingSplit: appending a chunk that does not end
-// with a newline must not insert one (byte-exact concatenation).
 func TestWriteFileAppendNoTrailingSplit(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "raw.txt")
@@ -111,10 +101,6 @@ func TestWriteFileAppendNoTrailingSplit(t *testing.T) {
 	}
 }
 
-// TestWriteFileOverwriteExistingReportsNote: overwriting an existing
-// non-empty file says "Updated file" (dsh distinguishes create from update;
-// the previous content is not echoed to the model — that diff belongs to
-// the UI, and dumping it cost a full re-read of the old file per write).
 func TestWriteFileOverwriteExistingReportsNote(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "ow2.txt")
@@ -125,14 +111,11 @@ func TestWriteFileOverwriteExistingReportsNote(t *testing.T) {
 	if !strings.Contains(out, "Updated file") {
 		t.Fatalf("expected the update envelope, got: %s", out)
 	}
-	// The write itself must have happened (content replaced).
 	if got := readFileRaw(t, fp); got != "fresh\n" {
 		t.Fatalf("file content = %q, want %q", got, "fresh\n")
 	}
 }
 
-// TestWriteFileOverwriteNewFileNoNote: writing a brand-new file must NOT
-// carry the overwrite note (there was nothing to clobber).
 func TestWriteFileOverwriteNewFileNoNote(t *testing.T) {
 	dir := t.TempDir()
 	out := runWrite(t, dir, "brandnew.txt", "hello\n", nil)
@@ -141,8 +124,6 @@ func TestWriteFileOverwriteNewFileNoNote(t *testing.T) {
 	}
 }
 
-// TestWriteFileOverwriteEmptyFileNoNote: overwriting an existing but EMPTY
-// file must not carry the note (no content was lost).
 func TestWriteFileOverwriteEmptyFileNoNote(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "empty.txt")
@@ -155,9 +136,6 @@ func TestWriteFileOverwriteEmptyFileNoNote(t *testing.T) {
 	}
 }
 
-// TestCountTextLines: line counting must match read_file semantics (trailing
-// newline does not create a phantom line; a final line without a newline
-// still counts).
 func TestCountTextLines(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -178,9 +156,6 @@ func TestCountTextLines(t *testing.T) {
 	}
 }
 
-// TestWriteFileAppendSchema: the exposed schema is dsh's verbatim "write"
-// surface, which has no append flag — the capability stays as an mc extension
-// (see the append behaviour tests above) but is deliberately not advertised.
 func TestWriteFileAppendSchema(t *testing.T) {
 	wt := NewWriteFileTool(t.TempDir())
 	props, ok := wt.Parameters()["properties"].(map[string]interface{})

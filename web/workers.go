@@ -8,15 +8,7 @@ import (
 	"github.com/user/mini_code/session"
 )
 
-// --- workers (工作大类) ---
-//
-// A worker is one line of work: a shared workspace directory plus a shared
-// convention (公约) stored in the worker row with a version. These handlers back
-// the sidebar's worker switcher and the convention editor. See
-// session.WorkerService for the rules (a version bump is what tells every
-// session of the worker on its next task).
 
-// workerService returns the wired worker service (nil = not wired).
 func (s *server) workerService() *session.WorkerService {
 	m := s.be.Mgr()
 	if m == nil {
@@ -25,8 +17,6 @@ func (s *server) workerService() *session.WorkerService {
 	return m.Workers()
 }
 
-// workerView is one worker bucket as the sidebar needs it. The 公约 body itself is
-// left out (it can be 6000 chars); the editor fetches it per worker.
 type workerView struct {
 	WorkerID string `json:"worker_id"`
 	Name     string `json:"name"`
@@ -34,20 +24,13 @@ type workerView struct {
 	WorkDir  string `json:"work_dir"`
 	NoteVer  int    `json:"note_ver"`
 	Builtin  bool   `json:"builtin"`
-	// Reserved marks the fixed 其他 worker: joinable and always present, so the
-	// sidebar must not offer to delete it.
 	Reserved  bool   `json:"reserved"`
 	Sessions  int    `json:"sessions"`
-	// Active is how many of this worker's sessions have a live task right now.
-	// The switcher turns it into a status dot: >0 = 还有在跑, 0 且 Sessions>0 = 都跑完了.
 	Active    int    `json:"active"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 }
 
-// handleWorkersList returns the buckets plus the count of unassigned sessions.
-// The switcher builds its own list out of this ("全部" is a client-side view,
-// "未分配" is the unassigned count).
 func (s *server) handleWorkersList(w http.ResponseWriter, r *http.Request) {
 	wsvc := s.workerService()
 	if wsvc == nil {
@@ -60,9 +43,6 @@ func (s *server) handleWorkersList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]workerView, 0, len(workers))
-	// Busy-ness per bucket, one scan for all of them: the switcher shows a status
-	// dot (yellow while anything in the worker still runs, green when nothing
-	// does), and it has to agree with the dot on the session rows.
 	tally := s.activeByBucket()
 	for _, rec := range workers {
 		out = append(out, workerView{
@@ -79,8 +59,6 @@ func (s *server) handleWorkersList(w http.ResponseWriter, r *http.Request) {
 			UpdatedAt: rec.UpdatedAt,
 		})
 	}
-	// The unassigned count comes from the same lightweight bucket query the
-	// list uses, so the two can never disagree.
 	unassigned, err := s.be.Mgr().GetStore().ListBucketSummaries(session.WorkerUnassignedID, 1000, 0)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -88,18 +66,11 @@ func (s *server) handleWorkersList(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"workers": out,
-		// Same dot for the 未分配 bucket (its sessions carry worker_id "").
 		"unassigned":        len(unassigned),
 		"unassigned_active": tally[session.WorkerUnassignedID],
 	})
 }
 
-// activeByBucket counts, per worker bucket, the visible root sessions that are
-// running in this process right now. It follows exactly the rule the session
-// list uses (a live task on the session itself or on any sub-agent descendant),
-// so a worker's dot and the dot on its rows can never disagree. One scan of the
-// visible root sessions covers every bucket; failures degrade to "nothing is
-// running" rather than failing the whole switcher.
 func (s *server) activeByBucket() map[string]int {
 	store := s.be.Mgr().GetStore()
 	rows, err := store.ListBucketSummaries(session.WorkerAllID, 1000, 0)
@@ -118,11 +89,6 @@ func (s *server) activeByBucket() map[string]int {
 	return out
 }
 
-// handleWorkersCreate makes a worker: name/summary, an optional base directory
-// (default: the server's own working directory), an optional copy_from to seed
-// the shared workspace from an existing folder or file. When session_id is
-// given the new session joins immediately (that is the "会话里让 agent 建" path
-// and the "新建会话前先建 worker" path alike).
 func (s *server) handleWorkersCreate(w http.ResponseWriter, r *http.Request) {
 	wsvc := s.workerService()
 	if wsvc == nil {
@@ -168,8 +134,6 @@ func (s *server) handleWorkersCreate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleWorkersSummary rewrites a worker's summary (the blurb other sessions
-// read when they decide where they belong).
 func (s *server) handleWorkersSummary(w http.ResponseWriter, r *http.Request) {
 	wsvc := s.workerService()
 	if wsvc == nil {
@@ -191,10 +155,6 @@ func (s *server) handleWorkersSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"worker_id": id, "summary": strings.TrimSpace(req.Summary)})
 }
 
-// handleWorkersRename relabels a worker. Only the label moves: the shared
-// directory keeps its name (every session, tool result and file name already
-// references that path), and the worker-name label each session carries in its
-// own metadata is rewritten in the same call — see session.WorkerService.Rename.
 func (s *server) handleWorkersRename(w http.ResponseWriter, r *http.Request) {
 	wsvc := s.workerService()
 	if wsvc == nil {
@@ -217,8 +177,6 @@ func (s *server) handleWorkersRename(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"worker_id": id, "name": name})
 }
 
-// handleWorkersDelete deletes a worker together with every session in it (the
-// workspace directory on disk is left alone).
 func (s *server) handleWorkersDelete(w http.ResponseWriter, r *http.Request) {
 	wsvc := s.workerService()
 	if wsvc == nil {
@@ -227,8 +185,6 @@ func (s *server) handleWorkersDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if id == session.WorkerArchivedID {
-		// Deleting the bucket is fine, but the sessions in it are the old
-		// archive: let the user do that deliberately, session by session.
 		writeErr(w, http.StatusBadRequest, "已归档是内置分桶,不能整体删除;请逐个恢复或删除里面的会话")
 		return
 	}
@@ -240,7 +196,6 @@ func (s *server) handleWorkersDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"worker_id": id, "deleted_sessions": n})
 }
 
-// handleWorkersNoteGet returns the worker's current 公约 and its version.
 func (s *server) handleWorkersNoteGet(w http.ResponseWriter, r *http.Request) {
 	wsvc := s.workerService()
 	if wsvc == nil {
@@ -265,10 +220,6 @@ func (s *server) handleWorkersNoteGet(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleWorkersNoteWrite saves a new 公约 and bumps its version. A human editing
-// it through the sidebar IS the authorization (unlike an agent's write, which the
-// runtime gate always confirms). Every session of this worker picks the new text
-// up on its next task, as an appended message.
 func (s *server) handleWorkersNoteWrite(w http.ResponseWriter, r *http.Request) {
 	wsvc := s.workerService()
 	if wsvc == nil {
@@ -291,9 +242,3 @@ func (s *server) handleWorkersNoteWrite(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"worker_id": id, "ver": ver, "status": "saved"})
 }
 
-// (removed) handleSessionsMoveWorker: "移动到 Worker" is gone from the UI and the
-// API. Worker membership is fixed when the session is born, which keeps the
-// worker's shared directory and the session's working directory (and the
-// prompt's Working Directory block) pointed at one folder for the whole life of
-// the session. The service-level Move stays for the birth attach and the
-// legacy archive alias.

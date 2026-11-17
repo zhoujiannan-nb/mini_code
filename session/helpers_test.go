@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// deliveryRecorder collects idle-session deliveries made through the manager
-// deliver hook ("sessionID\ttext" entries).
 type deliveryRecorder struct {
 	mu sync.Mutex
 	dr []string
@@ -31,8 +29,6 @@ func (r *deliveryRecorder) forSession(id string) []string {
 	return out
 }
 
-// newDeliveryEnv builds a session manager over one temp DB with the deliver
-// hook recorded instead of dispatched to a hub.
 func newDeliveryEnv(t *testing.T) (*SessionManager, *deliveryRecorder) {
 	t.Helper()
 	dbPath := t.TempDir() + "/agent.db"
@@ -46,7 +42,6 @@ func newDeliveryEnv(t *testing.T) (*SessionManager, *deliveryRecorder) {
 	return mgr, rec
 }
 
-// mustSession creates a root session in its own temp directory.
 func mustSession(t *testing.T, mgr *SessionManager, title string) *Session {
 	t.Helper()
 	s, err := mgr.CreateSessionRecord(title, "build", t.TempDir(), nil)

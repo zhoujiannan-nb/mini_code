@@ -1,10 +1,3 @@
-// 会话「轨迹」视图 —— dsh 式执行轨迹:整块覆盖聊天区(与聊天互相盖,像同一
-// 舞台的两块幕布):顶部一条时间线(一步一块,按类型着色、宽度 ∝ 耗时),
-// 下面逐步事件流:任务输入 / 助手回复 / 工具调用(参数摘要 → 结果摘要)/
-// 压缩 / 清理,可点行展开全貌。过滤芯片 + 搜索都是客户端的
-// (数据一页 ≤300 行,翻「更早」是服务端分页)。
-// 数据:GET /api/sessions/{id}/trajectory(见 web/context_api.go 同包 handler)。
-// 开轨迹会收起「上下文」「摘要」抽屉(见 store.toggleTrajPanel)。
 import { h } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import htm from "htm";
@@ -15,7 +8,6 @@ import { fmtDurMs, fmtK2 } from "../lib/format.js";
 
 const html = htm.bind(h);
 
-// KIND 元数据:标签/时间线色/过滤芯片归类。
 const KIND = {
   task: { tag: "任务", color: "#f59e0b" },
   assistant: { tag: "助手", color: "#8b5cf6" },
@@ -38,16 +30,15 @@ export function TrajPanel() {
   const open = useStore((s) => s.trajOpen);
   const current = useStore((s) => s.current);
   const running = useStore((s) => s.running);
-  const [data, setData] = useState(null);   // {rows, has_more, steps, rounds}
+  const [data, setData] = useState(null);   
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [more, setMore] = useState(false);
   const [filter, setFilter] = useState("");
   const [query, setQuery] = useState("");
-  const [sel, setSel] = useState(null);     // 展开的 seq
+  const [sel, setSel] = useState(null);     
   const listRef = useRef(null);
 
-  // 打开 / 切会话拉最新一页;每轮任务结束再刷一次。
   useEffect(() => {
     if (!open || !current) return;
     setLoading(true); setErr("");
@@ -73,7 +64,7 @@ export function TrajPanel() {
     }).catch((e) => setErr(e.message)).finally(() => setMore(false));
   };
 
-  const rowsAll = ((data && data.rows) || []).slice().reverse(); // 最新在前
+  const rowsAll = ((data && data.rows) || []).slice().reverse(); 
   const q = query.trim().toLowerCase();
   const rows = rowsAll.filter((r) => {
     if (filter === "compact" ? (r.kind !== "compact" && r.kind !== "prune") : (filter && r.kind !== filter)) return false;
@@ -81,7 +72,6 @@ export function TrajPanel() {
     return true;
   });
 
-  // 时间线:每条一行一个小块,宽度 ∝ √耗时(长任务不至于吃光一行)。
   const tl = rowsAll.filter((r) => KIND[r.kind]);
   let maxW = 1;
   for (const r of tl) { const w = Math.sqrt(Math.max(r.dur_ms || 0, 200)); if (w > maxW) maxW = w; }

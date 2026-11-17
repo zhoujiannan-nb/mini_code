@@ -15,16 +15,11 @@ import (
 	"github.com/user/mini_code/util"
 )
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 func countTokens(m provider.Message) int {
 	return util.CountMessagesTokens([]provider.Message{m})
 }
 
-// newClientWithBudget builds a vllm test client with an explicit window so a
-// test can cross the compaction threshold with a short message.
 func newClientWithBudget(t *testing.T, baseURL string, contextWindow, maxTokens int) *provider.ModelClient {
 	t.Helper()
 	client, err := provider.NewModelClient(config.ModelConfig{
@@ -57,9 +52,6 @@ func sseText(w http.ResponseWriter, text string) {
 	w.Write([]byte("data: [DONE]\n\n"))
 }
 
-// sseEmpty answers with a well-formed but empty reply: the loop's
-// empty-response guard then continues to the next turn. Used to get a second
-// request without needing a tool registry.
 func sseEmpty(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	writeSSEChunk(w, `{"choices":[{"delta":{},"finish_reason":"stop"}]}`)
@@ -84,13 +76,7 @@ func historyMsgs() []provider.Message {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Pure rebuild tests (no HTTP)
-// ---------------------------------------------------------------------------
 
-// TestRebuildContextShape pins the compaction shape:
-// [system][summary][verbatim tail] — the summary replaces the compacted region
-// and heads the surviving window (dsh's order).
 func TestRebuildContextShape(t *testing.T) {
 	in := append(historyMsgs(), BuildCompactRequest(""))
 	out, ok := RebuildContext(in, "## Goal\ndemo", CompactKeepMessages, CompactKeepMaxTokens)
@@ -100,8 +86,6 @@ func TestRebuildContextShape(t *testing.T) {
 	if out[0].Role != "system" || out[0].Content != "SYSTEM" {
 		t.Fatalf("system message not kept first/identical: %+v", out[0])
 	}
-	// The summary stands right after the system message: the model reads the
-	// compressed past before the verbatim tail.
 	sum := out[1]
 	if !strings.Contains(sum.GetText(), "<previous-summary>") || !strings.Contains(sum.GetText(), "## Goal") {
 		t.Fatalf("summary is not the anchored block heading the context: %q", sum.GetText())
@@ -121,7 +105,6 @@ func TestRebuildContextShape(t *testing.T) {
 	if tail[0].Role == "tool" {
 		t.Fatalf("retained block opens with a tool result: %+v", tail[0])
 	}
-	// Every retained tool result keeps the assistant tool_calls that produced it.
 	for i, m := range tail {
 		if m.Role != "tool" {
 			continue
@@ -140,10 +123,6 @@ func TestRebuildContextShape(t *testing.T) {
 	}
 }
 
-// TestRebuildContextDropsNoticesAndInstructions: stale 75/80/85% notices (legacy
-// rows — nothing injects them any more) and compaction instructions never make it
-// into the new context: the numbers they quote are wrong after a compaction, and
-// a "call compact_context" hint would point at a tool that is not registered.
 func TestRebuildContextDropsNoticesAndInstructions(t *testing.T) {
 	in := []provider.Message{
 		{Role: "system", Content: "SYSTEM"},
@@ -162,11 +141,9 @@ func TestRebuildContextDropsNoticesAndInstructions(t *testing.T) {
 	}
 }
 
-// TestRebuildContextHonorsBudget: the verbatim block never exceeds the budget;
-// a single oversized newest message is truncated instead of blowing it.
 func TestRebuildContextHonorsBudget(t *testing.T) {
 	const budget = 300
-	huge := strings.Repeat("lots of tool output ", 2000) // several thousand tokens
+	huge := strings.Repeat("lots of tool output ", 2000)
 	in := []provider.Message{
 		{Role: "system", Content: "SYSTEM"},
 		{Role: "user", Content: "question"},
@@ -190,9 +167,6 @@ func TestRebuildContextHonorsBudget(t *testing.T) {
 	}
 }
 
-// TestRebuildContextChargesTheToolCallParent: a retained tool result drags in
-// the assistant message that declared the call. That parent is charged against
-// the tail budget (truncating its narration) instead of being appended for free.
 func TestRebuildContextChargesTheToolCallParent(t *testing.T) {
 	const budget = 600
 	in := []provider.Message{
@@ -213,7 +187,6 @@ func TestRebuildContextChargesTheToolCallParent(t *testing.T) {
 	if !strings.Contains(out[1].GetText(), "<previous-summary>") {
 		t.Fatalf("summary does not head the context: %q", out[1].GetText())
 	}
-	// The pairing survives: the tool result still has its declaring call.
 	if len(out[2].ToolCalls) != 1 || out[2].ToolCalls[0].ID != out[3].ToolCallID {
 		t.Fatalf("tool call pairing broken: %+v", out[2].ToolCalls)
 	}
@@ -230,30 +203,19 @@ func TestRebuildContextChargesTheToolCallParent(t *testing.T) {
 	}
 }
 
-// TestCompactKeepBudget: the verbatim tail is capped by the window and by what
-// the rebuilt request already carries — not only by the absolute 20k ceiling.
-// Otherwise a small window finishes a compaction still over the trigger and
-// spends every following turn on another (uncached) compaction turn.
 func TestCompactKeepBudget(t *testing.T) {
 	if got := CompactKeepBudget(0, 0); got != CompactKeepMaxTokens {
 		t.Fatalf("unknown window should use the ceiling, got %d", got)
 	}
-	// Big window: the target is half the window (50k) but the ceiling wins.
 	if got := CompactKeepBudget(100_000, 0); got != CompactKeepMaxTokens {
 		t.Fatalf("100k window should keep up to the ceiling, got %d", got)
 	}
-	// Small window (the 7501 sandbox: 8928 input tokens): target is 4464, minus
-	// the 3000 tokens of system prompt, tool schemas and summary.
 	if got := CompactKeepBudget(8928, 3000); got != 1464 {
 		t.Fatalf("8928-token window with 3000 overhead should keep 1464, got %d", got)
 	}
-	// A window whose fixed parts already eat the target still keeps a tail.
 	if got := CompactKeepBudget(8928, 100_000); got != minKeepTokens {
 		t.Fatalf("starved window should still keep %d tokens, got %d", minKeepTokens, got)
 	}
-	// Whatever the window, the rebuild target stays well under the compaction
-	// point (90% of the input budget), so the turn right
-	// after a compaction is a normal turn.
 	for _, mi := range []int{2048, 8928, 32_000, 200_000} {
 		if got := RebuildTargetTokens(mi); float64(got)/float64(mi) >= compactInputFraction {
 			t.Fatalf("rebuild target %d of %d is not below the compaction threshold", got, mi)
@@ -261,14 +223,8 @@ func TestCompactKeepBudget(t *testing.T) {
 	}
 }
 
-// TestRebuildBudgetUsesTheThresholdUnits is the regression: the loop judges
-// compaction on the calibrated (provider-scale) count, so the tail budget and
-// the rebuild must be measured in that same unit. Measured with the raw local
-// estimate, a rebuild came back ~1.9x larger than budgeted — 86% of the window
-// right after compacting — and immediately triggered another compaction turn.
 func TestRebuildBudgetUsesTheThresholdUnits(t *testing.T) {
 	const maxInput = 8928
-	// A provider that tokenizes about twice as coarsely as the local estimate.
 	est := func(ms []provider.Message) int { return util.CountMessagesTokens(ms) * 2 }
 
 	messages := []provider.Message{
@@ -292,15 +248,11 @@ func TestRebuildBudgetUsesTheThresholdUnits(t *testing.T) {
 	if len(out) < 3 {
 		t.Fatalf("rebuilt context lost its verbatim tail: %+v", out)
 	}
-	// The tools and the summary must be part of the overhead, or the tail is
-	// sized against a budget the request never had.
 	if bare := RebuildOverhead(messages, summary, nil, nil); bare >= overhead {
 		t.Fatalf("overhead did not grow with tool schemas / summary: %d vs %d", bare, overhead)
 	}
 }
 
-// TestBuildCompactRequest covers the two prompt sources: the fixed passive
-// prompt, and the agent-authored focus used for compact_context / manual.
 func TestBuildCompactRequest(t *testing.T) {
 	fixedMsg := BuildCompactRequest("")
 	fixed := fixedMsg.GetText()
@@ -326,8 +278,6 @@ func TestBuildCompactRequest(t *testing.T) {
 	}
 }
 
-// TestExtractSummary: content wins, reasoning_content is the fallback (thinking
-// models), a wrapping code fence is stripped.
 func TestExtractSummary(t *testing.T) {
 	if got := ExtractSummary("## Goal\nreal", "ignored"); got != "## Goal\nreal" {
 		t.Fatalf("content should win, got %q", got)
@@ -343,13 +293,7 @@ func TestExtractSummary(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Loop integration: the prefix-cache safety tests
-// ---------------------------------------------------------------------------
 
-// capturedRequest is one request body as the provider saw it. Messages and
-// tools stay raw JSON so the assertions compare the exact bytes the server
-// tokenizes — that is what decides KV prefix cache hits (i.e. money).
 type capturedRequest struct {
 	Model    string            `json:"model"`
 	Stream   bool              `json:"stream"`
@@ -394,19 +338,12 @@ func msgAt(t *testing.T, req capturedRequest, i int) provider.Message {
 	return m
 }
 
-// TestActiveCompactionReusesTheCachedPrefix is the money test: the compaction
-// request must be an exact extension of the previous normal request — same
-// model, same tools, previous messages as a byte-identical prefix — so the
-// provider serves everything but the appended instruction from the KV cache.
 func TestActiveCompactionReusesTheCachedPrefix(t *testing.T) {
 	state := tools.NewContextState()
 	srv := &captureServer{}
 	srv.handler = func(w http.ResponseWriter, n int) {
 		switch n {
 		case 1:
-			// A normal turn. Request compaction while answering it, so the
-			// NEXT request is the summarization turn. The empty reply just
-			// keeps the loop going without needing a tool registry.
 			state.RequestCompaction("keep the failing test output")
 			sseEmpty(w)
 		case 2:
@@ -433,7 +370,6 @@ func TestActiveCompactionReusesTheCachedPrefix(t *testing.T) {
 
 	first, compact, after := srv.at(0), srv.at(1), srv.at(2)
 
-	// 1. The compaction request still contains the previous request verbatim.
 	if len(compact.Messages) <= len(first.Messages) {
 		t.Fatalf("compaction request is not an extension of the previous one: %d vs %d messages", len(compact.Messages), len(first.Messages))
 	}
@@ -443,7 +379,6 @@ func TestActiveCompactionReusesTheCachedPrefix(t *testing.T) {
 				i, first.Messages[i], compact.Messages[i])
 		}
 	}
-	// 2. Its last message is the compaction instruction (and it was not there before).
 	last := msgAt(t, compact, len(compact.Messages)-1)
 	if !IsCompactRequest(last) {
 		t.Fatalf("the last message of the compaction request is not the instruction: %q", last.GetText())
@@ -458,8 +393,6 @@ func TestActiveCompactionReusesTheCachedPrefix(t *testing.T) {
 			t.Fatal("instruction present on the normal turn")
 		}
 	}
-	// 3. Tools / model / stream must be identical: they are part of the same
-	//    prompt prefix, a difference costs a full re-prefill.
 	if string(first.Tools) != string(compact.Tools) {
 		t.Fatalf("tool schemas changed between requests (prefix cache invalidated):\n before: %s\n after:  %s", first.Tools, compact.Tools)
 	}
@@ -469,8 +402,6 @@ func TestActiveCompactionReusesTheCachedPrefix(t *testing.T) {
 	if first.Model != compact.Model || first.Stream != compact.Stream {
 		t.Fatalf("model/stream changed on the compaction turn: %v/%v vs %v/%v", first.Model, first.Stream, compact.Model, compact.Stream)
 	}
-	// 4. The new context is [system][summary][tail], with no instruction left,
-	//    and it is strictly smaller in tokens (that is what compaction is for).
 	if a, b := sumTokens(t, after), sumTokens(t, compact); a >= b {
 		t.Fatalf("context was not shrunk by compaction: %d tokens after vs %d before", a, b)
 	}
@@ -478,7 +409,6 @@ func TestActiveCompactionReusesTheCachedPrefix(t *testing.T) {
 		t.Fatalf("system prompt is not byte-identical after compaction: %q", sys.Content)
 	}
 	if first := msgAt(t, after, 1); true {
-		// The summary heads the rebuilt context, ahead of the verbatim tail.
 		if !strings.Contains(first.GetText(), "<previous-summary>") || !strings.Contains(first.GetText(), "summarized work") {
 			t.Fatalf("summary block does not head the context: %q", first.GetText())
 		}
@@ -488,7 +418,6 @@ func TestActiveCompactionReusesTheCachedPrefix(t *testing.T) {
 			t.Fatal("the compaction instruction survived into the next turn")
 		}
 	}
-	// 5. Tools survive the compaction turn (the task continues normally).
 	if string(after.Tools) != string(first.Tools) {
 		t.Fatal("tool schemas differ after compaction")
 	}
@@ -501,8 +430,6 @@ func mustMsg(t *testing.T, raw json.RawMessage) provider.Message {
 	return m
 }
 
-// sumTokens is the size of a captured request. Compaction is judged in tokens,
-// never in message counts (a summary replaces many small messages with one).
 func sumTokens(t *testing.T, req capturedRequest) int {
 	t.Helper()
 	total := 0
@@ -512,8 +439,6 @@ func sumTokens(t *testing.T, req capturedRequest) int {
 	return total
 }
 
-// TestAutomaticCompactionTurnRunsAtTheThreshold drives the passive path with a
-// tiny budget and checks the fixed prompt is what gets appended.
 func TestAutomaticCompactionTurnRunsAtTheThreshold(t *testing.T) {
 	srv := &captureServer{}
 	srv.handler = func(w http.ResponseWriter, n int) {
@@ -555,7 +480,6 @@ func TestAutomaticCompactionTurnRunsAtTheThreshold(t *testing.T) {
 	if a, b := sumTokens(t, srv.at(1)), sumTokens(t, srv.at(0)); a >= b {
 		t.Fatalf("context not shrunk after compaction: %d tokens after vs %d before", a, b)
 	}
-	// The compaction must not re-arm on the very next turn (the re-arm guard).
 	for i := 1; i < srv.count(); i++ {
 		for _, raw := range srv.at(i).Messages {
 			if m := mustMsg(t, raw); IsCompactRequest(m) {
@@ -565,9 +489,6 @@ func TestAutomaticCompactionTurnRunsAtTheThreshold(t *testing.T) {
 	}
 }
 
-// TestCompactionTurnWithoutSummaryRestoresTheContext: when the model answers
-// the instruction with a tool call and no text, the task must continue on the
-// ORIGINAL context (instruction removed) and must not retry forever.
 func TestCompactionTurnWithoutSummaryRestoresTheContext(t *testing.T) {
 	state := tools.NewContextState()
 	srv := &captureServer{}
@@ -577,7 +498,6 @@ func TestCompactionTurnWithoutSummaryRestoresTheContext(t *testing.T) {
 			state.RequestCompaction("now")
 			sseEmpty(w)
 		case 2:
-			// Compaction turn: a tool call and no summary text at all.
 			sseToolCall(w)
 		default:
 			sseText(w, "carried on")
@@ -598,7 +518,6 @@ func TestCompactionTurnWithoutSummaryRestoresTheContext(t *testing.T) {
 	if srv.count() < 3 {
 		t.Fatalf("expected the loop to carry on after the failed compaction, got %d requests", srv.count())
 	}
-	// No request after the failed compaction may still carry an instruction.
 	for i := 2; i < srv.count(); i++ {
 		for _, raw := range srv.at(i).Messages {
 			if m := mustMsg(t, raw); IsCompactRequest(m) {
@@ -608,9 +527,6 @@ func TestCompactionTurnWithoutSummaryRestoresTheContext(t *testing.T) {
 	}
 }
 
-// TestResumingAnInterruptedCompactionTurn: if the process died after the
-// instruction was persisted, the next Run resumes the summarization turn
-// instead of answering normally or appending a second instruction.
 func TestResumingAnInterruptedCompactionTurn(t *testing.T) {
 	srv := &captureServer{}
 	srv.handler = func(w http.ResponseWriter, n int) {
@@ -626,7 +542,7 @@ func TestResumingAnInterruptedCompactionTurn(t *testing.T) {
 	client := newClientWithBudget(t, ts.URL, 8192, 100)
 	defer client.Close()
 	loop := NewAgentLoop(client, 5, nil, nil, nil, nil, nil, nil)
-	loop.compactionOn = false // only the resume may drive compaction here
+	loop.compactionOn = false
 
 	history := []provider.Message{
 		{Role: "system", Content: "SYSTEM PROMPT"},
@@ -654,9 +570,6 @@ func TestResumingAnInterruptedCompactionTurn(t *testing.T) {
 	}
 }
 
-// TestSummarizeAndRebuildRequestShape pins the manual (no-loop) path: the
-// request is the stored context plus one instruction message with the same
-// tools, so it is still served from the prefix cache.
 func TestSummarizeAndRebuildRequestShape(t *testing.T) {
 	var got capturedRequest
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

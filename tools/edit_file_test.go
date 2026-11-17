@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// setupEditTest creates a temp workspace with the given file content and
-// returns the workspace dir and the relative file path.
 func setupEditTest(t *testing.T, name, content string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -62,9 +60,6 @@ func TestEditFileExactMatchUnchanged(t *testing.T) {
 	}
 }
 
-// Literal matching is the only mechanism (dsh parity): an old_text that
-// differs from the file only in indentation must be REFUSED, not patched
-// through a tolerance pass the advertised tool never promised.
 func TestEditFileRefusesIndentationMismatch(t *testing.T) {
 	file := "def add(a, b):\n    return a + b\n"
 	ws, name := setupEditTest(t, "a.py", file)
@@ -93,7 +88,6 @@ func TestEditFileRefusesTabsVsSpaces(t *testing.T) {
 }
 
 func TestEditFileStrayBlankLines(t *testing.T) {
-	// The file has a blank line inside the block that old_text omits.
 	file := "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"
 	ws, name := setupEditTest(t, "c.go", file)
 
@@ -137,8 +131,6 @@ func TestEditFileAmbiguousWithoutReplaceAll(t *testing.T) {
 }
 
 func TestEditFileAmbiguousReportsLineNumbers(t *testing.T) {
-	// The ambiguity warning must name the lines of every occurrence so the
-	// model can disambiguate without re-reading the file.
 	file := "alpha\nx := 1\nbeta\nx := 1\ngamma\n"
 	ws, name := setupEditTest(t, "e2.txt", file)
 
@@ -153,8 +145,6 @@ func TestEditFileAmbiguousReportsLineNumbers(t *testing.T) {
 }
 
 func TestEditFileAmbiguousMultiLineOldTextLines(t *testing.T) {
-	// A multi-line old_text spanning occurrences: the reported line number
-	// is the starting line of each occurrence.
 	file := "a\none\ntwo\nb\none\ntwo\nc\n"
 	ws, name := setupEditTest(t, "e3.txt", file)
 
@@ -165,7 +155,6 @@ func TestEditFileAmbiguousMultiLineOldTextLines(t *testing.T) {
 }
 
 func TestEditFileReplaceAllLiteral(t *testing.T) {
-	// replace_all over two literal occurrences (dsh success text).
 	file := "a = 1\n  b = 2\n\nc = 3\n\tb = 2\n"
 	ws, name := setupEditTest(t, "f.txt", file)
 
@@ -180,9 +169,6 @@ func TestEditFileReplaceAllLiteral(t *testing.T) {
 }
 
 func TestEditFileFuzzyDoesNotMatchDifferentContent(t *testing.T) {
-	// "return x" must NOT fuzzy-match "return x + 1" (line content differs).
-	// oldText uses 2 spaces where the file uses a tab, so the exact path
-	// misses and only the whitespace-tolerant path is exercised.
 	file := "func f() int {\n\treturn x + 1\n}\n"
 	ws, name := setupEditTest(t, "g.go", file)
 
@@ -193,8 +179,6 @@ func TestEditFileFuzzyDoesNotMatchDifferentContent(t *testing.T) {
 }
 
 func TestEditFileNoMatchClosestLineHint(t *testing.T) {
-	// "betta" is a one-letter typo of the file's "beta" (line 2): the error
-	// must point at that line so the model can fix old_text without re-reading.
 	file := "alpha\nbeta\ngamma\n"
 	ws, name := setupEditTest(t, "d2.txt", file)
 
@@ -215,8 +199,6 @@ func TestEditFileNoMatchClosestLineHint(t *testing.T) {
 }
 
 func TestEditFileNoMatchNoHintWhenUnrelated(t *testing.T) {
-	// No line in the file is close to old_text: the error must not carry a
-	// misleading closest-line hint.
 	file := "alpha\nbeta\ngamma\n"
 	ws, name := setupEditTest(t, "d3.txt", file)
 
@@ -230,7 +212,6 @@ func TestEditFileNoMatchNoHintWhenUnrelated(t *testing.T) {
 }
 
 func TestEditFileClosestHintPunctuationDiff(t *testing.T) {
-	// Single-quote vs double-quote: near-identical line, hint must fire.
 	file := "package main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"
 	ws, name := setupEditTest(t, "d4.go", file)
 
@@ -244,8 +225,6 @@ func TestEditFileClosestHintPunctuationDiff(t *testing.T) {
 }
 
 func TestEditFileClosestHintPicksLongestOldLine(t *testing.T) {
-	// old_text has two lines; the longest one (the distinctive call) must
-	// drive the hint, not the short generic "helper()" line.
 	file := "helper()\ndoSomethingWithAVeryLongName(42)\n"
 	ws, name := setupEditTest(t, "d5.go", file)
 
@@ -259,7 +238,6 @@ func TestEditFileClosestHintPicksLongestOldLine(t *testing.T) {
 }
 
 func TestEditFilePreservesCRLF(t *testing.T) {
-	// Editing a CRLF file must keep CRLF line endings byte-for-byte.
 	file := "alpha\r\nbeta\r\ngamma\r\n"
 	ws, name := setupEditTest(t, "h.txt", file)
 
@@ -275,7 +253,6 @@ func TestEditFilePreservesCRLF(t *testing.T) {
 }
 
 func TestEditFilePreservesLF(t *testing.T) {
-	// Editing an LF file must keep LF line endings.
 	file := "alpha\nbeta\ngamma\n"
 	ws, name := setupEditTest(t, "i.txt", file)
 
@@ -291,7 +268,6 @@ func TestEditFilePreservesLF(t *testing.T) {
 }
 
 func TestEditFileRefusesCRLFIndentationMismatch(t *testing.T) {
-	// literal matching only: indentation difference is refused on CRLF too
 	file := "def f():\r\n    return 1\r\n"
 	ws, name := setupEditTest(t, "j.py", file)
 	out := runEdit(t, ws, name, "def f():\n  return 1", "def f():\n    return 2", false)

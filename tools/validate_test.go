@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// editSchema is the dsh-declared edit parameter surface, as decoded from
-// dsh_tools.json (required is a []interface{}, types are plain strings).
 func editSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
@@ -21,9 +19,6 @@ func editSchema() map[string]interface{} {
 }
 
 func TestValidateEditMissingNewString(t *testing.T) {
-	// The measured t2 incident shape: the model spelled the key "content".
-	// No tool-specific rule exists anywhere — the declared schema alone must
-	// refuse the call and say exactly what is missing.
 	args := map[string]interface{}{
 		"content":   "x",
 		"file_path": "a.txt",
@@ -58,7 +53,7 @@ func TestValidateTypeChecksAndPaths(t *testing.T) {
 		"file_path":   "a",
 		"old_string":  "b",
 		"new_string":  "c",
-		"replace_all": "yes", // string where boolean declared
+		"replace_all": "yes",
 	}
 	err := ValidateToolArgs("edit", editSchema(), args)
 	if err == nil || !strings.Contains(err.Error(), "- replace_all: must be boolean") {
@@ -79,10 +74,10 @@ func TestNormalizeCoerceAndNulls(t *testing.T) {
 	}
 	params := map[string]interface{}{
 		"command":    "dir",
-		"timeoutMs":  "5000",   // coerced to number
-		"background": "true",   // coerced to bool
-		"description": nil,     // null on a REQUIRED key stays and fails type check
-		"limit":      nil,      // unknown key with null: removed
+		"timeoutMs":  "5000",
+		"background": "true",
+		"description": nil,
+		"limit":      nil,
 	}
 	NormalizeAndCoerceArgs(schema, params)
 	if _, present := params["limit"]; present {
@@ -92,7 +87,6 @@ func TestNormalizeCoerceAndNulls(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "- description: must be string") {
 		t.Fatalf("required key held null must report type error, got: %v", err)
 	}
-	// with a real description the coerced values must validate clean
 	params["description"] = "list files"
 	NormalizeAndCoerceArgs(schema, params)
 	if err := ValidateToolArgs("pwsh", schema, params); err != nil {
@@ -104,7 +98,6 @@ func TestNormalizeCoerceAndNulls(t *testing.T) {
 	if v, ok := params["background"].(bool); !ok || !v {
 		t.Errorf("background not coerced: %#v", params["background"])
 	}
-	// a non-numeric string is NOT converted, and then fails the check
 	params["timeoutMs"] = "soon"
 	NormalizeAndCoerceArgs(schema, params)
 	if v, ok := params["timeoutMs"].(string); !ok || v != "soon" {
@@ -156,9 +149,6 @@ func TestNestedRequiredAndEnumAndAdditional(t *testing.T) {
 }
 
 func TestValidateRealAdvertisedSchemas(t *testing.T) {
-	// Representative shipped tools: every one advertises a dsh-decoded
-	// schema, so an empty call must be refused exactly when (and only when)
-	// that schema declares required keys — with required-property messages.
 	dir := t.TempDir()
 	tools := []Tool{
 		NewReadFileTool(dir), NewWriteFileTool(dir), NewEditFileTool(dir),
@@ -169,7 +159,7 @@ func TestValidateRealAdvertisedSchemas(t *testing.T) {
 		schema := tool.Parameters()
 		verr := ValidateToolArgs(tool.Name(), schema, map[string]interface{}{})
 		if verr == nil {
-			continue // no required keys: empty call is schema-legal
+			continue
 		}
 		if !strings.Contains(verr.Error(), "must have required property") {
 			t.Errorf("%s: empty-call rejection is not a required-property error:\n%s", tool.Name(), verr)

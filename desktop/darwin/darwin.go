@@ -1,6 +1,3 @@
-// Package desktopdarwin implements the desktop shell on macOS: a native
-// WKWebView window (webview/webview_go), a single-instance lock file + unix
-// domain socket, osascript fatal dialogs and AppKit dark title bars.
 package desktopdarwin
 
 /*
@@ -36,13 +33,12 @@ const (
 	sockFile = "mini_code_desktop.sock"
 )
 
-// New returns the macOS desktop shell.
 func New() desktop.Platform { return &platform{} }
 
 type platform struct{}
 
 func configDir() string {
-	base, err := os.UserConfigDir() // ~/Library/Application Support
+	base, err := os.UserConfigDir()
 	if err != nil || base == "" {
 		base = os.TempDir()
 	}
@@ -51,8 +47,6 @@ func configDir() string {
 
 func socketPath() string { return filepath.Join(os.TempDir(), sockFile) }
 
-// Fatal reports a startup problem to the user. Terminal builds print it;
-// double-click launches (no console) get a native alert via osascript.
 func (p *platform) Fatal(msg string) {
 	slog.Error("desktop: " + msg)
 	fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
@@ -63,8 +57,6 @@ func (p *platform) Fatal(msg string) {
 	os.Exit(1)
 }
 
-// AcquireSingleInstance holds an exclusive flock on
-// ~/Library/Application Support/mini_code/desktop.lock.
 func (p *platform) AcquireSingleInstance() (bool, func()) {
 	path := filepath.Join(configDir(), lockFile)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -86,8 +78,6 @@ func (p *platform) AcquireSingleInstance() (bool, func()) {
 	}
 }
 
-// NotifyExisting asks the running instance to show/focus its window via a
-// unix domain socket (the client writes "show\n" and closes).
 func (p *platform) NotifyExisting() error {
 	path := socketPath()
 	deadline := time.Now().Add(5 * time.Second)
@@ -109,10 +99,9 @@ func (p *platform) NotifyExisting() error {
 	return fmt.Errorf("no reachable instance: %w", lastErr)
 }
 
-// StartShowListener serves "show" requests from second launches.
 func (p *platform) StartShowListener(onShow func()) {
 	path := socketPath()
-	_ = os.Remove(path) // stale socket from a crashed run
+	_ = os.Remove(path)
 	l, err := net.Listen("unix", path)
 	if err != nil {
 		slog.Warn("desktop: show listener not started", "err", err)
@@ -128,20 +117,15 @@ func (p *platform) StartShowListener(onShow func()) {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				io.Copy(io.Discard, c) // client writes then closes
+				io.Copy(io.Discard, c)
 				onShow()
 			}(conn)
 		}
 	}()
 }
 
-// NewWindow creates the WKWebView window. WKWebView is a system framework,
-// so no runtime installation is needed.
 func (p *platform) NewWindow(opts desktop.WindowOptions) (desktop.Window, error) {
-	// Install the standard main menu (edit shortcuts like Cmd+V paste)
-	// before the webview window is created.
 	C.mc_setup_main_menu()
-	// debug: F12 devtools, same as the Windows build
 	wv := webview.NewWindow(true, nil)
 	w := &window{wv: wv}
 	wv.SetTitle(opts.Title)
@@ -150,17 +134,12 @@ func (p *platform) NewWindow(opts desktop.WindowOptions) (desktop.Window, error)
 	return w, nil
 }
 
-// ShowWindow makes the (already open) window key and frontmost. It may be
-// called from any goroutine (e.g. the show-listener), so hop to the UI
-// thread via the webview's dispatch.
 func (p *platform) ShowWindow(w desktop.Window) {
 	if h := w.Handle(); h != nil {
 		w.Dispatch(func() { C.mc_show_window(h) })
 	}
 }
 
-// SetDarkTitleBar switches the app appearance to dark/light so the native
-// title bar matches the in-page theme.
 func (p *platform) SetDarkTitleBar(w desktop.Window, dark bool) {
 	v := 0
 	if dark {
@@ -169,20 +148,8 @@ func (p *platform) SetDarkTitleBar(w desktop.Window, dark bool) {
 	C.mc_set_app_dark(C.int(v))
 }
 
-// PrefersDark: the native title bar follows the system by default, and the
-// page syncs the exact value after it renders, so there is no extra initial
-// hint on macOS.
 func (p *platform) PrefersDark() bool { return false }
 
-// RunTray starts the menu-bar tray item: 打开窗口 / 退出.
-//
-// Uses systray.Register (NOT systray.Run): the WKWebView's [NSApp run]
-// (started by Window.Run on the main thread) is the single event loop.
-// systray.Run would start a second [NSApp run] on a background goroutine;
-// the two loops race for the same event queue, one spins at 100% CPU and
-// the window never appears. Register must finish before the first
-// [NSApp run], so it is called synchronously here (desktop.Run calls
-// RunTray before the window loop).
 func (p *platform) RunTray(icon []byte, onOpen func(), onExit func()) {
 	systray.Register(func() {
 		systray.SetIcon(icon)
@@ -204,7 +171,6 @@ func (p *platform) RunTray(icon []byte, onOpen func(), onExit func()) {
 	}, onExit)
 }
 
-// window adapts a webview_go WebView to desktop.Window.
 type window struct {
 	wv webview.WebView
 }

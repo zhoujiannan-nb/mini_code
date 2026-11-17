@@ -8,23 +8,16 @@ import (
 	"testing"
 )
 
-// TestEmptyResponseNudgesAndRecovers verifies that a model response with no
-// content and no tool calls does not end the task with an empty reply: the
-// loop nudges the model once and the task still completes with the content
-// of the next (non-empty) response.
 func TestEmptyResponseNudgesAndRecovers(t *testing.T) {
 	var requests int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt64(&requests, 1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		if n == 1 {
-			// First attempt: a well-formed but EMPTY response (stop, no
-			// content, no tool calls).
 			writeSSEChunk(w, `{"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}`)
 			w.Write([]byte("data: [DONE]\n\n"))
 			return
 		}
-		// Second attempt: the model recovers and answers.
 		writeSSEChunk(w, `{"choices":[{"delta":{"content":"hello world"},"finish_reason":"stop"}]}`)
 		w.Write([]byte("data: [DONE]\n\n"))
 	}))
@@ -48,15 +41,11 @@ func TestEmptyResponseNudgesAndRecovers(t *testing.T) {
 	}
 }
 
-// TestEmptyResponseFailsAfterMaxRetries verifies that a persistently empty
-// model is nudged a bounded number of times (maxEmptyRetries) and then the
-// task fails with a clear error instead of looping until the turn budget.
 func TestEmptyResponseFailsAfterMaxRetries(t *testing.T) {
 	var requests int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(&requests, 1)
 		w.Header().Set("Content-Type", "text/event-stream")
-		// Always empty.
 		writeSSEChunk(w, `{"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}`)
 		w.Write([]byte("data: [DONE]\n\n"))
 	}))
@@ -75,15 +64,11 @@ func TestEmptyResponseFailsAfterMaxRetries(t *testing.T) {
 	if res.Error == "" {
 		t.Fatal("expected a non-empty error explaining the failure")
 	}
-	// 1 initial response + maxEmptyRetries nudged retries.
 	if got := atomic.LoadInt64(&requests); got != 1+maxEmptyRetries {
 		t.Fatalf("expected exactly %d LLM requests, got %d", 1+maxEmptyRetries, got)
 	}
 }
 
-// TestWhitespaceOnlyResponseIsTreatedAsEmpty verifies that a response made
-// of whitespace only is guarded exactly like an empty one (the task does
-// not end with a blank reply).
 func TestWhitespaceOnlyResponseIsTreatedAsEmpty(t *testing.T) {
 	var requests int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
