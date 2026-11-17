@@ -265,7 +265,9 @@ aside {
   font-size: 13px; font-weight: 600; color: var(--title); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; padding-right: 44px;
 }
-.sess-meta { font-size: 11px; color: var(--text3); margin-top: 3px; display: flex; gap: 8px; align-items: center; }
+.sess-meta { font-size: 11px; color: var(--text3); margin-top: 3px; display: flex; gap: 8px; align-items: center; white-space: nowrap; flex-wrap: nowrap; overflow: hidden; }
+/* 状态/条数是短语,绝不折行成两截;文件夹路径已挪到鼠标悬停提示里,不再占位 */
+.sess-meta > span { flex: 0 0 auto; }
 .sess-meta .s { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
 .s.running { background: var(--amber); animation: pulse 1.2s ease-in-out infinite; }
 .s.completed { background: var(--ok-dot); }

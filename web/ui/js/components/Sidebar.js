@@ -53,6 +53,7 @@ function SessionItem({ s }) {
     : (s.jobs_running > 0 ? "后台运行中"
       : ({ completed: "已完成", failed: "失败", interrupted: "已中断" }[s.status] || "")));
   return html`<div class=${"sess-item" + (s.session_id === current ? " active" : "")}
+    title=${s.work_dir || ""}
     onClick=${(e) => { if (e.target.closest("button")) return; selectSession(s.session_id); }}>
     <${AgentAvatar} cls="sess-ava" tag="span" />
     <div class="sess-main">
@@ -65,7 +66,6 @@ function SessionItem({ s }) {
         ${s.mode === "cautious" ? html`<span title="谨慎模式">🛡</span>` : null}
         ${statusText ? html`<span>${statusText}</span>` : null}
         <span>${s.message_count || 0} 条</span>
-        ${tailPath(s.work_dir) ? html`<span class="sess-path" title=${s.work_dir}>🗂 ${tailPath(s.work_dir)}</span>` : null}
       </div>
     </div>
     <button class="rename-btn" title="重命名会话"
