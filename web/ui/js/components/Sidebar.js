@@ -13,7 +13,6 @@ import { useRef, useState } from "preact/hooks";
 import htm from "htm";
 
 import { useStore, setState, getState, toast } from "../lib/store.js";
-import { AgentAvatar } from "../lib/avatars.js";
 import { relTime } from "../lib/format.js";
 import { cycleThemeMode, themeLabel } from "../lib/theme.js";
 import { openSettings } from "../lib/settings.js";
@@ -55,7 +54,6 @@ function SessionItem({ s }) {
   return html`<div class=${"sess-item" + (s.session_id === current ? " active" : "")}
     title=${s.work_dir || ""}
     onClick=${(e) => { if (e.target.closest("button")) return; selectSession(s.session_id); }}>
-    <${AgentAvatar} cls="sess-ava" tag="span" />
     <div class="sess-main">
       <div class="sess-title-row">
         <div class="sess-title">${s.title || "未命名会话"}</div>
