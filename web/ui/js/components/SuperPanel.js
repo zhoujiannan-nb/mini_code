@@ -83,13 +83,15 @@ async function refreshSuperDrawer() {
   }
 }
 
+// v9 落地顺序:进面板默认停在「采集源」工作台(配置消息源、看绑定),
+// 工单中心紧随其后;Router 聊天退居第三(纯审计Console),旧世界页签殿后。
 const TABS = [
-  { id: "chat", label: "会话" },
   { id: "sources", label: "采集源" },
   { id: "tickets", label: "工单中心" },
+  { id: "chat", label: "Router会话" },
   { id: "workers", label: "Workers" },
-  { id: "sched", label: "定时任务" },
-  { id: "chan", label: "消息通道" },
+  { id: "sched", label: "定时任务(旧)" },
+  { id: "chan", label: "消息通道(旧)" },
   { id: "proc", label: "进程查看" },
   { id: "audit", label: "审计轨迹" },
 ];
