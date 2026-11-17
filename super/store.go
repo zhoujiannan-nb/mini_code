@@ -107,6 +107,55 @@ func (s *Store) init() {
 		key TEXT PRIMARY KEY,
 		value TEXT NOT NULL DEFAULT ''
 	)`)
+	// --- v9 collection layer: Source → binding (thread) → ticket ---
+	// A Source is one采集渠道 (kind = adapter in the registry; only
+	// git-watch ships this round). An event from a bound source goes straight
+	// into the bound session ("thread"); tickets ride the thread and carry
+	// the state machine. The binding IS the subscription: closing it starts
+	// the 3-day grace, after which the source is unbound again.
+	s.db.InitTable(`CREATE TABLE IF NOT EXISTS super_source (
+		id TEXT PRIMARY KEY,          -- src-xxxx
+		kind TEXT NOT NULL,           -- registry key; git-watch is the only enabled kind
+		name TEXT NOT NULL,
+		config_json TEXT NOT NULL DEFAULT '{}',
+		cursor TEXT NOT NULL DEFAULT '',      -- kind-owned (git: last seen sha)
+		enabled INTEGER NOT NULL DEFAULT 1,
+		poll_sec INTEGER NOT NULL DEFAULT 300,
+		bind_mode TEXT NOT NULL DEFAULT 'auto', -- auto=自动派发首绑 | assign=指定已有会话
+		bind_session TEXT NOT NULL DEFAULT '',  -- assign: the declared session
+		ttl TEXT NOT NULL DEFAULT '3d',         -- 退订宽限: 3d | forever
+		last_run TEXT NOT NULL DEFAULT '',
+		last_err TEXT NOT NULL DEFAULT '',
+		err_count INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT,
+		updated_at TEXT
+	)`)
+	s.db.InitTable(`CREATE TABLE IF NOT EXISTS super_ticket (
+		id TEXT PRIMARY KEY,          -- tk-xxxxxx
+		src_id TEXT NOT NULL DEFAULT '',      -- "" = 人工工单 (router/人类直接开单)
+		title TEXT NOT NULL DEFAULT '',
+		note TEXT NOT NULL DEFAULT '',        -- ≤30字转述 (router 备注/人类备注)
+		text TEXT NOT NULL DEFAULT '',        -- 原话,一字不改
+		state TEXT NOT NULL DEFAULT 'queued', -- queued | running | ready | closed
+		session TEXT NOT NULL DEFAULT '',     -- 落地的 thread 会话
+		actor TEXT NOT NULL DEFAULT 'human',  -- human | super | auto | runner
+		created_at TEXT,
+		updated_at TEXT,
+		closed_at TEXT NOT NULL DEFAULT '',
+		reopened INTEGER NOT NULL DEFAULT 0
+	)`)
+	s.db.InitIndex(`CREATE INDEX IF NOT EXISTS idx_ticket_state ON super_ticket(state)`)
+	s.db.InitIndex(`CREATE INDEX IF NOT EXISTS idx_ticket_src ON super_ticket(src_id)`)
+	s.db.InitTable(`CREATE TABLE IF NOT EXISTS super_binding (
+		src_id TEXT PRIMARY KEY,      -- one thread per source
+		sess TEXT NOT NULL,
+		binder TEXT NOT NULL DEFAULT 'auto',  -- auto | human | router
+		state TEXT NOT NULL DEFAULT 'active', -- active | unsubscribed
+		forever INTEGER NOT NULL DEFAULT 0,   -- 永久宽限(人类显式选择)
+		unsubscribed_at TEXT NOT NULL DEFAULT '',
+		created_at TEXT,
+		updated_at TEXT
+	)`)
 }
 
 // --- small row helpers (super has its own copies: the session package's are
@@ -667,3 +716,357 @@ func boolInt(b bool) int {
 	}
 	return 0
 }
+
+// --- source (v9 采集层) ---
+
+type Source struct {
+	ID           string `json:"id"`
+	Kind         string `json:"kind"`
+	Name         string `json:"name"`
+	ConfigJSON   string `json:"config_json"`
+	Cursor       string `json:"cursor"`
+	Enabled      bool   `json:"enabled"`
+	PollSec      int    `json:"poll_sec"`
+	BindMode     string `json:"bind_mode"`
+	BindSession  string `json:"bind_session"`
+	TTL          string `json:"ttl"`
+	LastRun      string `json:"last_run"`
+	LastErr      string `json:"last_err"`
+	ErrCount     int    `json:"err_count"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+const srcCols = "id, kind, name, config_json, cursor, enabled, poll_sec, bind_mode, bind_session, ttl, last_run, last_err, err_count, created_at, updated_at"
+
+func srcFromRow(row map[string]interface{}) *Source {
+	return &Source{
+		ID: asStr(row["id"]), Kind: asStr(row["kind"]), Name: asStr(row["name"]),
+		ConfigJSON: asStr(row["config_json"]), Cursor: asStr(row["cursor"]),
+		Enabled: asNum(row["enabled"]) != 0, PollSec: int(asNum(row["poll_sec"])),
+		BindMode: asStr(row["bind_mode"]), BindSession: asStr(row["bind_session"]), TTL: asStr(row["ttl"]),
+		LastRun: asStr(row["last_run"]), LastErr: asStr(row["last_err"]), ErrCount: int(asNum(row["err_count"])),
+		CreatedAt: asStr(row["created_at"]), UpdatedAt: asStr(row["updated_at"]),
+	}
+}
+
+func (s *Store) CreateSource(src *Source) error {
+	if src.ID == "" {
+		src.ID = "src-" + util.RandomHex(4)
+	}
+	now := nowStr()
+	src.CreatedAt, src.UpdatedAt = now, now
+	if src.TTL == "" {
+		src.TTL = "3d"
+	}
+	if src.BindMode == "" {
+		src.BindMode = "auto"
+	}
+	_, err := s.db.Execute(
+		`INSERT INTO super_source (id, kind, name, config_json, cursor, enabled, poll_sec, bind_mode, bind_session, ttl, last_run, last_err, err_count, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		src.ID, src.Kind, src.Name, src.ConfigJSON, src.Cursor, boolInt(src.Enabled), src.PollSec,
+		src.BindMode, src.BindSession, src.TTL, src.LastRun, src.LastErr, src.ErrCount, src.CreatedAt, src.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetSource(id string) (*Source, error) {
+	row, err := s.db.FetchOne("SELECT "+srcCols+" FROM super_source WHERE id = ?", id)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	return srcFromRow(row), nil
+}
+
+func (s *Store) ListSources() ([]*Source, error) {
+	rows, err := s.db.FetchAll("SELECT " + srcCols + " FROM super_source ORDER BY created_at ASC")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*Source, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, srcFromRow(r))
+	}
+	return out, nil
+}
+
+func (s *Store) SourceSetEnabled(id string, on bool) error {
+	_, err := s.db.Execute("UPDATE super_source SET enabled = ?, updated_at = ? WHERE id = ?", boolInt(on), nowStr(), id)
+	return err
+}
+
+// SourceSetResult records one poll outcome: run timestamp, and either the
+// advanced cursor (ok) or the error line (fail counter moves on its own).
+func (s *Store) SourceSetResult(id, runAt, cursor, failErr string) error {
+	if failErr == "" {
+		_, err := s.db.Execute(
+			`UPDATE super_source SET last_run = ?, cursor = CASE WHEN ? != '' THEN ? ELSE cursor END,
+			   last_err = '', err_count = 0, updated_at = ? WHERE id = ?`,
+			runAt, cursor, cursor, nowStr(), id)
+		return err
+	}
+	_, err := s.db.Execute(
+		`UPDATE super_source SET last_run = ?, last_err = ?, err_count = err_count + 1, updated_at = ? WHERE id = ?`,
+		runAt, truncate(failErr, 300), nowStr(), id)
+	return err
+}
+
+func (s *Store) DeleteSource(id string) error {
+	if _, err := s.db.Execute("DELETE FROM super_source WHERE id = ?", id); err != nil {
+		return err
+	}
+	_, err := s.db.Execute("DELETE FROM super_binding WHERE src_id = ?", id)
+	return err
+}
+
+// --- ticket (工单) ---
+
+type Ticket struct {
+	ID        string `json:"id"`
+	SrcID     string `json:"src_id"`
+	Title     string `json:"title"`
+	Note      string `json:"note"`
+	Text      string `json:"text"`
+	State     string `json:"state"`
+	Session   string `json:"session"`
+	Actor     string `json:"actor"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	ClosedAt  string `json:"closed_at"`
+	Reopened  int    `json:"reopened"`
+}
+
+const ticketCols = "id, src_id, title, note, text, state, session, actor, created_at, updated_at, closed_at, reopened"
+
+func ticketFromRow(row map[string]interface{}) *Ticket {
+	return &Ticket{
+		ID: asStr(row["id"]), SrcID: asStr(row["src_id"]), Title: asStr(row["title"]),
+		Note: asStr(row["note"]), Text: asStr(row["text"]), State: asStr(row["state"]),
+		Session: asStr(row["session"]), Actor: asStr(row["actor"]),
+		CreatedAt: asStr(row["created_at"]), UpdatedAt: asStr(row["updated_at"]),
+		ClosedAt: asStr(row["closed_at"]), Reopened: int(asNum(row["reopened"])),
+	}
+}
+
+func (s *Store) CreateTicket(t *Ticket) error {
+	if t.ID == "" {
+		t.ID = "tk-" + util.RandomHex(6)
+	}
+	now := nowStr()
+	t.CreatedAt, t.UpdatedAt = now, now
+	if t.State == "" {
+		t.State = "queued"
+	}
+	if t.Actor == "" {
+		t.Actor = "human"
+	}
+	_, err := s.db.Execute(
+		`INSERT INTO super_ticket (id, src_id, title, note, text, state, session, actor, created_at, updated_at, closed_at, reopened)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0)`,
+		t.ID, t.SrcID, t.Title, t.Note, t.Text, t.State, t.Session, t.Actor, t.CreatedAt, t.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetTicket(id string) (*Ticket, error) {
+	row, err := s.db.FetchOne("SELECT "+ticketCols+" FROM super_ticket WHERE id = ?", id)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	return ticketFromRow(row), nil
+}
+
+// TicketSetState moves one ticket; session="" keeps the current landing.
+// Entering closed stamps closed_at; leaving closed counts one reopen.
+func (s *Store) TicketSetState(id, state, session string) error {
+	if state == "closed" {
+		_, err := s.db.Execute("UPDATE super_ticket SET state = 'closed', closed_at = ?, updated_at = ? WHERE id = ?",
+			nowStr(), nowStr(), id)
+		return err
+	}
+	if _, err := s.db.Execute("UPDATE super_ticket SET reopened = reopened + 1 WHERE id = ? AND state = 'closed'", id); err != nil {
+		return err
+	}
+	q := "UPDATE super_ticket SET state = ?, updated_at = ?"
+	args := []interface{}{state, nowStr()}
+	if session != "" {
+		q += ", session = ?"
+		args = append(args, session)
+	}
+	q += " WHERE id = ?"
+	args = append(args, id)
+	_, err := s.db.Execute(q, args...)
+	return err
+}
+
+func (s *Store) TicketCountState(states ...string) (int, error) {
+	q := "SELECT COUNT(*) AS n FROM super_ticket WHERE state IN ("
+	args := make([]interface{}, 0, len(states))
+	for i, st := range states {
+		if i > 0 {
+			q += ","
+		}
+		q += "?"
+		args = append(args, st)
+	}
+	q += ")"
+	row, err := s.db.FetchOne(q, args...)
+	if err != nil || row == nil {
+		return 0, err
+	}
+	return int(asNum(row["n"])), nil
+}
+
+// TicketQueuedFIFO lists queued tickets oldest first (出队按 created_at,
+// 工单本身携带 src_id,不会找不回源)。
+func (s *Store) TicketQueuedFIFO(limit int) ([]*Ticket, error) {
+	rows, err := s.db.FetchAll(
+		"SELECT "+ticketCols+" FROM super_ticket WHERE state = 'queued' ORDER BY rowid ASC LIMIT ?", limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*Ticket, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ticketFromRow(r))
+	}
+	return out, nil
+}
+
+func (s *Store) TicketsBySrc(srcID string) ([]*Ticket, error) {
+	rows, err := s.db.FetchAll(
+		"SELECT "+ticketCols+" FROM super_ticket WHERE src_id = ? ORDER BY rowid DESC", srcID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*Ticket, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ticketFromRow(r))
+	}
+	return out, nil
+}
+
+// TicketActiveBySrc returns the one live (queued|running) ticket of a source, if any.
+func (s *Store) TicketActiveBySrc(srcID string) (*Ticket, error) {
+	row, err := s.db.FetchOne(
+		"SELECT " + ticketCols + " FROM super_ticket WHERE src_id = ? AND state IN ('queued','running') ORDER BY rowid ASC LIMIT 1", srcID)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	return ticketFromRow(row), nil
+}
+
+func (s *Store) TicketActiveBySession(sessID string) (*Ticket, error) {
+	row, err := s.db.FetchOne(
+		"SELECT " + ticketCols + " FROM super_ticket WHERE session = ? AND state = 'running' ORDER BY rowid ASC LIMIT 1", sessID)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	return ticketFromRow(row), nil
+}
+
+// ListTickets powers the panel tab: newest first, optionally only the live ones first.
+func (s *Store) ListTickets(limit int) ([]*Ticket, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 80
+	}
+	rows, err := s.db.FetchAll(
+		"SELECT " + ticketCols + " FROM super_ticket ORDER BY CASE state WHEN 'running' THEN 0 WHEN 'queued' THEN 1 WHEN 'ready' THEN 2 ELSE 3 END, rowid DESC LIMIT ?", limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*Ticket, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ticketFromRow(r))
+	}
+	return out, nil
+}
+
+// --- binding (订阅即绑定:thread 地址 = 会话) ---
+
+type Binding struct {
+	SrcID          string `json:"src_id"`
+	Sess           string `json:"sess"`
+	Binder         string `json:"binder"`
+	State          string `json:"state"`
+	Forever        bool   `json:"forever"`
+	UnsubscribedAt string `json:"unsubscribed_at"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+const bindCols = "src_id, sess, binder, state, forever, unsubscribed_at, created_at, updated_at"
+
+func bindFromRow(row map[string]interface{}) *Binding {
+	return &Binding{
+		SrcID: asStr(row["src_id"]), Sess: asStr(row["sess"]), Binder: asStr(row["binder"]),
+		State: asStr(row["state"]), Forever: asNum(row["forever"]) != 0,
+		UnsubscribedAt: asStr(row["unsubscribed_at"]),
+		CreatedAt:      asStr(row["created_at"]), UpdatedAt: asStr(row["updated_at"]),
+	}
+}
+
+func (s *Store) BindSource(b *Binding) error {
+	now := nowStr()
+	b.CreatedAt, b.UpdatedAt = now, now
+	if b.State == "" {
+		b.State = "active"
+	}
+	_, err := s.db.Execute(
+		`INSERT INTO super_binding (src_id, sess, binder, state, forever, unsubscribed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(src_id) DO UPDATE SET sess = excluded.sess, binder = excluded.binder,
+		   state = 'active', unsubscribed_at = '', updated_at = excluded.updated_at`,
+		b.SrcID, b.Sess, b.Binder, b.State, boolInt(b.Forever), b.UnsubscribedAt, b.CreatedAt, b.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetBinding(srcID string) (*Binding, error) {
+	row, err := s.db.FetchOne("SELECT "+bindCols+" FROM super_binding WHERE src_id = ?", srcID)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	return bindFromRow(row), nil
+}
+
+func (s *Store) ListBindings() ([]*Binding, error) {
+	rows, err := s.db.FetchAll("SELECT " + bindCols + " FROM super_binding ORDER BY created_at ASC")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*Binding, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, bindFromRow(r))
+	}
+	return out, nil
+}
+
+// BindingUnsubscribe closes a subscription; forever keeps the grace open
+// indefinitely, otherwise the GC drops the row 3 days later (v9 定稿)。
+func (s *Store) BindingUnsubscribe(srcID string, forever bool) error {
+	_, err := s.db.Execute(
+		`UPDATE super_binding SET state = 'unsubscribed', forever = ?, unsubscribed_at = ?, updated_at = ? WHERE src_id = ?`,
+		boolInt(forever), nowStr(), nowStr(), srcID)
+	return err
+}
+
+func (s *Store) BindingReactivate(srcID string) error {
+	_, err := s.db.Execute(
+		"UPDATE super_binding SET state = 'active', unsubscribed_at = '', updated_at = ? WHERE src_id = ?", nowStr(), srcID)
+	return err
+}
+
+func (s *Store) BindingDropExpired(cutoff string) ([]string, error) {
+	rows, err := s.db.FetchAll(
+		`SELECT src_id FROM super_binding WHERE state = 'unsubscribed' AND forever = 0 AND unsubscribed_at != '' AND unsubscribed_at <= ?`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		id := asStr(r["src_id"])
+		if _, err := s.db.Execute("DELETE FROM super_binding WHERE src_id = ?", id); err == nil {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+

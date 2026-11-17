@@ -2,6 +2,7 @@ package super
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -10,9 +11,10 @@ import (
 // lifetime (human requirement: minicode 生命周期常驻调度).
 //
 // 身份说明:runner 是 super 子系统自带的基础设施(本进程里的 15s 定时器),
-// 不是 super worker,也不是 super agent 在"干活"。它只做三件事:到点把任务
-// 文本投递进消息通道、兜底冲刷缓冲、捞起排队任务。真正的执行永远发生在人类
-// 或 super 派给 worker 的地方。定时任务没有脚本——任务就是一句话,存 db。
+// 不是 super worker,也不是 super agent 在"干活"。v9 之后它干五件事:
+// 轮询到点的采集源(pollSources)、按决策表路由事件(在 tickets.go)、
+// FIFO 放排队工单(PickUpTickets)、回收退订过期的绑定(gcBindings)、
+// 以及旧世界的兜底(定时任务投递/缓冲冲刷/排队捞起)。
 func (s *Service) runnerLoop(ctx context.Context) {
 	s.startedAt = time.Now()
 	t := time.NewTicker(15 * time.Second)
@@ -22,11 +24,72 @@ func (s *Service) runnerLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			s.pollSources()
+			s.PickUpTickets()
+			s.gcBindings()
 			s.runDue()
 			s.checkFlushTimeout()
 			s.PickUpQueue()
 		}
 	}
+}
+
+// pollSources advances every enabled source whose poll clock came due. Each
+// source gets its own goroutine — a git ls-remote can hit the network and a
+// slow one must never hold the tick (the adapter itself carries a 30s cap).
+func (s *Service) pollSources() {
+	srcs, err := s.store.ListSources()
+	if err != nil {
+		return
+	}
+	for _, src := range srcs {
+		if !src.Enabled {
+			continue
+		}
+		if src.LastRun != "" {
+			last, err := time.Parse(time.RFC3339, src.LastRun)
+			if err == nil && time.Since(last) < time.Duration(src.PollSec)*time.Second {
+				continue
+			}
+		}
+		go s.pollSource(src)
+	}
+}
+
+func (s *Service) pollSource(src *Source) {
+	ad, err := GetKind(src.Kind)
+	if err != nil || !ad.Enabled() {
+		_ = s.store.SourceSetEnabled(src.ID, false)
+		s.audit("runner", "source.disabled", src.ID, "类型 "+src.Kind+" 未注册/未启用,已自动停用", src.ID)
+		return
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal([]byte(src.ConfigJSON), &cfg); err != nil {
+		_ = s.store.SourceSetResult(src.ID, time.Now().Format(time.RFC3339), "", "config JSON 损坏: "+err.Error())
+		return
+	}
+	trig, newCursor, err := ad.Poll(s.ctx, cfg, src.Cursor)
+	now := time.Now().Format(time.RFC3339)
+	if err != nil {
+		_ = s.store.SourceSetResult(src.ID, now, "", err.Error())
+		if src.ErrCount == 0 {
+			// 首次失败冒泡一次,后续静默只记审计(重试到成功自然清零)。
+			s.audit("runner", "source.err", src.ID, truncate(err.Error(), 200), src.ID)
+			s.notifyRouter(fmt.Sprintf("【采集源报错】「%s」(%s) 轮询失败:%s。Router 记录即可;连续失败人类可在采集源页签停用。",
+				src.Name, src.Kind, truncate(err.Error(), 120)))
+		}
+		return
+	}
+	if src.ErrCount > 0 {
+		s.audit("runner", "source.recover", src.ID, "轮询恢复正常", src.ID)
+	}
+	_ = s.store.SourceSetResult(src.ID, now, newCursor, "")
+	if trig == nil {
+		return // 基线静默 / 无变化
+	}
+	trig.SrcKey = src.ID
+	s.audit("runner", "source.event", src.ID, truncate(trig.Text, 160), src.ID)
+	s.HandleTrigger(src, trig)
 }
 
 // runDue fires every enabled task schedule whose period elapsed.

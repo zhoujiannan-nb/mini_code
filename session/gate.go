@@ -68,9 +68,10 @@ func (s *Session) gateFor(cfg *agent.AgentConfig) ToolGate {
 	return func(ctx context.Context, toolName string, params map[string]interface{}) (bool, string) {
 		if cfg != nil && len(cfg.Permissions.Tools) > 0 && !cfg.Permissions.IsToolAllowed(toolName, "") {
 			// The compiled role table only knows core tools; a plugin tool is
-			// absent from it by construction, so an absent entry is not a deny.
-			// An explicit "deny" from the role still wins.
-			if !explicitlyDenied(cfg, toolName) && isPluginTool(toolName) {
+			// absent from it by construction, so an absent entry is not a deny
+			// — unless the role opts out of the exemption wholesale (Router:
+			// DenyPluginTools). An explicit "deny" from the role always wins.
+			if !explicitlyDenied(cfg, toolName) && !cfg.DenyPluginTools && isPluginTool(toolName) {
 				// allowed: fall through to the mode check
 			} else {
 				return false, fmt.Sprintf("Error: tool %q is not permitted for agent role %q. Use only the tools available to you.", toolName, s.record.AgentRole)

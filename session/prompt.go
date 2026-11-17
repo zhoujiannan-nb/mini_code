@@ -280,7 +280,9 @@ func (pb *PromptBuilder) EnableWorkerTools(sessionID string, api tools.WorkerDis
 // lists the core tools, so a plugin tool would otherwise be filtered out and the
 // model would never see it. Appended (plugin) tools are therefore allowed by
 // default unless the role explicitly denies that exact name — a plugin still
-// cannot sneak past an explicit "deny".
+// cannot sneak past an explicit "deny" — or the role opts out wholesale via
+// cfg.DenyPluginTools (Router: the schema must not even advertise what the gate
+// would deny, or the model gets talked into hallucinating the call anyway).
 func (pb *PromptBuilder) GetFilteredDefinitions(cfg *agent.AgentConfig) []provider.ToolSchema {
 	defs := pb.Tools.GetDefinitions(false)
 	defs = dropDisabledTools(defs)
@@ -294,7 +296,7 @@ func (pb *PromptBuilder) GetFilteredDefinitions(cfg *agent.AgentConfig) []provid
 			filtered = append(filtered, d)
 			continue
 		}
-		if pb.Tools.IsAppended(name) && !explicitlyDenied(cfg, name) {
+		if pb.Tools.IsAppended(name) && !explicitlyDenied(cfg, name) && !cfg.DenyPluginTools {
 			filtered = append(filtered, d)
 		}
 	}

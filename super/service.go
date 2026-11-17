@@ -87,6 +87,7 @@ type Service struct {
 	startedAt time.Time
 
 	pickupMu sync.Mutex
+	ticketMu sync.Mutex // serializes the FIFO ticket dispatcher
 
 	histMu sync.Mutex
 	hist   map[string][]ExecRec
@@ -213,8 +214,12 @@ func (s *Service) eventLoop(ctx context.Context, ch <-chan channels.Message) {
 	}
 }
 
-// handleWorkerTerm turns the terminal message of a bound worker session into
-// an immediate channel report for the super agent.
+// handleWorkerTerm is the v9 bubble rule (progress 静默, ready 才冒泡):
+// a bound session's terminal message marks its running ticket ready and
+// bubbles ONE line into the Router audit session. A session turn that rides
+// no running ticket (plain follow-up chatter on a thread) stays silent — the
+// old model of injecting every worker turn into the Router is exactly what
+// made it verbose, and it is gone.
 func (s *Service) handleWorkerTerm(m channels.Message) {
 	sid := m.SessionID
 	if sid == "" || sid == s.SuperSessionID() {
@@ -224,23 +229,31 @@ func (s *Service) handleWorkerTerm(m channels.Message) {
 	if err != nil || b == nil || b.Status != "active" {
 		return
 	}
-	w, _ := s.store.GetWorker(b.SwID)
-	name := b.SwID
-	if w != nil {
-		name = w.Name
-	}
-	content := truncate(strings.TrimSpace(m.Content), 2000)
-	if content == "" {
+	tk, err := s.store.TicketActiveBySession(sid)
+	if err != nil || tk == nil || tk.State != "running" {
+		// progress 静默:只留审计痕迹,不打扰任何人。
+		if m.Kind == channels.KindError {
+			_ = s.store.AuditInsert("runner", "worker.term.fail", sid, truncate(m.Content, 200), sid+","+b.SwID)
+		}
 		return
 	}
-	kind := "完成"
+	if err := s.store.TicketSetState(tk.ID, "ready", ""); err != nil {
+		slog.Warn("super: ticket ready transition failed", "ticket", tk.ID, "err", err)
+		return
+	}
+	verdict := "完成"
 	if m.Kind == channels.KindError {
-		kind = "执行失败"
+		verdict = "执行失败"
 	}
-	text := fmt.Sprintf("会话 %s（worker %s）%s：\n%s", sid, name, kind, content)
-	if _, err := s.Publish("imm", "worker_report:"+b.SwID, text, "runner"); err != nil {
-		slog.Warn("super: worker report not published", "session", sid, "err", err)
+	sum := truncate(strings.TrimSpace(m.Content), 300)
+	s.audit("runner", "ticket.ready", tk.ID, verdict+" · "+truncate(tk.Title, 80), tk.ID+","+sid)
+	srcTag := "人工"
+	if tk.SrcID != "" {
+		srcTag = tk.SrcID
 	}
+	s.notifyRouter(fmt.Sprintf("【工单ready】%s「%s」(%s · %s) 回合结束:%s。摘要:%s。等人类在工单中心验收，Router 记录即可，无需回复。",
+		tk.ID, tk.Title, srcTag, sid, verdict, sum))
+	go s.PickUpTickets() // 腾出的名额立刻放排队工单进来
 }
 
 // --- super session ---
@@ -307,6 +320,11 @@ func (s *Service) EnsureSuper() (string, error) {
 	sess, err := s.mgr.CreateSessionRecord("Super-Agent", "super", dir, nil)
 	if err != nil {
 		return "", fmt.Errorf("create super session: %w", err)
+	}
+	// v9: Router 思考默认关——它是转述与审计的嘴,不是思考的脑。人类可在
+	// 会话里手动打开,新建时默认 disabled。
+	if err := s.mgr.SetReasoning(sess.ID(), "disabled", ""); err != nil {
+		slog.Debug("super: thinking-off not applied", "session", sess.ID(), "err", err)
 	}
 	// Pin the title (TitleSrc=user): the auto titler must not rename the fixture.
 	if err := s.mgr.RenameSession(sess.ID(), "Super-Agent"); err != nil {
@@ -454,7 +472,7 @@ func (s *Service) CreateWorker(name, note, model string) (*Worker, error) {
 	cfg := s.Config()
 	live, _ := s.store.CountLiveWorkers()
 	if live >= cfg.WorkerCap {
-		return nil, fmt.Errorf("worker 上限已满（%d/%d）：先退役一个，或用 super_queue 把任务排队并告知人类可调上限", live, cfg.WorkerCap)
+		return nil, fmt.Errorf("worker 名额已满（%d/%d）：请人类在 Workers 页签退役闲置 worker，或调大 worker_cap", live, cfg.WorkerCap)
 	}
 	if exist, _ := s.store.GetWorkerByName(name); exist != nil {
 		return nil, fmt.Errorf("已存在同名活跃 worker: %s（直接给它下发任务即可）", name)
@@ -681,6 +699,14 @@ type Overview struct {
 	Procs             []*Process        `json:"procs"`
 	Audits            []*AuditRow       `json:"audits"`
 	RunnerStartedAt   string            `json:"runner_started_at"`
+	// v9 采集层:
+	Sources           []*Source         `json:"sources"`
+	Bindings          map[string]*Binding `json:"bindings"`
+	Tickets           []*Ticket         `json:"tickets"`
+	Kinds             []map[string]interface{} `json:"kinds"`
+	RunningTickets    int               `json:"running_tickets"`
+	QueuedTickets     int               `json:"queued_tickets"`
+	TicketCap         int               `json:"ticket_cap"`
 }
 
 func (s *Service) Overview() *Overview {
@@ -696,6 +722,11 @@ func (s *Service) Overview() *Overview {
 		Procs:           []*Process{},
 		Audits:          []*AuditRow{},
 		RunnerStartedAt: s.startedAt.Format(time.RFC3339),
+		Sources:         []*Source{},
+		Bindings:        map[string]*Binding{},
+		Tickets:         []*Ticket{},
+		Kinds:           KindDescriptors(),
+		TicketCap:       maxRunningTickets,
 	}
 	if ws, err := s.store.ListWorkers(); err == nil {
 		for _, w := range ws {
@@ -740,6 +771,24 @@ func (s *Service) Overview() *Overview {
 	}
 	if a, err := s.store.AuditRecent(120, "", ""); err == nil {
 		ov.Audits = a
+	}
+	// v9 采集层快照:源 + 绑定索引 + 工单 + 并发计数
+	if srcs, err := s.store.ListSources(); err == nil {
+		ov.Sources = srcs
+	}
+	if bs, err := s.store.ListBindings(); err == nil {
+		for _, b := range bs {
+			ov.Bindings[b.SrcID] = b
+		}
+	}
+	if ts, err := s.store.ListTickets(80); err == nil {
+		ov.Tickets = ts
+	}
+	if n, err := s.store.TicketCountState("running"); err == nil {
+		ov.RunningTickets = n
+	}
+	if n, err := s.store.TicketCountState("queued"); err == nil {
+		ov.QueuedTickets = n
 	}
 	return ov
 }
@@ -885,14 +934,14 @@ func parseEvery(v string) (int, error) {
 	return total, nil
 }
 
-// RegisterTools adds the super_* orchestration tools to one session's
-// registry. Called per task for agent_role=="super" sessions only.
+// RegisterTools adds the super orchestration surface to one session's
+// registry. Called per task for agent_role=="super" sessions only. v9 三件套:
+// 查看 worker / 转发原话 / 创建工单 — 其余(队列、计划、审计查询)全部下架,
+// 会话退役为纯审计,历史只读走面板。
 func (s *Service) RegisterTools(reg *tools.ToolRegistry, sessionID string) {
 	reg.Register(newWorkersTool(s))
-	reg.Register(newSessionsTool(s))
-	reg.Register(newQueueTool(s))
-	reg.Register(newScheduleTool(s))
-	reg.Register(newAuditTool(s))
+	reg.Register(newSendTool(s))
+	reg.Register(newTicketTool(s))
 }
 
 // --- helpers ---

@@ -15,6 +15,13 @@ type AgentConfig struct {
 	Prompt      string
 	Mode        string // "primary" | "subagent"
 	Permissions PermissionConfig
+	// DenyPluginTools flips the plugin-tool exemption (session/gate.go): a role
+	// with this set is denied every tool absent from its compiled table that
+	// belongs to an installed plugin, instead of the default "absent plugin
+	// tool is not a deny". The Router persona must not reach sessions_read /
+	// web_search: its surface is exactly the super_* trio, so plugins get
+	// closed by construction rather than by omission.
+	DenyPluginTools bool
 }
 
 // basePermissions is the role's compiled-in allow list. GetFilteredDefinitions
@@ -24,49 +31,49 @@ type AgentConfig struct {
 // which stay allowed so nothing that is still registered somewhere disappears.
 var basePermissions = map[string]interface{}{
 	// dsh core surface
-	"read":               "allow",
-	"write":              "allow",
-	"edit":               "allow",
-	"glob":               "allow",
-	"grep":               "allow",
-	"pwsh":               "allow",
-	"read_image":         "allow",
-	"skill":              "allow",
-	"job_output":         "allow",
-	"job_list":           "allow",
-	"job_kill":           "allow",
-	"todo_write":         "allow",
-	"working_directory":  "allow",
-	"web_fetch":          "allow",
+	"read":              "allow",
+	"write":             "allow",
+	"edit":              "allow",
+	"glob":              "allow",
+	"grep":              "allow",
+	"pwsh":              "allow",
+	"read_image":        "allow",
+	"skill":             "allow",
+	"job_output":        "allow",
+	"job_list":          "allow",
+	"job_kill":          "allow",
+	"todo_write":        "allow",
+	"working_directory": "allow",
+	"web_fetch":         "allow",
 	// dsh root extras
-	"subagent":           "allow",
-	"subagent_fork":      "allow",
-	"send_message":       "allow",
-	"list_agents":        "allow",
-	"wait_agent":         "allow",
-	"create_goal":        "allow",
-	"get_goal":           "allow",
-	"update_goal":        "allow",
+	"subagent":      "allow",
+	"subagent_fork": "allow",
+	"send_message":  "allow",
+	"list_agents":   "allow",
+	"wait_agent":    "allow",
+	"create_goal":   "allow",
+	"get_goal":      "allow",
+	"update_goal":   "allow",
 	// workflow stays allowed in the role table (dsh's preset has it) even
 	// though MiniCode does not register it — the surface decision lives in
 	// session/prompt.go EnableAgentTools; one-line re-registration must not
 	// need a permission change here.
-	"workflow":           "allow",
+	"workflow": "allow",
 	// historical mc names (not registered by default anymore, allowed if wired)
-	"read_file":          "allow",
-	"write_file":         "allow",
-	"edit_file":          "allow",
-	"delete_file":        "allow",
-	"list_dir":           "allow",
-	"search_files":       "allow",
-	"exec":               "allow",
-	"skills":             "allow",
-	"readimg":            "allow",
-	"agent_output":       "allow",
-	"cancel_agent":       "allow",
-	"context_usage":      "allow",
-	"compact_context":    "allow",
-	"workers":            "allow", // 工作大类: discover/create/join + the shared 公约 (only registered for root sessions)
+	"read_file":       "allow",
+	"write_file":      "allow",
+	"edit_file":       "allow",
+	"delete_file":     "allow",
+	"list_dir":        "allow",
+	"search_files":    "allow",
+	"exec":            "allow",
+	"skills":          "allow",
+	"readimg":         "allow",
+	"agent_output":    "allow",
+	"cancel_agent":    "allow",
+	"context_usage":   "allow",
+	"compact_context": "allow",
+	"workers":         "allow", // 工作大类: discover/create/join + the shared 公约 (only registered for root sessions)
 }
 
 func mergePermissions(overrides ...map[string]interface{}) PermissionConfig {
@@ -132,39 +139,42 @@ func SuperAgentConfig() *AgentConfig {
 		Description: "Resident router agent: dispatches tasks to super workers it manages, never executes work itself.",
 		Prompt:      prompt,
 		Mode:        "primary",
+		// v9: the Router surface is exactly the super trio; anything an
+		// installed plugin contributes is denied by construction (the old
+		// "absent plugin tool passes" exemption is switched off here — the
+		// live incident had the Router calling sessions_read / web_read).
+		DenyPluginTools: true,
 		Permissions: mergePermissions(map[string]interface{}{
-			// 纯 Router:只分派、不干活,连读文件都不需要——想了解情况,
-			// 下发个 worker 去查,结果会经通道汇报回来。
+			// 纯 Router:只审计、只转发,连读文件都不需要——想了解情况,
+			// 看工单中心,或者转发给挂着 thread 的会话去查。
 			// orchestration surface (registered per-task by the super service)
 			"super_workers": "allow",
-			"super_sessions": "allow",
-			"super_queue":   "allow",
-			"super_schedule": "allow",
-			"super_audit":   "allow",
+			"super_send":    "allow",
+			"super_ticket":  "allow",
 			// everything else — inspection included — is denied
-			"read":           "deny",
-			"grep":           "deny",
-			"glob":           "deny",
-			"todo_write":     "deny",
-			"write":          "deny",
-			"edit":           "deny",
-			"pwsh":           "deny",
-			"read_image":     "deny",
-			"skill":          "deny",
-			"web_fetch":      "deny",
+			"read":              "deny",
+			"grep":              "deny",
+			"glob":              "deny",
+			"todo_write":        "deny",
+			"write":             "deny",
+			"edit":              "deny",
+			"pwsh":              "deny",
+			"read_image":        "deny",
+			"skill":             "deny",
+			"web_fetch":         "deny",
 			"working_directory": "deny",
-			"job_output":     "deny",
-			"job_list":       "deny",
-			"job_kill":       "deny",
-			"subagent":       "deny",
-			"subagent_fork":  "deny",
-			"send_message":   "deny",
-			"list_agents":    "deny",
-			"wait_agent":     "deny",
-			"create_goal":    "deny",
-			"get_goal":       "deny",
-			"update_goal":    "deny",
-			"workflow":       "deny",
+			"job_output":        "deny",
+			"job_list":          "deny",
+			"job_kill":          "deny",
+			"subagent":          "deny",
+			"subagent_fork":     "deny",
+			"send_message":      "deny",
+			"list_agents":       "deny",
+			"wait_agent":        "deny",
+			"create_goal":       "deny",
+			"get_goal":          "deny",
+			"update_goal":       "deny",
+			"workflow":          "deny",
 		}),
 	}
 }

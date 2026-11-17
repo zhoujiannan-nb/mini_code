@@ -1,9 +1,9 @@
 // Super-Agent(Router)主区面板。
 //
 // SuperFrame 包在 Chat+Composer 外面:当前会话不是 super 时原样渲染 children,
-// 对普通会话零影响;是 super 时在聊天区顶部画六页签,「会话」页签保留原生聊天,
-// 其余五页签换成只读为主的监控面板(人类在这里只做"配边界 + 拨开关"两件事:
-// 配置条 / worker 公约 / 定时任务启停 / 手动冲刷,全部走 /api/super/* 且后端记审计)。
+// 对普通会话零影响;是 super 时在聊天区顶部画页签栏,「会话」页签保留原生聊天,
+// 其余页签是只读为主的监控/操作面板。v9 模型:采集源(Source)→绑定 thread→
+// 工单;人类在这里配边界、建源、验收工单,全部走 /api/super/* 且后端记审计。
 //
 // 数据源只有一个:GET /api/super/overview 一次给全(3s 轮询,仅 super 会话打开时)。
 import { h, Fragment } from "preact";
@@ -85,6 +85,8 @@ async function refreshSuperDrawer() {
 
 const TABS = [
   { id: "chat", label: "会话" },
+  { id: "sources", label: "采集源" },
+  { id: "tickets", label: "工单中心" },
   { id: "workers", label: "Workers" },
   { id: "sched", label: "定时任务" },
   { id: "chan", label: "消息通道" },
@@ -121,6 +123,8 @@ export function SuperFrame({ children }) {
   const liveWorkers = ov ? ((ov.workers || []).filter((w) => w.live).length) : 0;
   const chanPending = ov ? (ov.buf_count || 0) : 0;
   const badges = {
+    sources: ov ? (ov.sources || []).filter((s) => s.enabled).length : 0,
+    tickets: ov ? (ov.running_tickets || 0) : 0,
     workers: ov ? (ov.workers || []).length : 0,
     sched: ov ? (ov.schedules || []).filter((s) => s.enabled).length : 0,
     chan: chanPending,
@@ -131,12 +135,12 @@ export function SuperFrame({ children }) {
     <div class="sup-banner">
       <span class="sb-bolt">⚡</span>
       <b class="sb-title">Super-Agent</b>
-      <span class="sb-chip">自动</span>
-      <span class="sb-stats">Worker ${badges.workers} · 运行中 ${liveWorkers} · 通道 ${chanPending}</span>
+      <span class="sb-chip">v9 直投</span>
+      <span class="sb-stats">采集源 ${badges.sources} · 工单 ${ov ? (ov.running_tickets || 0) : 0}/${ov ? (ov.ticket_cap || 3) : 3} · 排队 ${ov ? (ov.queued_tickets || 0) : 0} · Worker ${badges.workers}</span>
       <span class="sup-tabs-flex"></span>
-      <button class="sup-linkbtn" title="切到 Workers 页签:上限/默认模型/工作区根/批量N/兜底冲刷"
-        onClick=${() => setState({ superTab: "workers" })}>⚙ 边界配置</button>
-      <button class="sup-linkbtn" onClick=${() => setState({ superTab: "workers" })}>→ 去 Workers 管理</button>
+      <button class="sup-linkbtn" title="切到采集源页签:建源/启停/测连通/绑定 thread"
+        onClick=${() => setState({ superTab: "sources" })}>⚙ 采集源管理</button>
+      <button class="sup-linkbtn" onClick=${() => setState({ superTab: "tickets" })}>→ 去工单中心</button>
     </div>
     <div class="sup-tabs">
       ${TABS.map((t) => html`
@@ -154,6 +158,8 @@ export function SuperFrame({ children }) {
     </div>
     ${tab === "chat" ? children : html`
       <div class="sup-scroll">
+        ${tab === "sources" ? html`<${SourcesPanel} ov=${ov}/>` : null}
+        ${tab === "tickets" ? html`<${TicketsPanel} ov=${ov}/>` : null}
         ${tab === "workers" ? html`<${WorkersPanel} ov=${ov}/>` : null}
         ${tab === "sched" ? html`<${SchedPanel} ov=${ov}/>` : null}
         ${tab === "chan" ? html`<${ChanPanel} ov=${ov}/>` : null}
@@ -256,6 +262,9 @@ function WorkersPanel({ ov }) {
             <b>${w.name}</b>
             <span class=${"sup-tag " + w.status}>${w.status === "live" ? "在岗" : w.status === "retired" ? "已退役" : w.status}</span>
             <span class="sup-wmeta">${w.model || "默认模型"} · note v${w.note_ver}</span>
+            <span class="sup-tabs-flex"></span>
+            ${w.status !== "retired" ? html`<button class="sup-linkbtn" title="退役 worker(会话与历史保留可查)"
+              onClick=${(e) => { e.stopPropagation(); post(ROUTES.superWorkerRetire, { id: w.id }, "worker " + w.name + " 已退役"); }}>退役</button>` : null}
           </div>
           <div class="sup-wsessions">
             ${sess.map((x) => html`
@@ -290,9 +299,8 @@ function SchedPanel({ ov }) {
   if (!ov) return html`<div class="sup-empty">加载中…</div>`;
   const list = ov.schedules || [];
   return html`
-    <div class="sup-note">定时任务就是<b>一句话</b>,直接存数据库:吩咐 Super-Agent「每 3 小时做某某」,它用 super_schedule 登记;
-      到点 runner(minicode 常驻定时器,基础设施)把任务文本投进消息通道,super 收到后派 worker 执行——全程没有脚本、super 也不写代码。
-      这里的启停/手动投递都以 human 身份记审计。</div>
+    <div class="sup-note"><b>旧世界遗物</b>:一句话定时任务已随 v9 退役(Router 不再持有 super_schedule 工具),未来以 timer 采集源形态回归。
+      本页仅保留存量计划的监控与手动投递;新需求请建「采集源」。</div>
     <table class="sup-table">
       <thead><tr><th></th><th>定时任务</th><th>周期</th><th>通道</th><th>上次</th><th>结果</th><th></th></tr></thead>
       <tbody>
@@ -453,6 +461,147 @@ function AuditPanel({ ov }) {
           <td class="mono">${a.action}</td>
           <td class="wrap" title=${a.target}>${a.target}</td>
           <td class="wrap dim" title=${a.detail}>${(a.detail || "").slice(0, 160)}</td>
+        </tr>`)}
+      </tbody>
+    </table>`;
+}
+
+/* ================= 采集源(v9 Source 采集层) ================= */
+
+function sourceName(ov, id) {
+  const s = ((ov && ov.sources) || []).find((x) => x.id === id);
+  return s ? s.name : (id || "");
+}
+
+function SourcesPanel({ ov }) {
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState({ kind: "git-watch", name: "", path: "", branch: "", poll_sec: 300, bind_mode: "auto", bind_session: "", ttl: "3d" });
+  if (!ov) return html`<div class="sup-empty">加载中…</div>`;
+  const kinds = ov.kinds || [];
+  const sessions = [];
+  (ov.workers || []).forEach((w) => (w.sessions || []).forEach((x) => {
+    if (x.status === "active") sessions.push({ id: x.id, label: w.name + " / " + (x.title || x.id) });
+  }));
+  const set = (k, v) => setF(Object.assign({}, f, { [k]: v }));
+  const test = async (id) => {
+    try {
+      const d = await postJSON(ROUTES.superSourceTest, { id });
+      toast("连通正常:" + (d.summary || "OK"), "ok");
+      loadOv();
+    } catch (e) { toast("测连通失败:" + e.message, "err"); }
+  };
+  const create = () => {
+    if (!f.name || (f.kind === "git-watch" && !f.path)) { toast("名称与仓库目录必填", "err"); return; }
+    const config = f.kind === "git-watch" ? { path: f.path, branch: f.branch } : {};
+    post(ROUTES.superSourceCreate, {
+      kind: f.kind, name: f.name, config,
+      poll_sec: parseInt(String(f.poll_sec || "300"), 10),
+      bind_mode: f.bind_mode, bind_session: f.bind_mode === "assign" ? f.bind_session : "", ttl: f.ttl,
+    }, "采集源已建立" + (f.bind_mode === "assign" ? "并完成绑定" : "(首笔事件到达时自动首绑)"));
+  };
+  return html`
+    <div class="sup-note">v9 模型:<b>采集源(Source)→ 绑定 thread(会话)→ 工单</b>。事件直达绑定的会话、不过 Router;
+      无在办工单时自动 resume 原会话或按落地方式首绑开单。并发上限写死 ${ov.ticket_cap || 3},其余 FIFO 排队。退订=关闭+3 天宽限(事件再达自动复订),可选永久。</div>
+    <div class="sup-cfg">
+      <button class="sup-cfg-head" onClick=${() => setOpen(!open)}>
+        <span class="sc-title">建采集源</span>
+        <span class="sc-chips"><span class="sc-chip">本期仅 git-watch 启用,其余 kind 注册表预留</span></span>
+        <span class="sc-caret">${open ? "▲" : "▼"}</span>
+      </button>
+      ${open ? html`<div class="sup-cfg-body">
+        <label>类型<select value=${f.kind} onInput=${(e) => set("kind", e.target.value)}>
+          ${kinds.map((k) => html`<option key=${k.name} value=${k.name} disabled=${!k.enabled}>${k.label}${k.enabled ? "" : "(预留)"}</option>`)}
+        </select></label>
+        <label>名称<input type="text" placeholder="如 mini_code 上游监控" value=${f.name} onInput=${(e) => set("name", e.target.value)}/></label>
+        ${f.kind === "git-watch" ? html`
+          <label class="wide">仓库目录<input type="text" placeholder="D:\\project_ai\\mini_code" value=${f.path} onInput=${(e) => set("path", e.target.value)}/></label>
+          <label>branch<input type="text" placeholder="留空 = 当前分支" value=${f.branch} onInput=${(e) => set("branch", e.target.value)}/></label>` : null}
+        <label>轮询(s)<input type="number" min="60" max="86400" value=${f.poll_sec} onInput=${(e) => set("poll_sec", e.target.value)}/></label>
+        <label>落地方式<select value=${f.bind_mode} onInput=${(e) => set("bind_mode", e.target.value)}>
+          <option value="auto">A · 自动派发首绑(首笔事件自动建 thread)</option>
+          <option value="assign">B · 指定已有会话</option>
+        </select></label>
+        ${f.bind_mode === "assign" ? html`<label class="wide">指定会话<select value=${f.bind_session} onInput=${(e) => set("bind_session", e.target.value)}>
+          <option value="">— 选择 worker 会话 —</option>
+          ${sessions.map((x) => html`<option key=${x.id} value=${x.id}>${x.label}</option>`)}
+        </select></label>` : null}
+        <label>退订宽限<select value=${f.ttl} onInput=${(e) => set("ttl", e.target.value)}>
+          <option value="3d">3 天(默认)</option><option value="forever">永久保留绑定</option>
+        </select></label>
+        <button class="btn" onClick=${create}>建源(先做连通性检查)</button>
+      </div>` : null}
+    </div>
+    <table class="sup-table">
+      <thead><tr><th></th><th>采集源</th><th>游标</th><th>轮询</th><th>上次</th><th>落地 thread</th><th></th></tr></thead>
+      <tbody>
+        ${(ov.sources || []).length === 0 ? html`<tr><td colspan="7" class="sup-empty">还没有采集源 —— 展开「建采集源」建第一个(如监控 mini_code 上游仓库)</td></tr>` : null}
+        ${(ov.sources || []).map((src) => {
+          const b = (ov.bindings || {})[src.id];
+          return html`<tr key=${src.id} class=${src.enabled ? "" : " off"}>
+            <td><button class=${"sup-sw" + (src.enabled ? " on" : "")} title=${src.enabled ? "停用" : "启用"}
+              onClick=${() => post(ROUTES.superSourceToggle, { id: src.id })}><span></span></button></td>
+            <td class="mono" title=${src.id}>
+              <b>${src.name}</b>
+              <span class="sup-tag task">${src.kind}</span>
+              ${src.ttl === "forever" ? html`<span class="sup-tag" title="退订宽限=永久">永久</span>` : null}
+              ${src.err_count > 0 ? html`<span class="sup-tag bad" title=${src.last_err}>错${src.err_count}</span>` : null}
+            </td>
+            <td class="mono" title=${src.cursor || "未建基线(首轮静默)"}>${(src.cursor || "—").slice(-8)}</td>
+            <td>${everyHuman(src.poll_sec)}</td>
+            <td title=${full(src.last_run)}>${src.last_run ? relTime(src.last_run) : "未跑"}</td>
+            <td>${b ? html`
+              <button class=${"sup-sess" + (b.state === "active" ? " act" : "")} title=${b.sess}
+                onClick=${() => openSuperDrawer(b.sess, "thread·" + src.name)}>
+                ${b.state === "active" ? html`<span class="sup-dot on"></span>` : null}${(b.sess || "").slice(0, 10)}…
+              </button>
+              ${b.state === "unsubscribed" ? html`<span class="sup-tag" title="宽限期内,事件再达自动复订">${b.forever ? "永久宽限" : "退订中"}</span>` : null}
+              <span class="sup-wmeta">by ${b.binder}</span>` 
+              : html`<span class="sup-wmeta">${src.bind_mode === "assign" ? "B·待挂 " + (src.bind_session ? src.bind_session.slice(0, 8) + "…" : "—") : "A·待首绑(等首笔事件)"}</span>`}
+            </td>
+            <td>
+              <button class="sup-linkbtn" onClick=${() => test(src.id)}>测连通</button>
+              ${b && b.state === "active" ? html`<button class="sup-linkbtn" title="退订:关闭绑定进入宽限期"
+                onClick=${() => post(ROUTES.superSourceUnbind, { id: src.id, forever: false }, "已退订(3 天宽限)")}>退订</button>` : null}
+              ${b && b.state === "unsubscribed" && !b.forever ? html`<button class="sup-linkbtn" title="改为永久宽限"
+                onClick=${() => post(ROUTES.superSourceUnbind, { id: src.id, forever: true }, "改为永久宽限")}>永久宽限</button>` : null}
+              <button class="sup-linkbtn" onClick=${() => { if (confirm("删除采集源「" + src.name + "」?绑定即删,工单留档。")) post(ROUTES.superSourceDelete, { id: src.id }, "已删除"); }}>删</button>
+            </td>
+          </tr>`;
+        })}
+      </tbody>
+    </table>`;
+}
+
+/* ================= 工单中心 ================= */
+
+const TK_STATE = { queued: "排队", running: "在跑", ready: "待验收", closed: "完结" };
+
+function TicketsPanel({ ov }) {
+  if (!ov) return html`<div class="sup-empty">加载中…</div>`;
+  const ts = ov.tickets || [];
+  const readyN = ts.filter((t) => t.state === "ready").length;
+  return html`
+    <div class="sup-chandash">
+      <div class="sup-kpi"><b>${ov.running_tickets || 0}/${ov.ticket_cap || 3}</b><span>在跑工单(并发写死)</span></div>
+      <div class="sup-kpi"><b>${ov.queued_tickets || 0}</b><span>排队中(FIFO 自动出队)</span></div>
+      <div class="sup-kpi"><b>${readyN}</b><span>待人类验收</span></div>
+    </div>
+    <div class="sup-note">工单生命周期 <b>queued → running → ready → closed</b>:采集事件与人类交办都先成单;能落地立即派发(原话一字不改 + ≤30字备注),
+      并发满排队;回合结束自动记 ready 并冒泡审计;<b>closed 只由人类验收</b>(点下方"验收"或吩咐 Router 记完结)。ready 的工单被同源新事件追上时 = resume 原会话。</div>
+    <table class="sup-table">
+      <thead><tr><th>工单</th><th>来源</th><th>标题(≤30字转述)</th><th>状态</th><th>thread</th><th>开单</th><th></th></tr></thead>
+      <tbody>
+        ${ts.length === 0 ? html`<tr><td colspan="7" class="sup-empty">还没有工单 —— 建一个采集源、吩咐第一笔事件,或对 Router 说一句话</td></tr>` : null}
+        ${ts.map((t) => html`<tr key=${t.id} class=${t.state === "ready" ? "onrun" : t.state === "closed" ? " off" : ""}>
+          <td class="mono" title=${t.text}>${t.id}${t.reopened ? html`<span class="sup-tag" title="被 resume 过 ${t.reopened} 次">resume×${t.reopened}</span>` : null}</td>
+          <td>${t.src_id ? html`<span class="sup-tag task" title=${t.src_id}>${sourceName(ov, t.src_id)}</span>` : html`<span class="sup-tag" title="人类/Router 交办">人工·${t.actor}</span>`}</td>
+          <td class="wrap" title=${t.text}>${t.title}${t.note ? html` <span class="dim">（${t.note}）</span>` : null}</td>
+          <td><span class=${"sup-tag " + t.state}>${TK_STATE[t.state] || t.state}</span></td>
+          <td>${t.session ? html`<button class=${"sup-sess"} title=${t.session}
+            onClick=${() => openSuperDrawer(t.session, t.title)}>${t.session.slice(0, 10)}…</button>` : html`<span class="sup-wmeta">待落地</span>`}</td>
+          <td title=${full(t.created_at)}>${relTime(t.created_at)}</td>
+          <td>${t.state !== "closed" ? html`<button class="sup-linkbtn" title="人类验收 → closed"
+            onClick=${() => post(ROUTES.superTicketClose, { id: t.id }, "工单 " + t.id + " 已验收")}>验收</button>` : html`<span class="sup-wmeta">${(t.closed_at || "").slice(5, 16)}</span>`}</td>
         </tr>`)}
       </tbody>
     </table>`;

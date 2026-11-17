@@ -121,12 +121,21 @@ export const ROUTES = Object.freeze({
   pluginInstall: "/api/plugins/install",
   pluginPrompt: (kind) => "/api/plugins/prompt?kind=" + encodeURIComponent(kind),
   bootanim: "/api/bootanim",
-  // Super-Agent(Router 子系统):overview 一次给全六页签数据。
+  // Super-Agent(Router 子系统):overview 一次给全页签数据(v9 含采集源/工单)。
   superEnsure: "/api/super/ensure",
   superOverview: "/api/super/overview",
   superConfig: "/api/super/config",
   superWorkerConfig: "/api/super/workers/config",
+  superWorkerRetire: "/api/super/workers/retire",
   superSchedToggle: "/api/super/schedules/toggle",
   superSchedRun: "/api/super/schedules/run",
   superFlush: "/api/super/channel/flush",
+  // v9 采集层 / 工单中心
+  superSourceCreate: "/api/super/sources/create",
+  superSourceToggle: "/api/super/sources/toggle",
+  superSourceDelete: "/api/super/sources/delete",
+  superSourceTest: "/api/super/sources/test",
+  superSourceBind: "/api/super/sources/bind",
+  superSourceUnbind: "/api/super/sources/unbind",
+  superTicketClose: "/api/super/tickets/close",
 });
