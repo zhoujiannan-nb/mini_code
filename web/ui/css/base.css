@@ -87,7 +87,7 @@
       通用等宽,一行里中英基线乱飘。 */
    --mono: "JetBrains Mono", Consolas, ui-monospace,
            "Microsoft YaHei UI", "Microsoft YaHei", monospace;
-   --msg-avatar: 28px;
+   --msg-avatar: 32px;
    --msg-gap: 10px;
    --msg-radius: 16px;
    --msg-text: 14.5px;
@@ -1085,16 +1085,16 @@ details.m-think[open] summary { margin-bottom: 6px; }
 }
 /* 聊天头头像(单聊:agent 首字+哈希色) */
 .chat-ava {
-  width: 26px; height: 26px; flex: 0 0 26px; border-radius: 7px;
+  width: 32px; height: 32px; flex: 0 0 32px; border-radius: 9px;
   display: none; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 700; color: #fff;
+  font-size: 14px; font-weight: 700; color: #fff;
 }
 /* 会话列表项头像:独占左列,高占标题+状态两行 */
 .sess-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sess-ava {
-  width: 46px; height: 46px; flex: 0 0 46px; border-radius: 12px;
+  width: 36px; height: 36px; flex: 0 0 36px; border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 16px; font-weight: 700; color: #fff;
+  font-size: 14px; font-weight: 700; color: #fff;
 }
 /* 用户头像弹窗 */
 .ua-body { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 8px 0 2px; }
