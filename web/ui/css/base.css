@@ -87,7 +87,7 @@
       通用等宽,一行里中英基线乱飘。 */
    --mono: "JetBrains Mono", Consolas, ui-monospace,
            "Microsoft YaHei UI", "Microsoft YaHei", monospace;
-   --msg-avatar: 28px;
+   --msg-avatar: 36px;
    --msg-gap: 10px;
    --msg-radius: 16px;
    --msg-text: 14.5px;
@@ -1089,9 +1089,9 @@ details.m-think[open] summary { margin-bottom: 6px; }
 /* 会话列表项头像(agent 首字+哈希色,与消息区同一套取色) */
 .sess-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sess-ava {
-  width: 20px; height: 20px; flex: 0 0 20px; border-radius: var(--r-xs);
+  width: 28px; height: 28px; flex: 0 0 28px; border-radius: var(--r-xs);
   display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 700; color: #fff;
+  font-size: 13px; font-weight: 700; color: #fff;
 }
 /* 用户头像弹窗 */
 .ua-body { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 8px 0 2px; }
