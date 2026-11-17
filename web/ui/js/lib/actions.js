@@ -168,7 +168,7 @@ export async function selectSession(id) {
       // 会话角色:"super" 时主区换成 Router 面板(v9:进面板默认落「采集源」工作台)。
       currentRole: s.agent_role || "",
       superOwned: false,   // 若目标确属 super,由点入方(SuperPanel)随后点亮
-      superTab: "sources",
+      superTab: "sched",
       superDrawer: null,   // 离开面板回到聊天视图时收起 worker 会话抽屉
       rows,
       run: { steps: [] },

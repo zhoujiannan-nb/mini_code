@@ -124,19 +124,9 @@ export const ROUTES = Object.freeze({
   // Super-Agent(Router 子系统):overview 一次给全页签数据(v9 含采集源/工单)。
   superEnsure: "/api/super/ensure",
   superOverview: "/api/super/overview",
-  superConfig: "/api/super/config",
-  superWorkerConfig: "/api/super/workers/config",
-  superWorkerRetire: "/api/super/workers/retire",
+  // v10 定时任务版:整个 super 只剩 schedules
+  superSchedCreate: "/api/super/schedules/create",
+  superSchedDelete: "/api/super/schedules/delete",
   superSchedToggle: "/api/super/schedules/toggle",
   superSchedRun: "/api/super/schedules/run",
-  superFlush: "/api/super/channel/flush",
-  // v9 采集层 / 工单中心
-  superSourceCreate: "/api/super/sources/create",
-  superSourceToggle: "/api/super/sources/toggle",
-  superSourceDelete: "/api/super/sources/delete",
-  superSourceTest: "/api/super/sources/test",
-  superSourceBind: "/api/super/sources/bind",
-  superSourceUnbind: "/api/super/sources/unbind",
-  superSourceSetOn: "/api/super/sources/seton",
-  superTicketClose: "/api/super/tickets/close",
 });

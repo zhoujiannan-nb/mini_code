@@ -127,25 +127,24 @@ func WorkAgentConfig() *AgentConfig {
 	}
 }
 
-// SuperAgentConfig is the Router persona: it never does the work itself. The
-// tool surface is deliberately tiny — read-only inspection (read / grep / glob)
-// plus the super_* orchestration tools registered by the super service; the
-// doers (write / edit / pwsh / subagents / goals) are explicitly denied so the
-// runtime gate blocks them even if a schema ever leaks through registration.
+// SuperAgentConfig is the lite Super entry: its whole job is 定时任务 — the
+// runner delivers one pre-written sentence to a bound session on schedule.
+// The tool surface is exactly one tool plus a hard deny of everything else.
 func SuperAgentConfig() *AgentConfig {
 	prompt := LoadPrompt("super.txt")
 	return &AgentConfig{
 		Name:            "super",
-		Description:     "Resident router agent: dispatches tasks to super workers it manages, never executes work itself.",
+		Description:     "Resident schedule entry: manages timed one-liner tasks bound to sessions; never executes work itself.",
 		Prompt:          prompt,
 		Mode:            "primary",
 		DenyPluginTools: true,
 		Permissions: mergePermissions(map[string]interface{}{
-			// orchestration surface (registered per-task by the super service)
-			"super_workers": "allow",
-			"super_send":    "allow",
-			"super_ticket":  "allow",
+			// the one and only orchestration tool (registered per-task)
+			"super_schedule": "allow",
 			// everything else — inspection included — is denied
+			"super_workers":     "deny",
+			"super_send":        "deny",
+			"super_ticket":      "deny",
 			"read":              "deny",
 			"grep":              "deny",
 			"glob":              "deny",
