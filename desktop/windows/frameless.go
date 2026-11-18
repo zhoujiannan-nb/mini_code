@@ -30,6 +30,8 @@ const (
 	htClient  = 1
 	htCaption = 2
 
+	vkLButton = 0x01
+
 	wsCaption = 0x00C00000
 
 	swpNoSize       = 0x0001
@@ -77,6 +79,7 @@ var (
 	procPostMessageW           = user32.NewProc("PostMessageW")
 	procSendMessageW           = user32.NewProc("SendMessageW")
 	procReleaseCapture         = user32.NewProc("ReleaseCapture")
+	procGetAsyncKeyState       = user32.NewProc("GetAsyncKeyState")
 	procSetTimer               = user32.NewProc("SetTimer")
 	procKillTimer              = user32.NewProc("KillTimer")
 	procDwmExtendFrame         = windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmExtendFrameIntoClientArea")
@@ -137,6 +140,9 @@ func installFrameless(w *window) {
 	})
 	_ = w.Bind("mcWinClose", func() { procPostMessageW.Call(hwnd, wmClose, 0, 0) })
 	_ = w.Bind("mcWinDrag", func() {
+		if ks, _, _ := procGetAsyncKeyState.Call(vkLButton); int16(uint16(ks)) >= 0 {
+			return
+		}
 		procReleaseCapture.Call()
 		procSendMessageW.Call(hwnd, wmNCLButtonDown, htCaption, 0)
 	})
