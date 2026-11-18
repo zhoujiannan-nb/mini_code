@@ -106,7 +106,6 @@ export function SuperFrame({ children }) {
     <div class="sup-banner">
       <span class="sb-bolt">⚡</span>
       <b class="sb-title">Super-Agent</b>
-      <span class="sb-chip">v10 定时任务版</span>
       <span class="sb-stats">任务 ${ov ? (ov.schedules || []).length : 0} · 启用 ${enabled}</span>
       <span class="sup-tabs-flex"></span>
       <span class="sup-hint" title="runner=minicode 常驻定时器(tick 15s):到点把写好的话投给绑定会话">
@@ -186,9 +185,6 @@ function SchedPanel({ ov }) {
   };
   const list = ov.schedules || [];
   return html`
-    <div class="sup-note">v10 模型:<b>定时任务 = 到点把一句写好的话,原样投给一个绑定会话</b>。
-      runner 随 minicode 常驻,每 15 秒检查一次到点没到点;投递即完成,任务内容归那个会话自己处理。
-      绑定会话若被删除,任务自动停用(审计里可见)。</div>
     <div class="sup-cfg">
       <button class="sup-cfg-head" onClick=${() => setOpen(!open)}>
         <span class="sc-title">新建定时任务</span>
