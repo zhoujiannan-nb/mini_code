@@ -368,7 +368,11 @@ func (s *server) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	toolsT := 0
-	if lu := sess.LastUsage(); lu != nil {
+	if _, defs, perr := sess.ContextPlan(); perr == nil {
+		for _, d := range defs {
+			toolsT += ctxToolTokens(d)
+		}
+	} else if lu := sess.LastUsage(); lu != nil {
 		if billed := int(ctxNum(lu["prompt"])); billed > counts.total {
 			toolsT = billed - counts.total
 		}
