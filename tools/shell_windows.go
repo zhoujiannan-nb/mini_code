@@ -21,6 +21,7 @@ func applyRawCmdLine(cmd *exec.Cmd, command string) {
 	}
 	cmd.SysProcAttr.CmdLine = prog + " /C " + command
 	cmd.SysProcAttr.HideWindow = true
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
 }
 
 func applyPwshWindow(cmd *exec.Cmd) {
@@ -28,6 +29,7 @@ func applyPwshWindow(cmd *exec.Cmd) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.HideWindow = true
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
 }
 
 func exitSignalName(_ *exec.ExitError) string { return "" }

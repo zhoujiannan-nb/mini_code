@@ -41,7 +41,7 @@ func startShellProcess(dir string) (*exec.Cmd, *os.File, *os.File, *os.File, fun
 	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = errW
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 	if err := cmd.Start(); err != nil {
 		inR.Close()
 		inW.Close()

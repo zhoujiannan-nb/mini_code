@@ -5,6 +5,8 @@ package plugin
 import (
 	"os/exec"
 	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
 func hideWindow(cmd *exec.Cmd) {
@@ -12,4 +14,5 @@ func hideWindow(cmd *exec.Cmd) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.HideWindow = true
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
 }
