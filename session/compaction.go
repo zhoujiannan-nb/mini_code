@@ -34,28 +34,41 @@ func InputBudgetFraction(maxInput int, fraction float64) int {
 
 const compactRequestMarker = "__CTX_COMPACT_REQUEST__"
 
-const compactRequestIntro = `CONTEXT COMPACTION — do not continue the task, do not answer the user, and do not call any tool.
+const compactRequestIntro = `CONTEXT COMPACTION — you are now acting as a compaction engine for this conversation. Do not continue the task, do not answer the user, and do not call any tool.
 
-Compress the ENTIRE conversation above into one handoff summary that lets another agent of you resume the work cold. Write it in the same language as the conversation.`
+Condense the conversation ABOVE into a structured checkpoint that lets another model resume the work with no loss of essential context. Write the checkpoint in the same language as the conversation.`
 
-const compactRequestFormat = `Output EXACTLY these five Markdown sections, in this order, and nothing else:
+const compactRequestFormat = `Output EXACTLY the Markdown structure below: keep every section, in order. Use terse bullets, not prose paragraphs. Write "(none)" for an empty section — never drop a section.
 
-## Goal
-(Overall task goal and original user intent)
+## Primary Request and Intent
+- [the user's original and evolving goals; quote verbatim where the exact wording matters]
 
-## Current Instructions
-(The most recent key user instructions or subtasks, in the user's own words)
+## Key Technical Concepts
+- [technologies, frameworks, patterns, and conventions in play]
 
-## Discoveries
-(Key observations, important tool results, problem diagnoses — exact names, paths and numbers)
+## Files and Code
+- [exact path: why it matters, key changes or snippets]
 
-## Accomplished
-(Completed work, modified files, verified parts, current work state)
+## Errors and Fixes
+- [error: how it was resolved, plus any related user feedback]
 
-## Relevant Files
-(Files that matter now, with a one-line status)
+## Pending Jobs
+- [explicitly requested work not yet completed]
 
-Use exact file paths, symbols, commands and error strings; never generalize. Focus on what is still unfinished and on the latest progress. Do not mention that you are summarizing or compacting.`
+## Current Work
+- [precisely what was in progress at this checkpoint]
+
+## Next Step
+- [the single next action, directly in line with the most recent request, or "(none)"]
+
+## Critical Context
+- [decisions and their rationale, constraints, user preferences, open questions, data needed to continue]
+
+Rules:
+- Preserve exact file paths, commands, error strings, identifiers, numeric values, function signatures, and syntax fragments.
+- Capture user feedback and explicit instructions faithfully, especially corrections.
+- Do NOT mention this summarization request or that the context was compacted.
+- Output only the checkpoint text: do not call any tool or take any other action.`
 
 const compactFocusTemplate = `Additional focus requested before compressing: %q`
 

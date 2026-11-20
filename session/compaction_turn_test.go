@@ -256,7 +256,8 @@ func TestRebuildBudgetUsesTheThresholdUnits(t *testing.T) {
 func TestBuildCompactRequest(t *testing.T) {
 	fixedMsg := BuildCompactRequest("")
 	fixed := fixedMsg.GetText()
-	if !strings.Contains(fixed, "CONTEXT COMPACTION") || !strings.Contains(fixed, "## Relevant Files") {
+	if !strings.Contains(fixed, "CONTEXT COMPACTION") || !strings.Contains(fixed, "## Files and Code") ||
+		!strings.Contains(fixed, "## Current Work") || !strings.Contains(fixed, "## Next Step") {
 		t.Fatalf("fixed prompt missing its structure: %q", fixed)
 	}
 	if !strings.Contains(fixed, compactRequestMarker) {
