@@ -357,7 +357,7 @@ func (s *server) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	all := sess.SnapshotMessages()
 
 	counts := ctxCachedCounts(id, all)
-	tokens := counts.total
+	tokens := sess.CalibratedTokenCount()
 	window := s.be.Mgr().ContextWindowFor(rec.ModelKey)
 	pct := 0
 	if window > 0 {

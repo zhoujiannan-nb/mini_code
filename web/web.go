@@ -547,7 +547,7 @@ func (s *server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session":  sum,
 		"messages": messageViews(all),
-		"tokens": util.CountMessagesTokens(all),
+		"tokens": sess.CalibratedTokenCount(),
 		"usage_tokens": tokensOf(rec.Metadata),
 		"context_window": s.be.Mgr().ContextWindowFor(rec.ModelKey),
 		"last_usage": sess.LastUsage(),
