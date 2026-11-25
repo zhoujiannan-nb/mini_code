@@ -126,6 +126,8 @@ func SummaryBlock(summary string) string {
 
 const compactToolName = "compact_context"
 
+const todoToolName = "todo_write"
+
 func stripCompactionCeremony(history []provider.Message) []provider.Message {
 	compactIDs := make(map[string]bool)
 	for _, m := range history {
@@ -244,15 +246,54 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 		taken = taken[:len(taken)-1]
 	}
 
-	out = make([]provider.Message, 0, len(taken)+2)
+	out = make([]provider.Message, 0, len(taken)+4)
 	if system != nil {
 		out = append(out, *system)
 	}
 	out = append(out, provider.Message{Role: "user", Content: SummaryBlock(summary)})
+	if call, result, ok := latestTodoWrite(history); ok && !toolCallKept(taken, call.ID) {
+		out = append(out, provider.Message{Role: "assistant", ToolCalls: []provider.ToolCall{call}})
+		out = append(out, result)
+	}
 	for i := len(taken) - 1; i >= 0; i-- {
 		out = append(out, taken[i])
 	}
 	return out, true
+}
+
+func latestTodoWrite(history []provider.Message) (provider.ToolCall, provider.Message, bool) {
+	for i := len(history) - 1; i >= 0; i-- {
+		m := history[i]
+		if m.Role != "assistant" {
+			continue
+		}
+		for j := len(m.ToolCalls) - 1; j >= 0; j-- {
+			tc := m.ToolCalls[j]
+			if tc.Function.Name != todoToolName {
+				continue
+			}
+			result := provider.Message{Role: "tool", ToolCallID: tc.ID, Name: todoToolName, Content: "Updated todo list."}
+			for _, r := range history {
+				if r.Role == "tool" && r.ToolCallID == tc.ID {
+					result = r
+					break
+				}
+			}
+			return tc, result, true
+		}
+	}
+	return provider.ToolCall{}, provider.Message{}, false
+}
+
+func toolCallKept(taken []provider.Message, id string) bool {
+	for _, m := range taken {
+		for _, tc := range m.ToolCalls {
+			if tc.ID == id {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func truncateToBudget(m provider.Message, budget int, est tokenEstimator) provider.Message {

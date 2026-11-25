@@ -112,12 +112,7 @@ func (t *TodoTool) Execute(ctx context.Context, params map[string]interface{}) (
 			c++
 		}
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "Updated todo list: %d pending, %d in progress, %d completed.", p, i, c)
-	for _, it := range items {
-		fmt.Fprintf(&b, "\n- [%s] %s", it.Status, it.Content)
-	}
-	return NewTextResult(b.String()), nil
+	return NewTextResult(fmt.Sprintf("Updated todo list: %d pending, %d in progress, %d completed.", p, i, c)), nil
 }
 
 

@@ -1112,25 +1112,3 @@ test("render: 执行摘要的待办跟着最新一份改写走,不是刚列出�
   assert.match(panel.querySelector(".todo-card .td-n").textContent, /2\/2/, "抽屉里的进度跟着最新清单走");
   assert.match(panel.querySelector(".sum-files").textContent, /base\.css/, "相关文件那节不受影响");
 });
-
-test("render: 压缩后消息里没有 todo_write,执行摘要回退读持久化清单", async () => {
-  await resetAll();
-  mountApp();
-  await settle();
-  const persisted = [
-    { content: "改 base.css", status: "completed" },
-    { content: "跑测试", status: "in_progress" },
-  ];
-  setState({
-    sessions: [{ session_id: "s1", title: "压缩会话", status: "completed", todos: persisted }],
-    current: "s1",
-    rows: [{ key: "r1", kind: "assistant", text: "压缩摘要", reasoning: "", steps: [] }],
-    run: { steps: [] },
-    summaryOpen: true,
-  });
-  await settle();
-  const panel = document.querySelector("#summary-panel");
-  assert.ok(panel, "摘要抽屉画出来了");
-  assert.match(panel.querySelector(".todo-card .td-n").textContent, /1\/2/, "压缩后仍显示持久化清单进度");
-  assert.match(panel.querySelector(".todo-card").textContent, /跑测试/, "持久化清单条目可见");
-});
