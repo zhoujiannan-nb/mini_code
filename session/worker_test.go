@@ -692,11 +692,37 @@ func TestWorkerOtherIsFixed(t *testing.T) {
 		!strings.Contains(out, fmt.Sprintf("worker 名额 %d/%d", MaxWorkers, MaxWorkers)) {
 		t.Fatalf("list at the cap: %q", out)
 	}
-	if q := quotaLine(MaxWorkers); !strings.Contains(q, "已满") {
+	if q := quotaLine(MaxWorkers, MaxWorkers); !strings.Contains(q, "已满") {
 		t.Fatalf("quota line when full: %q", q)
 	}
-	if q := quotaLine(2); !strings.Contains(q, fmt.Sprintf("还剩 %d/%d", MaxWorkers-2, MaxWorkers)) {
+	if q := quotaLine(2, MaxWorkers); !strings.Contains(q, fmt.Sprintf("还剩 %d/%d", MaxWorkers-2, MaxWorkers)) {
 		t.Fatalf("quota line with room: %q", q)
+	}
+}
+
+func TestWorkerMaxWorkersConfigurable(t *testing.T) {
+	mgr, svc := newTestWorkerEnv(t)
+	base := mustSession(t, mgr, "base")
+	svc.SetMaxWorkers(3)
+	for i := 1; i <= 2; i++ {
+		if _, err := svc.Create(fmt.Sprintf("cfg-%d", i), "", base.WorkDir(), ""); err != nil {
+			t.Fatalf("create #%d: %v", i, err)
+		}
+	}
+	if _, err := svc.Create("cfg-overflow", "", base.WorkDir(), ""); err == nil {
+		t.Fatal("worker beyond configured cap should be refused")
+	}
+	out := svc.ToolAPIFor(base.ID()).List()
+	if !strings.Contains(out, "worker 名额 3/3") {
+		t.Fatalf("list with configured cap: %q", out)
+	}
+	svc.SetMaxWorkers(8)
+	if _, err := svc.Create("cfg-extra", "", base.WorkDir(), ""); err != nil {
+		t.Fatalf("create after raising cap: %v", err)
+	}
+	svc.SetMaxWorkers(0)
+	if n := svc.maxLimit(); n != MaxWorkers {
+		t.Fatalf("invalid cap should fall back to default, got %d", n)
 	}
 }
 

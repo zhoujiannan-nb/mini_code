@@ -129,6 +129,7 @@ export function Settings() {
   const [models, setModels] = useState([]);
   const [defaultModel, setDefaultModel] = useState("");
   const [webPort, setWebPort] = useState("");
+  const [maxWorkers, setMaxWorkers] = useState("");
   const [error, setError] = useState("");
   const [editing, setEditing] = useState(-1);
   const [datalist, setDatalist] = useState([]);
@@ -142,6 +143,7 @@ export function Settings() {
       setModels(list);
       setDefaultModel(cfg.default_model || (list[0] && list[0].name) || "");
       setWebPort(cfg.web_port || "");
+      setMaxWorkers(cfg.max_workers || "");
       setState({ userAvatar: cfg.user_avatar || "", agentAvatar: cfg.agent_avatar || "" });
       setEditing(-1);
       bootLoadLocal();
@@ -260,6 +262,7 @@ export function Settings() {
     const st = getState();
     const cfg = {
       web_port: numOf(webPort),
+      max_workers: numOf(maxWorkers),
       models: clean,
       default_model: defModel,
       user_avatar: st.userAvatar, 
@@ -378,6 +381,11 @@ export function Settings() {
                 <div class="frow hinted"><label>Web 端口</label>
                   <input type="number" id="w-port" value=${webPort} onInput=${(e) => setWebPort(e.target.value)} />
                   <span class="hint">改完需重启</span>
+                </div>
+                <div class="frow hinted"><label>工作区上限</label>
+                  <input type="number" id="w-max-workers" min="1" max="100" value=${maxWorkers}
+                    onInput=${(e) => setMaxWorkers(e.target.value)} />
+                  <span class="hint">worker 工作区最多能建几个(1-100,留空 = 默认 5);保存后立即生效</span>
                 </div>
                 <div id="w-url-line" class="pl-url-line">当前地址
                   <code>${"http://127.0.0.1:" + (webPort || "?")}</code> · 桌面窗口也是通过它加载界面

@@ -131,6 +131,7 @@ func setup(args []string, maxTurns int) (*runtime, error) {
 
 
 	workers := session.NewWorkerService(mgr.GetStore(), mgr)
+	workers.SetMaxWorkers(cfg.WorkerLimit())
 	mgr.SetWorkers(workers)
 
 	superSvc := super.NewService(mgr.GetStore().DB(), mgr, hub)
@@ -246,6 +247,7 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 
 	if !modelsChanged && old.WebPort == cfg.WebPort && old.Compaction() == cfg.Compaction() &&
 		old.TitleAutoEnabled() == cfg.TitleAutoEnabled() && old.TitleModel == cfg.TitleModel &&
+		old.WorkerLimit() == cfg.WorkerLimit() &&
 		old.UserAvatar == cfg.UserAvatar && old.AgentAvatar == cfg.AgentAvatar &&
 		config.SameBootAnim(old.BootAnim, cfg.BootAnim) {
 		return &web.SaveResult{Message: "配置没有变化"}, nil
@@ -284,6 +286,10 @@ func (rt *runtime) SaveConfig(cfg *config.AppConfig) (*web.SaveResult, error) {
 			}
 			notes = append(notes, "会话自动标题已开启(标题模型:"+label+")")
 		}
+	}
+	if old.WorkerLimit() != cfg.WorkerLimit() {
+		rt.workers.SetMaxWorkers(cfg.WorkerLimit())
+		notes = append(notes, "工作区数量上限已改为"+strconv.Itoa(cfg.WorkerLimit()))
 	}
 	if modelsChanged {
 		clients, allClients, err := buildModelClients(cfg.Models)

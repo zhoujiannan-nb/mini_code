@@ -20,11 +20,21 @@ type AppConfig struct {
 	TitleModel string `json:"title_model,omitempty"`
 
 	WebPort int `json:"web_port"`
+	MaxWorkers int `json:"max_workers,omitempty"`
 	UserAvatar string `json:"user_avatar,omitempty"`
 
 	AgentAvatar string `json:"agent_avatar,omitempty"`
 
 	BootAnim BootAnimConfig `json:"boot_anim"`
+}
+
+const DefaultMaxWorkers = 5
+
+func (c *AppConfig) WorkerLimit() int {
+	if c.MaxWorkers >= 1 && c.MaxWorkers <= 100 {
+		return c.MaxWorkers
+	}
+	return DefaultMaxWorkers
 }
 
 func (c *AppConfig) Compaction() bool { return true }
@@ -108,6 +118,9 @@ func (c *AppConfig) Validate() error {
 	}
 	if c.WebPort < 1 || c.WebPort > 65535 {
 		return fmt.Errorf("web_port must be between 1 and 65535")
+	}
+	if c.MaxWorkers < 0 || c.MaxWorkers > 100 {
+		return fmt.Errorf("max_workers must be 0 (default 5) or between 1 and 100")
 	}
 	return c.BootAnim.Validate()
 }

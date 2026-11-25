@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/user/mini_code/provider"
 	"github.com/user/mini_code/tools"
@@ -25,10 +26,27 @@ type WorkerService struct {
 	store *SessionStore
 	mgr   *SessionManager
 	mu    sync.Mutex
+	maxWorkers atomic.Int64
 }
 
 func NewWorkerService(store *SessionStore, mgr *SessionManager) *WorkerService {
-	return &WorkerService{store: store, mgr: mgr}
+	w := &WorkerService{store: store, mgr: mgr}
+	w.maxWorkers.Store(MaxWorkers)
+	return w
+}
+
+func (w *WorkerService) SetMaxWorkers(n int) {
+	if n < 1 || n > 100 {
+		n = MaxWorkers
+	}
+	w.maxWorkers.Store(int64(n))
+}
+
+func (w *WorkerService) maxLimit() int {
+	if n := int(w.maxWorkers.Load()); n >= 1 {
+		return n
+	}
+	return MaxWorkers
 }
 
 
@@ -77,8 +95,8 @@ func (w *WorkerService) Create(name, summary, baseDir, copyFrom string) (*Worker
 	}
 	if n, err := w.store.countWorkers(); err != nil {
 		return nil, err
-	} else if n >= MaxWorkers {
-		return nil, fmt.Errorf("worker 最多 %d 个(固定的「%s」也占一格),先删一个再建", MaxWorkers, WorkerOtherName)
+	} else if n >= w.maxLimit() {
+		return nil, fmt.Errorf("worker 最多 %d 个(固定的「%s」也占一格),先删一个再建", w.maxLimit(), WorkerOtherName)
 	}
 	baseDir = strings.TrimSpace(baseDir)
 	if baseDir == "" {
@@ -471,7 +489,7 @@ func (a *WorkerToolAPI) WorkerInfo() string {
 	sess.mu.Unlock()
 	if id == "" {
 		return fmt.Sprintf("本会话尚未归属任何 worker。用 action=list 看看已有的 worker(名额 %d/%d),或 action=create 新建一个,或保持现状(一次性小问题不需要 worker)。",
-			a.svc.workerCount(), MaxWorkers)
+			a.svc.workerCount(), a.svc.maxLimit())
 	}
 	rec, _ := a.svc.store.GetWorker(id)
 	var b strings.Builder
@@ -499,11 +517,11 @@ func (w *WorkerService) workerCount() int {
 	return n
 }
 
-func quotaLine(used int) string {
-	if left := MaxWorkers - used; left > 0 {
-		return fmt.Sprintf("worker 名额:还剩 %d/%d。", left, MaxWorkers)
+func quotaLine(used, limit int) string {
+	if left := limit - used; left > 0 {
+		return fmt.Sprintf("worker 名额:还剩 %d/%d。", left, limit)
 	}
-	return fmt.Sprintf("worker 名额已满(%d/%d),再建要先删一个。", used, MaxWorkers)
+	return fmt.Sprintf("worker 名额已满(%d/%d),再建要先删一个。", used, limit)
 }
 
 func (a *WorkerToolAPI) List() string {
@@ -516,11 +534,12 @@ func (a *WorkerToolAPI) List() string {
 		mine = w.WorkerID
 	}
 	if len(recs) == 0 {
-		return fmt.Sprintf("还没有任何 worker(名额 0/%d)。如果这次工作需要一个长期共享目录(会持续多轮、多个会话),用 action=create 新建;一次性小问题可以不用 worker。", MaxWorkers)
+		return fmt.Sprintf("还没有任何 worker(名额 0/%d)。如果这次工作需要一个长期共享目录(会持续多轮、多个会话),用 action=create 新建;一次性小问题可以不用 worker。", a.svc.maxLimit())
 	}
+	limit := a.svc.maxLimit()
 	var b strings.Builder
 	fmt.Fprintf(&b, "worker 名额 %d/%d(★=本会话当前所在;固定的「%s」也占一格):\n",
-		len(recs), MaxWorkers, WorkerOtherName)
+		len(recs), limit, WorkerOtherName)
 	for _, rec := range recs {
 		mark := "-"
 		if rec.WorkerID == mine {
@@ -532,7 +551,7 @@ func (a *WorkerToolAPI) List() string {
 		}
 		fmt.Fprintf(&b, "    工作目录:%s\n", dirLabel(rec.WorkDir, ""))
 	}
-	if len(recs) >= MaxWorkers {
+	if len(recs) >= limit {
 		b.WriteString("join 用 worker_id。名额已满,create 会被拒——先删一个或加入已有的。")
 	} else {
 		b.WriteString("join 用 worker_id;新建用 create。")
@@ -559,7 +578,7 @@ func (a *WorkerToolAPI) Create(name, summary, copyFrom string) string {
 			"本回合已建的工具仍指向旧目录,后续文件操作请用绝对路径;下一个任务起工作目录自动切到上面这个。\n"+
 			"%s\n%s",
 		rec.Name, rec.WorkerID, rec.WorkDir,
-		quotaLine(a.svc.workerCount()), conventionBlock(rec))
+		quotaLine(a.svc.workerCount(), a.svc.maxLimit()), conventionBlock(rec))
 }
 
 func (a *WorkerToolAPI) Join(workerID string) string {

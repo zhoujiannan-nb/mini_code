@@ -1017,6 +1017,11 @@ func (s *server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 			cfg.BootAnim = cur.BootAnim
 		}
 	}
+	if cfg.MaxWorkers <= 0 {
+		if cur := s.be.GetConfig(); cur != nil {
+			cfg.MaxWorkers = cur.MaxWorkers
+		}
+	}
 	cfg.BootAnim.Normalize()
 	if err := cfg.Validate(); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
