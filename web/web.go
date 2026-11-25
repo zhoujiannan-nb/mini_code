@@ -283,6 +283,7 @@ type SessionSummary struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	JobsRunning int `json:"jobs_running,omitempty"`
 	JobsTotal   int `json:"jobs_total,omitempty"`
+	Todos       json.RawMessage `json:"todos,omitempty"`
 }
 
 func (s *server) summarize(r *session.SessionRecord) SessionSummary {
@@ -307,6 +308,9 @@ func (s *server) summarize(r *session.SessionRecord) SessionSummary {
 	}
 	sum.JobsRunning, sum.JobsTotal = s.jobCounts(r.SessionID)
 	sum.Tokens = tokensOf(r.Metadata)
+	if snap, ok := r.Metadata["todos"].(string); ok && snap != "" {
+		sum.Todos = json.RawMessage(snap)
+	}
 	return sum
 }
 
@@ -343,6 +347,9 @@ func (s *server) summarizeSummary(r session.SessionSummary) SessionSummary {
 		Tokens:       int64(r.TotalPrompt) + int64(r.TotalCompletion),
 	}
 	sum.JobsRunning, sum.JobsTotal = s.jobCounts(r.SessionID)
+	if r.Todos != "" {
+		sum.Todos = json.RawMessage(r.Todos)
+	}
 	return sum
 }
 

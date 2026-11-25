@@ -3,7 +3,7 @@ import htm from "htm";
 
 import { useStore, toggleSummaryPanel } from "../lib/store.js";
 import { TodoCard } from "./TodoCard.js";
-import { todoItemsOf, toolArgsOf } from "../lib/tools.js";
+import { todoItemsOf, toolArgsOf, todoStatusOf } from "../lib/tools.js";
 import { fmtK2, paintSpeed, fmtTaskDur } from "../lib/format.js";
 import { openFilePath } from "../lib/markdown.js";
 
@@ -53,6 +53,21 @@ export function summarize(rows, liveSteps) {
   return { todos, files, steps };
 }
 
+function persistedTodos(sess) {
+  const raw = sess && Array.isArray(sess.todos) ? sess.todos : null;
+  if (!raw || !raw.length) return null;
+  const items = [];
+  for (const t of raw) {
+    const text = String((t && (t.content || t.text)) || "").replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    items.push({ text: text, status: todoStatusOf(t.status) });
+  }
+  if (!items.length) return null;
+  const done = items.filter((i) => i.status === "completed").length;
+  const doing = items.filter((i) => i.status === "in_progress").length;
+  return { items: items, done: done, doing: doing, total: items.length, label: done + "/" + items.length };
+}
+
 function statusOf(s, running) {
   if (!s) return { key: "new", text: "等待第一条消息" };
   if (running || s.active) return { key: "running", text: "任务执行中" };
@@ -87,6 +102,7 @@ export function SummaryPanel() {
   const st = statusOf(sess, running);
   const dur = sess ? fmtTaskDur(sess, Date.now()) : "";
   const sum = summarize(rows, runSteps);
+  const todos = sum.todos || persistedTodos(sess);
   const speedText = paintSpeed(speed, speedAccurate);
   const ctxPct = ctxWindow > 0 ? Math.min(100, Math.round((tokens || 0) * 100 / ctxWindow)) : 0;
   const totals = ctxInfo && ctxInfo.totals;
@@ -111,8 +127,8 @@ export function SummaryPanel() {
     <div class="ctx-body">
       <div class="rail-sec">
         <div class="rail-sec-title">执行结果</div>
-        ${sum.todos
-          ? html`<${TodoCard} todos=${sum.todos} />`
+        ${todos
+          ? html`<${TodoCard} todos=${todos} />`
           : html`<div class="rail-empty">本轮还没有待办清单 —— agent 用 todo_write 列计划后,这里会跟着跑。</div>`}
       </div>
 

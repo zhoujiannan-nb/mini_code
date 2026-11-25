@@ -244,6 +244,7 @@ type SessionSummary struct {
 	MessageCount int
 	TotalPrompt     int
 	TotalCompletion int
+	Todos           string
 }
 
 func sessionListQuery(bucket string) string {
@@ -261,7 +262,8 @@ func sessionListQuery(bucket string) string {
 	        CASE WHEN COALESCE(message_count, 0) > 0 THEN message_count
 	             ELSE COALESCE(json_array_length(messages), 0) END AS message_count,
 	        COALESCE(json_extract(metadata, '$.usage_total.prompt'), 0) AS total_prompt,
-	        COALESCE(json_extract(metadata, '$.usage_total.completion'), 0) AS total_completion
+	        COALESCE(json_extract(metadata, '$.usage_total.completion'), 0) AS total_completion,
+	        json_extract(metadata, '$.todos') AS todos
 	 FROM sessions
 	 WHERE (parent_id IS NULL OR parent_id = '') AND ` + predicate +
 		` ORDER BY updated_at DESC LIMIT ? OFFSET ?`
@@ -298,7 +300,8 @@ func (s *SessionStore) ListChildren(parentID string) ([]SessionSummary, error) {
 		        CASE WHEN COALESCE(message_count, 0) > 0 THEN message_count
 	             ELSE COALESCE(json_array_length(messages), 0) END AS message_count,
 		        COALESCE(json_extract(metadata, '$.usage_total.prompt'), 0) AS total_prompt,
-		        COALESCE(json_extract(metadata, '$.usage_total.completion'), 0) AS total_completion
+		        COALESCE(json_extract(metadata, '$.usage_total.completion'), 0) AS total_completion,
+		        json_extract(metadata, '$.todos') AS todos
 		 FROM sessions
 		 WHERE parent_id = ?
 		 ORDER BY created_at ASC`,
@@ -394,6 +397,7 @@ func summaryFromRow(row map[string]interface{}) SessionSummary {
 		MessageCount:    asInt(row["message_count"]),
 		TotalPrompt:     asInt(row["total_prompt"]),
 		TotalCompletion: asInt(row["total_completion"]),
+		Todos:           asString(row["todos"]),
 	}
 }
 
