@@ -431,13 +431,85 @@ func (c *ContextCompactor) ShouldCompactCount(currentTokens, limit int) bool {
 	return limit > 0 && currentTokens >= limit
 }
 
+const compactionSummaryTokens = 8192
+
+func compactionSummaryMaxTokens(client *provider.ModelClient) int {
+	window := client.GetContextWindow()
+	if window <= 0 {
+		return compactionSummaryTokens
+	}
+	n := compactionSummaryTokens
+	if room := window / 4; room < n {
+		n = room
+	}
+	if n < 1024 {
+		n = 1024
+	}
+	return n
+}
+
+func compactionPromptBudget(client *provider.ModelClient, est tokenEstimator, tools []provider.ToolSchema) int {
+	window := client.GetContextWindow()
+	if window <= 0 {
+		return 0
+	}
+	schemas := make([]provider.Message, 0, len(tools))
+	for _, d := range tools {
+		b, _ := json.Marshal(d)
+		schemas = append(schemas, provider.Message{Role: "user", Content: string(b)})
+	}
+	overhead := est(schemas) + compactionSummaryMaxTokens(client) + 1024
+	budget := window - overhead
+	if budget < 4096 {
+		budget = 4096
+	}
+	return budget
+}
+
+func fitCompactionRequest(req []provider.Message, client *provider.ModelClient, _ tokenEstimator, tools []provider.ToolSchema) []provider.Message {
+	raw := defaultTokenEstimator
+	budget := compactionPromptBudget(client, raw, tools)
+	if budget <= 0 || raw(req) <= budget {
+		return req
+	}
+	start := 0
+	if len(req) > 0 && req[0].Role == "system" {
+		start = 1
+	}
+	for i := len(req) - 2; i >= start && raw(req) > budget; i-- {
+		m := &req[i]
+		switch m.Role {
+		case "tool":
+			if pruned, ok := pruneToolText(m.GetText(), ""); ok {
+				m.SetTextContent(pruned)
+			}
+		case "assistant":
+			for j := range m.ToolCalls {
+				tc := &m.ToolCalls[j]
+				if rep, ok := ageOutCallArgs(tc.Function.Name, tc.Function.Arguments); ok {
+					tc.Function.Arguments = rep
+				}
+			}
+		}
+	}
+	for i := len(req) - 2; i >= start && raw(req) > budget; i-- {
+		m := &req[i]
+		if m.Role == "tool" && raw([]provider.Message{*m}) > 512 {
+			t := truncateToBudget(*m, 512, raw)
+			m.SetTextContent(t.GetText())
+		}
+	}
+	return req
+}
+
 func (c *ContextCompactor) SummarizeAndRebuild(ctx context.Context, messages []provider.Message, tools []provider.ToolSchema, instruction string) ([]provider.Message, error) {
 	if len(messages) == 0 {
 		return messages, fmt.Errorf("会话为空,无需压缩")
 	}
 	compEst := calibratedEstimator(c.client.ModelName(), tools)
 	req := append(append([]provider.Message(nil), messages...), BuildCompactRequest(instruction))
-	resp, err := c.client.ChatStream(ctx, req, tools, nil)
+	req = fitCompactionRequest(req, c.client, compEst, tools)
+	resp, err := c.client.ChatStream(ctx, req, tools, nil, provider.WithMaxTokens(compactionSummaryMaxTokens(c.client)))
 	if err != nil {
 		return messages, fmt.Errorf("生成压缩摘要失败: %w", err)
 	}

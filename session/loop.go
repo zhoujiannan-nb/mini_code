@@ -501,6 +501,11 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			return &LoopResult{Success: false, Messages: messages, Turns: turn, Error: err.Error()}, nil
 		}
 		if resp.Error != "" {
+			if isContextOverflowText(resp.Error) && l.shrinkForOverflow(messages) {
+				l.emitEvent(EventCompaction, turn, map[string]any{"kind": "overflow-shrink", "phase": "done"})
+				l.persistTurn(turn, messages)
+				continue
+			}
 			l.emitTaskEnd("failed", turn, resp.Error)
 			return &LoopResult{Success: false, Messages: messages, Turns: turn, Error: resp.Error}, nil
 		}
@@ -1116,6 +1121,78 @@ func (l *AgentLoop) toToolSchemas(defs []provider.ToolSchema) []provider.ToolSch
 		})
 	}
 	return result
+}
+
+func isContextOverflowText(text string) bool {
+	lower := strings.ToLower(text)
+	for _, kw := range []string{"context_length_exceeded", "maximum context length", "context length", "context window", "exceeds the context"} {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *AgentLoop) shrinkForOverflow(messages []provider.Message) bool {
+	est := defaultTokenEstimator
+	budget := inputBudgetFor(l.client)
+	if budget <= 0 {
+		return false
+	}
+	budget = budget * 3 / 4
+	before := est(messages)
+	keep := CompactKeepMessages
+	start := 0
+	if len(messages) > 0 && messages[0].Role == "system" {
+		start = 1
+	}
+	end := len(messages) - keep
+	if end > len(messages) {
+		end = len(messages)
+	}
+	for i := end - 1; i >= start && est(messages) > budget; i-- {
+		m := &messages[i]
+		switch m.Role {
+		case "tool":
+			if pruned, ok := pruneToolText(m.GetText(), ""); ok {
+				m.SetTextContent(pruned)
+			}
+		case "assistant":
+			for j := range m.ToolCalls {
+				tc := &m.ToolCalls[j]
+				if rep, ok := ageOutCallArgs(tc.Function.Name, tc.Function.Arguments); ok {
+					tc.Function.Arguments = rep
+				}
+			}
+		}
+	}
+	for i := end - 1; i >= start && est(messages) > budget; i-- {
+		m := &messages[i]
+		if m.Role == "tool" && est([]provider.Message{*m}) > 512 {
+			t := truncateToBudget(*m, 512, est)
+			m.SetTextContent(t.GetText())
+		}
+	}
+	for i := end - 1; i >= start && est(messages) > budget; i-- {
+		m := &messages[i]
+		switch m.Role {
+		case "user":
+			if est([]provider.Message{*m}) > 1024 {
+				t := truncateToBudget(*m, 1024, est)
+				m.SetTextContent(t.GetText())
+			}
+		case "assistant":
+			if len(m.ToolCalls) == 0 && est([]provider.Message{*m}) > 1024 {
+				t := truncateToBudget(*m, 1024, est)
+				m.SetTextContent(t.GetText())
+			}
+		}
+	}
+	shrunk := est(messages) < before
+	if shrunk {
+		slog.Warn("context overflow: shrunk history in place", "before", before, "after", est(messages), "budget", budget)
+	}
+	return shrunk
 }
 
 func (l *AgentLoop) chatWithRetry(ctx context.Context, turn int, messages []provider.Message, schemas []provider.ToolSchema, onChunk func(provider.StreamChunk)) (*provider.ChatResponse, error) {
