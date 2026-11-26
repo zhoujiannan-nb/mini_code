@@ -226,11 +226,10 @@ test("render: 聊天里的文件路径可点,点击 POST /api/fs/open(带 base)"
   assert.deepEqual(JSON.parse(opens[0].opts.body), { path: "D:\\proj\\src\\a.go", base: WORKDIR });
 });
 
-test("render: 七类运行时注入的 user 轮渲染成 notice,不冒充用户", async () => {
+test("render: 六类运行时注入的 user 轮渲染成 notice,不冒充用户", async () => {
   await resetAll({
     messages: [
       { role: "user", content: "真正的人类发言" },
-      { role: "user", content: "__CTX_USAGE_80__ 上下文已用 80%" },
       { role: "user", content: "<agent id=\"a1\" state=\"completed\">子代理完成</agent>" },
       { role: "user", content: "<job id=\"j1\" state=\"completed\">后台命令完成</job>" },
       { role: "user", content: "__MC_PERSIST_FAILED__ 会话落盘失败" },
@@ -245,15 +244,15 @@ test("render: 七类运行时注入的 user 轮渲染成 notice,不冒充用户"
   await settle();
 
   const notices = Array.from(document.querySelectorAll("#messages .msg.notice"));
-  assert.equal(notices.length, 7, "七类 marker 各一条 notice");
+  assert.equal(notices.length, 6, "六类 marker 各一条 notice");
   assert.equal(document.querySelectorAll("#messages .msg.user").length, 1, "只有真正的人类发言算用户消息");
 
   const text = notices.map((n) => n.textContent).join("\n");
-  for (const label of ["上下文提醒", "子代理回执", "后台命令回执", "持久化告警", "工作区公约", "压缩指令", "压缩摘要"]) {
+  for (const label of ["子代理回执", "后台命令回执", "持久化告警", "工作区公约", "压缩指令", "压缩摘要"]) {
     assert.ok(text.includes(label), "notice 分类标签缺失: " + label);
   }
   assert.equal(notices[0].querySelectorAll("details").length, 1);
-  assert.ok(notices[0].querySelector("pre.notice-full").textContent.includes("上下文已用 80%"));
+  assert.ok(notices[0].querySelector("pre.notice-full").textContent.includes("子代理完成"));
   for (const n of notices) {
     assert.equal(n.querySelector("[data-uav]"), null, "notice 不能带用户头像");
     assert.equal(n.textContent.includes("你"), false, "notice 不能冒充用户");

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -270,57 +269,6 @@ func TestInputBudgetFraction(t *testing.T) {
 	}
 }
 
-func TestUsageReminderInjectionRemoved(t *testing.T) {
-	var mu sync.Mutex
-	var bodies []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Errorf("read request body: %v", err)
-		}
-		mu.Lock()
-		bodies = append(bodies, string(b))
-		mu.Unlock()
-		w.Header().Set("Content-Type", "text/event-stream")
-		writeSSEChunk(w, `{"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}`)
-		w.Write([]byte("data: [DONE]\n\n"))
-	}))
-	defer srv.Close()
-
-	loop, client := newTestLoop(t, srv.URL)
-	defer client.Close()
-	stage1 := InputBudgetFraction(loop.inputBudget(), 0.80)
-	block := strings.Repeat("filler sentence about the ongoing work. ", 50)
-	history := []provider.Message{{Role: "user", Content: block}}
-	cost := countTokens(history[0])
-	if cost <= 0 {
-		t.Fatalf("the filler block should cost tokens, got %d", cost)
-	}
-	history[0].Content = strings.Repeat(block, stage1/cost+2)
-	if got := countTokens(history[0]); got < stage1 {
-		t.Fatalf("the history must clear the old first stage: %d tokens of a %d budget", got, loop.inputBudget())
-	}
-
-	res, err := loop.Run(context.Background(), "SYSTEM", "continue", history)
-	if err != nil || res == nil || !res.Success {
-		t.Fatalf("Run: err=%v success=%v", err, res != nil && res.Success)
-	}
-	for _, m := range res.Messages {
-		if IsUsageNotice(m) {
-			t.Fatalf("a context-usage notice was still injected: %q", firstN(m.GetText(), 120))
-		}
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(bodies) == 0 {
-		t.Fatal("the model was never called, so the request was never checked")
-	}
-	for _, b := range bodies {
-		if strings.Contains(b, usageNoticeMarkerPrefix) {
-			t.Fatalf("the request still carries a usage notice: %s", firstN(b, 200))
-		}
-	}
-}
 
 func TestUnknownWindowFallsBackToConservativeBudget(t *testing.T) {
 	client, err := provider.NewModelClient(config.ModelConfig{

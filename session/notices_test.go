@@ -16,8 +16,6 @@ func TestNoticeKind(t *testing.T) {
 		{"human question", provider.Message{Role: "user", Content: "要不要现在开跑?"}, ""},
 		{"worker note", BuildWorkerNotice("公约更新", noteMarker("w-1", 2)), NoticeWorker},
 		{"worker join", BuildWorkerNotice("这条会话属于 worker「x」", workerNoticeJoin), NoticeWorker},
-		{"context 80 (legacy)", provider.Message{Role: "user", Content: "Context usage is now at 80% of the usable input budget (1000 / 2000 tokens). " + usageNoticeMarker(80)}, NoticeContext},
-		{"context 85 (legacy)", provider.Message{Role: "user", Content: "Context usage is now at 85% of the usable input budget (1000 / 2000 tokens). " + usageNoticeMarker(85)}, NoticeContext},
 		{"subagent", provider.Message{Role: "user", Content: "<subagent id=\"abc12345\" state=\"completed\">Result: done</subagent>"}, NoticeSubagent},
 		{"steer", provider.Message{Role: "user", Content: legacySteerText}, NoticeSteer},
 		{"retry", provider.Message{Role: "user", Content: emptyRetryNotice}, NoticeRetry},

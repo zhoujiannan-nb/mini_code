@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	compactInputFraction = 0.90
+	compactInputFraction = 0.85
 
 	CompactKeepMessages = 3
 	CompactKeepMaxTokens = 20000
@@ -109,16 +109,6 @@ func StripCompactRequests(messages []provider.Message) []provider.Message {
 	return out
 }
 
-func IsUsageNotice(m provider.Message) bool {
-	t := m.GetText()
-	for _, pct := range []int{75, 80, 85, 90, 95} {
-		if strings.Contains(t, usageNoticeMarker(pct)) {
-			return true
-		}
-	}
-	return false
-}
-
 func SummaryBlock(summary string) string {
 	return "<previous-summary>\nCompressed summary:\n\n" + strings.TrimSpace(summary) +
 		"\n</previous-summary>\n\nContinue the task from this checkpoint. Do not greet the user, do not acknowledge this summary, and do not re-read files or re-run commands whose results are already recorded above."
@@ -188,7 +178,7 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 			}
 			continue
 		}
-		if IsCompactRequest(m) || IsUsageNotice(m) || IsWorkerNotice(m) {
+		if IsCompactRequest(m) || IsWorkerNotice(m) {
 			continue
 		}
 		history = append(history, m)
@@ -258,7 +248,38 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 	for i := len(taken) - 1; i >= 0; i-- {
 		out = append(out, taken[i])
 	}
+	if budget > 0 && est(out) > budget {
+		out = shrinkOversizedTail(out, budget, est)
+	}
 	return out, true
+}
+
+func shrinkOversizedTail(out []provider.Message, budget int, est tokenEstimator) []provider.Message {
+	if len(out) == 0 {
+		return out
+	}
+	keep := CompactKeepMessages
+	if keep > len(out) {
+		keep = len(out)
+	}
+	protected := len(out) - keep
+	for i := protected - 1; i >= 2 && est(out) > budget; i-- {
+		m := &out[i]
+		switch m.Role {
+		case "tool":
+			if pruned, ok := pruneToolText(m.GetText(), ""); ok {
+				m.SetTextContent(pruned)
+			}
+		case "assistant":
+			for j := range m.ToolCalls {
+				tc := &m.ToolCalls[j]
+				if rep, ok := ageOutCallArgs(tc.Function.Name, tc.Function.Arguments); ok {
+					tc.Function.Arguments = rep
+				}
+			}
+		}
+	}
+	return out
 }
 
 func latestTodoWrite(history []provider.Message) (provider.ToolCall, provider.Message, bool) {

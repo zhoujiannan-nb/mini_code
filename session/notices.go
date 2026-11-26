@@ -8,7 +8,6 @@ import (
 
 const (
 	NoticeWorker = "worker"
-	NoticeContext = "context"
 	NoticeSubagent = "subagent"
 	NoticeJob = "job"
 	NoticeSteer = "steer"
@@ -34,8 +33,6 @@ func NoticeKind(m provider.Message) (kind string, ok bool) {
 	switch {
 	case IsWorkerNotice(m):
 		return NoticeWorker, true
-	case strings.Contains(t, usageNoticeMarkerPrefix):
-		return NoticeContext, true
 	case IsCompactRequest(m):
 		return NoticeCompact, true
 	case strings.Contains(t, "<previous-summary>"):

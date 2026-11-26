@@ -127,7 +127,6 @@ func TestRebuildContextDropsNoticesAndInstructions(t *testing.T) {
 	in := []provider.Message{
 		{Role: "system", Content: "SYSTEM"},
 		{Role: "user", Content: "work"},
-		{Role: "user", Content: "Context usage is now at 80% of the usable input budget (900 / 1000 tokens). " + usageNoticeMarker(80)},
 		BuildCompactRequest(""),
 	}
 	out, ok := RebuildContext(in, "summary", CompactKeepMessages, CompactKeepMaxTokens)
@@ -135,8 +134,8 @@ func TestRebuildContextDropsNoticesAndInstructions(t *testing.T) {
 		t.Fatal("rebuild refused")
 	}
 	for _, m := range out {
-		if IsUsageNotice(m) || IsCompactRequest(m) {
-			t.Fatalf("stale notice/instruction survived: %q", m.GetText())
+		if IsCompactRequest(m) {
+			t.Fatalf("stale instruction survived: %q", m.GetText())
 		}
 	}
 }

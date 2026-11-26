@@ -357,12 +357,6 @@ func (l *AgentLoop) persistTurn(turn int, messages []provider.Message) {
 	}
 }
 
-const usageNoticeMarkerPrefix = "__CTX_USAGE_"
-
-func usageNoticeMarker(pct int) string {
-	return fmt.Sprintf("%s%d__", usageNoticeMarkerPrefix, pct)
-}
-
 func (l *AgentLoop) autoCompactLimit() int {
 	return InputBudgetFraction(l.inputBudget(), compactInputFraction)
 }

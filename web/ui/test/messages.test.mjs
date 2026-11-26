@@ -6,12 +6,11 @@ import {
   makeToolStep, makeThinkStep, findOpenStep, groupSteps, historyRows, detectNoticeKind,
 } from "../js/lib/transcript.js";
 
-test("messages: 十类注入 notice 各有中文标签,未知类型落到「系统注入」", () => {
+test("messages: 九类注入 notice 各有中文标签,未知类型落到「系统注入」", () => {
   assert.deepEqual(Object.keys(NOTICE_LABELS).sort(), [
-    "compact", "context", "goal", "job", "persist", "retry", "steer", "subagent", "summary", "worker",
+    "compact", "goal", "job", "persist", "retry", "steer", "subagent", "summary", "worker",
   ]);
   assert.equal(noticeOf("worker", "x").label, "工作区公约");
-  assert.equal(noticeOf("context", "x").label, "上下文提醒");
   assert.equal(noticeOf("subagent", "x").label, "子代理回执");
   assert.equal(noticeOf("job", "x").label, "后台命令回执");
   assert.equal(noticeOf("steer", "x").label, "继续守卫轻推");

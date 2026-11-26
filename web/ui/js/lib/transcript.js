@@ -3,7 +3,6 @@ import { stepTag } from "./tools.js";
 
 export const NOTICE_LABELS = {
   worker: "工作区公约",
-  context: "上下文提醒",
   subagent: "子代理回执",
   job: "后台命令回执",
   steer: "继续守卫轻推",
@@ -34,7 +33,6 @@ export function detectNoticeKind(text) {
   const t = String(text == null ? "" : text);
   const trimmed = t.trim();
   if (t.includes("__MC_WORKER_NOTE__") || t.includes("__MC_WORKER_JOIN__")) return "worker";
-  if (t.includes("__CTX_USAGE_")) return "context";
   if (t.includes("__CTX_COMPACT_REQUEST__")) return "compact";
   if (t.includes("<previous-summary>")) return "summary";
   if (trimmed.startsWith("__MC_PERSIST_FAILED__")) return "persist";
