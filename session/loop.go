@@ -1162,41 +1162,47 @@ func (l *AgentLoop) shrinkForOverflow(messages []provider.Message) bool {
 	if end > len(messages) {
 		end = len(messages)
 	}
-	for i := end - 1; i >= start && est(messages) > budget; i-- {
-		m := &messages[i]
-		switch m.Role {
-		case "tool":
-			if pruned, ok := pruneToolText(m.GetText(), ""); ok {
-				m.SetTextContent(pruned)
-			}
-		case "assistant":
-			for j := range m.ToolCalls {
-				tc := &m.ToolCalls[j]
-				if rep, ok := ageOutCallArgs(tc.Function.Name, tc.Function.Arguments); ok {
-					tc.Function.Arguments = rep
+	if est(messages) > budget {
+		for i := start; i < end; i++ {
+			m := &messages[i]
+			switch m.Role {
+			case "tool":
+				if pruned, ok := pruneToolText(m.GetText(), ""); ok {
+					m.SetTextContent(pruned)
+				}
+			case "assistant":
+				for j := range m.ToolCalls {
+					tc := &m.ToolCalls[j]
+					if rep, ok := ageOutCallArgs(tc.Function.Name, tc.Function.Arguments); ok {
+						tc.Function.Arguments = rep
+					}
 				}
 			}
 		}
 	}
-	for i := end - 1; i >= start && est(messages) > budget; i-- {
-		m := &messages[i]
-		if m.Role == "tool" && est([]provider.Message{*m}) > 512 {
-			t := truncateToBudget(*m, 512, est)
-			m.SetTextContent(t.GetText())
-		}
-	}
-	for i := end - 1; i >= start && est(messages) > budget; i-- {
-		m := &messages[i]
-		switch m.Role {
-		case "user":
-			if est([]provider.Message{*m}) > 1024 {
-				t := truncateToBudget(*m, 1024, est)
+	if est(messages) > budget {
+		for i := start; i < end; i++ {
+			m := &messages[i]
+			if m.Role == "tool" && est([]provider.Message{*m}) > 512 {
+				t := truncateToBudget(*m, 512, est)
 				m.SetTextContent(t.GetText())
 			}
-		case "assistant":
-			if len(m.ToolCalls) == 0 && est([]provider.Message{*m}) > 1024 {
-				t := truncateToBudget(*m, 1024, est)
-				m.SetTextContent(t.GetText())
+		}
+	}
+	if est(messages) > budget {
+		for i := start; i < end; i++ {
+			m := &messages[i]
+			switch m.Role {
+			case "user":
+				if est([]provider.Message{*m}) > 1024 {
+					t := truncateToBudget(*m, 1024, est)
+					m.SetTextContent(t.GetText())
+				}
+			case "assistant":
+				if len(m.ToolCalls) == 0 && est([]provider.Message{*m}) > 1024 {
+					t := truncateToBudget(*m, 1024, est)
+					m.SetTextContent(t.GetText())
+				}
 			}
 		}
 	}

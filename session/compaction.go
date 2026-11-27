@@ -255,7 +255,7 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 }
 
 func shrinkOversizedTail(out []provider.Message, budget int, est tokenEstimator) []provider.Message {
-	if len(out) == 0 {
+	if len(out) == 0 || est(out) <= budget {
 		return out
 	}
 	lastAssistant := -1
@@ -265,18 +265,16 @@ func shrinkOversizedTail(out []provider.Message, budget int, est tokenEstimator)
 			break
 		}
 	}
-	for i := len(out) - 1; i >= 2 && est(out) > budget; i-- {
-		if i != lastAssistant {
-			out[i].ReasoningContent = ""
-		}
-	}
 	keep := CompactKeepMessages
 	if keep > len(out) {
 		keep = len(out)
 	}
 	protected := len(out) - keep
-	for i := protected - 1; i >= 2 && est(out) > budget; i-- {
+	for i := 2; i < protected; i++ {
 		m := &out[i]
+		if i != lastAssistant {
+			m.ReasoningContent = ""
+		}
 		switch m.Role {
 		case "tool":
 			if pruned, ok := pruneToolText(m.GetText(), ""); ok {
@@ -291,7 +289,16 @@ func shrinkOversizedTail(out []provider.Message, budget int, est tokenEstimator)
 			}
 		}
 	}
-	if est(out) > budget && lastAssistant >= 0 {
+	if est(out) > budget {
+		for i := protected - 1; i >= 2; i-- {
+			m := &out[i]
+			if m.Role == "tool" && est([]provider.Message{*m}) > 512 {
+				t := truncateToBudget(*m, 512, est)
+				m.SetTextContent(t.GetText())
+			}
+		}
+	}
+	if est(out) > budget && lastAssistant >= 2 {
 		out[lastAssistant].ReasoningContent = ""
 	}
 	return out
@@ -498,13 +505,11 @@ func fitCompactionRequest(req []provider.Message, client *provider.ModelClient, 
 			break
 		}
 	}
-	for i := len(req) - 1; i >= start && raw(req) > budget; i-- {
-		if i != lastAssistant {
-			req[i].ReasoningContent = ""
-		}
-	}
-	for i := len(req) - 2; i >= start && raw(req) > budget; i-- {
+	for i := start; i < len(req)-1; i++ {
 		m := &req[i]
+		if i != lastAssistant {
+			m.ReasoningContent = ""
+		}
 		switch m.Role {
 		case "tool":
 			if pruned, ok := pruneToolText(m.GetText(), ""); ok {
@@ -519,11 +524,13 @@ func fitCompactionRequest(req []provider.Message, client *provider.ModelClient, 
 			}
 		}
 	}
-	for i := len(req) - 2; i >= start && raw(req) > budget; i-- {
-		m := &req[i]
-		if m.Role == "tool" && raw([]provider.Message{*m}) > 512 {
-			t := truncateToBudget(*m, 512, raw)
-			m.SetTextContent(t.GetText())
+	if raw(req) > budget {
+		for i := len(req) - 2; i >= start; i-- {
+			m := &req[i]
+			if m.Role == "tool" && raw([]provider.Message{*m}) > 512 {
+				t := truncateToBudget(*m, 512, raw)
+				m.SetTextContent(t.GetText())
+			}
 		}
 	}
 	if raw(req) > budget && lastAssistant >= 0 {

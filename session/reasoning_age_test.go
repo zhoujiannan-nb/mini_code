@@ -13,6 +13,8 @@ func TestShrinkOversizedTailStripsReasoningOldestFirst(t *testing.T) {
 		{Role: "user", Content: SummaryBlock("## Goal\nx")},
 		{Role: "assistant", Content: "old", ReasoningContent: strings.Repeat("old think ", 3000)},
 		{Role: "assistant", Content: "mid", ReasoningContent: strings.Repeat("mid think ", 3000)},
+		{Role: "assistant", Content: "tail one"},
+		{Role: "assistant", Content: "tail two"},
 		{Role: "assistant", Content: "newest", ReasoningContent: strings.Repeat("new think ", 100)},
 	}
 	est := func(ms []provider.Message) int {
@@ -22,12 +24,12 @@ func TestShrinkOversizedTailStripsReasoningOldestFirst(t *testing.T) {
 		}
 		return n
 	}
-	budget := est([]provider.Message{out[0], out[1], out[4]}) + 100
+	budget := est([]provider.Message{out[0], out[1], out[4], out[5], out[6]}) + 100
 	got := shrinkOversizedTail(out, budget, est)
 	if got[2].ReasoningContent != "" || got[3].ReasoningContent != "" {
 		t.Fatal("older reasoning should be stripped first")
 	}
-	if got[4].ReasoningContent == "" {
+	if got[6].ReasoningContent == "" {
 		t.Fatal("newest reasoning should survive when budget already met")
 	}
 	if est(got) > budget {
