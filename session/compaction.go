@@ -248,6 +248,9 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 	for i := len(taken) - 1; i >= 0; i-- {
 		out = append(out, taken[i])
 	}
+	for i := 2; i < len(out)-1; i++ {
+		out[i].ReasoningContent = ""
+	}
 	if budget > 0 && est(out) > budget {
 		out = shrinkOversizedTail(out, budget, est)
 	}
@@ -475,6 +478,18 @@ func fitCompactionRequest(req []provider.Message, client *provider.ModelClient, 
 	start := 0
 	if len(req) > 0 && req[0].Role == "system" {
 		start = 1
+	}
+	lastAssistant := -1
+	for i := len(req) - 1; i >= start; i-- {
+		if req[i].Role == "assistant" {
+			lastAssistant = i
+			break
+		}
+	}
+	for i := start; i < len(req); i++ {
+		if i != lastAssistant {
+			req[i].ReasoningContent = ""
+		}
 	}
 	for i := len(req) - 2; i >= start && raw(req) > budget; i-- {
 		m := &req[i]
