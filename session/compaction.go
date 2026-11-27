@@ -248,9 +248,6 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 	for i := len(taken) - 1; i >= 0; i-- {
 		out = append(out, taken[i])
 	}
-	for i := 2; i < len(out)-1; i++ {
-		out[i].ReasoningContent = ""
-	}
 	if budget > 0 && est(out) > budget {
 		out = shrinkOversizedTail(out, budget, est)
 	}
@@ -260,6 +257,18 @@ func RebuildContextEst(messages []provider.Message, summary string, keep, budget
 func shrinkOversizedTail(out []provider.Message, budget int, est tokenEstimator) []provider.Message {
 	if len(out) == 0 {
 		return out
+	}
+	lastAssistant := -1
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i].Role == "assistant" {
+			lastAssistant = i
+			break
+		}
+	}
+	for i := len(out) - 1; i >= 2 && est(out) > budget; i-- {
+		if i != lastAssistant {
+			out[i].ReasoningContent = ""
+		}
 	}
 	keep := CompactKeepMessages
 	if keep > len(out) {
@@ -281,6 +290,9 @@ func shrinkOversizedTail(out []provider.Message, budget int, est tokenEstimator)
 				}
 			}
 		}
+	}
+	if est(out) > budget && lastAssistant >= 0 {
+		out[lastAssistant].ReasoningContent = ""
 	}
 	return out
 }
@@ -486,7 +498,7 @@ func fitCompactionRequest(req []provider.Message, client *provider.ModelClient, 
 			break
 		}
 	}
-	for i := start; i < len(req); i++ {
+	for i := len(req) - 1; i >= start && raw(req) > budget; i-- {
 		if i != lastAssistant {
 			req[i].ReasoningContent = ""
 		}
@@ -513,6 +525,9 @@ func fitCompactionRequest(req []provider.Message, client *provider.ModelClient, 
 			t := truncateToBudget(*m, 512, raw)
 			m.SetTextContent(t.GetText())
 		}
+	}
+	if raw(req) > budget && lastAssistant >= 0 {
+		req[lastAssistant].ReasoningContent = ""
 	}
 	return req
 }

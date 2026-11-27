@@ -635,7 +635,6 @@ func (l *AgentLoop) Run(ctx context.Context, systemPrompt, userMessage string, h
 			l.persistTurn(turn, messages)
 			messages = l.handleToolCalls(ctx, messages, parsed.toolCalls)
 			messages = l.nudgeIfStuck(messages, parsed.toolCalls)
-			ageReasoning(messages)
 			if ctx.Err() != nil {
 				l.emitTaskEnd("interrupted", turn, "cancelled during tool execution")
 				return &LoopResult{Interrupted: true, Messages: messages, Turns: turn}, nil
@@ -1124,21 +1123,6 @@ func (l *AgentLoop) toToolSchemas(defs []provider.ToolSchema) []provider.ToolSch
 	return result
 }
 
-func ageReasoning(messages []provider.Message) {
-	lastAssistant := -1
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "assistant" {
-			lastAssistant = i
-			break
-		}
-	}
-	for i := range messages {
-		if i != lastAssistant {
-			messages[i].ReasoningContent = ""
-		}
-	}
-}
-
 func isContextOverflowText(text string) bool {
 	lower := strings.ToLower(text)
 	for _, kw := range []string{"context_length_exceeded", "maximum context length", "context length", "context window", "exceeds the context"} {
@@ -1157,8 +1141,15 @@ func (l *AgentLoop) shrinkForOverflow(messages []provider.Message) bool {
 	}
 	budget = budget * 3 / 4
 	before := est(messages)
-	for i := range messages {
-		if messages[i].Role == "assistant" && i < len(messages)-1 {
+	lastAssistant := -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "assistant" {
+			lastAssistant = i
+			break
+		}
+	}
+	for i := len(messages) - 1; i >= 0 && est(messages) > budget; i-- {
+		if i != lastAssistant {
 			messages[i].ReasoningContent = ""
 		}
 	}
@@ -1208,6 +1199,9 @@ func (l *AgentLoop) shrinkForOverflow(messages []provider.Message) bool {
 				m.SetTextContent(t.GetText())
 			}
 		}
+	}
+	if est(messages) > budget && lastAssistant >= 0 {
+		messages[lastAssistant].ReasoningContent = ""
 	}
 	shrunk := est(messages) < before
 	if shrunk {
